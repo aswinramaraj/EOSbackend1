@@ -902,7 +902,7 @@ model library_settings {
   spine_label_prefix       String?  @db.VarChar(20)
   counter_opens_at         String?  @db.VarChar(10)
   counter_closes_at        String?  @db.VarChar(10)
-  updated_at               DateTime @default(now()) @updatedAt
+  updated_at               DateTime @updatedAt
 }
 
 model lms_notes {
