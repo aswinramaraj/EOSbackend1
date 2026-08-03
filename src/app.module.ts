@@ -99,6 +99,9 @@ import { NotificationsModule } from './modules/notifications/notifications/notif
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
 
+import { AlumniModule } from './modules/alumni/alumni.module';
+import { AchievementsModule } from './modules/achievements/achievements.module';
+
 @Module({
   imports: [
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
@@ -200,6 +203,9 @@ import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-
     NotificationsModule,
     FeedbackModule,
     HallTicketClearanceModule,
+
+    AlumniModule,
+    AchievementsModule,
   ],
 
   controllers: [AppController],

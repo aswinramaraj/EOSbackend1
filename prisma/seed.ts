@@ -1,7 +1,7 @@
 /**
  * EOS Backend – Database Seed Script
  *
- * Creates all 16 roles + one test user per role.
+ * Creates all 17 roles + one test user per role.
  * Password for ALL test users: EOS@test123
  *
  * Run:  npm run seed
@@ -36,6 +36,7 @@ const ROLES = [
   { name: 'gate_warden',          description: 'Main Gate Watch / Hostel Warden' },
   { name: 'media_room',           description: 'Media Room' },
   { name: 'academic_coordinator', description: 'Academic Co-ordinator' },
+  { name: 'alumni',               description: 'Alumni' },
 ] as const;
 
 async function main() {

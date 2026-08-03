@@ -24,6 +24,7 @@ export const ROLES = {
   GATE_WARDEN: 'gate_warden',
   MEDIA_ROOM: 'media_room',
   ACADEMIC_COORDINATOR: 'academic_coordinator',
+  ALUMNI: 'alumni',
 } as const;
 
 export type RoleKey = (typeof ROLES)[keyof typeof ROLES];

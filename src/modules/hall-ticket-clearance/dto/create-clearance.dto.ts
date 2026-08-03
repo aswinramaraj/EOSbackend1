@@ -5,7 +5,7 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
-import { clearance_type_enum } from 'generated/prisma/enums';
+import { clearance_type_enum } from '../../../../generated/prisma/enums';
 
 /**
  * POST /hall-ticket-clearance (Student only).

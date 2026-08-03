@@ -64,6 +64,22 @@ describe('BorrowRecordsService', () => {
   const runTransaction = (arg: any) =>
     typeof arg === 'function' ? arg(mockPrismaService) : Promise.all(arg);
 
+  // Several fixtures below need a due_date that is guaranteed to still be
+  // in the future whenever this suite runs (not overdue) — a hardcoded
+  // absolute date (e.g. '2026-08-15') eventually becomes today's past and
+  // silently flips these tests' meaning. Same idiom as the pre-existing
+  // `tenDaysAgo` helper further down, generalized and made reusable.
+  function daysFromNow(days: number): Date {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d;
+  }
+
+  // ISO 'YYYY-MM-DD' form, for DTO fields that take a date string.
+  function isoDateFromNow(days: number): string {
+    return daysFromNow(days).toISOString().slice(0, 10);
+  }
+
   const includedBook = { id: 2, title: 'Clean Code', qr_code: 'BK-000123' };
   const includedStudent = {
     id: 5,
@@ -79,7 +95,7 @@ describe('BorrowRecordsService', () => {
       student_id: 5,
       faculty_id: null,
       borrowed_date: new Date('2026-07-28'),
-      due_date: new Date('2026-08-15'),
+      due_date: daysFromNow(14),
       returned_date: null,
       status: 'borrowed',
       renewal_count: 0,
@@ -349,7 +365,7 @@ describe('BorrowRecordsService', () => {
       // requested (book_id: 2) and not overdue — should trip the
       // duplicate-borrow check, not the overdue check.
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
-        { book_id: 2, due_date: new Date('2026-08-15') },
+        { book_id: 2, due_date: daysFromNow(14) },
       ]);
 
       await expect(service.create(studentDto, libraryUser)).rejects.toThrow(
@@ -368,7 +384,7 @@ describe('BorrowRecordsService', () => {
       });
       mockPrismaService.students.findUnique.mockResolvedValue({ id: 5 });
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
-        { book_id: 2, due_date: new Date('2026-08-15') },
+        { book_id: 2, due_date: daysFromNow(14) },
       ]);
 
       await expect(service.create(studentDto, libraryUser)).rejects.toThrow(
@@ -404,9 +420,9 @@ describe('BorrowRecordsService', () => {
       });
       mockPrismaService.students.findUnique.mockResolvedValue({ id: 5 });
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
-        { book_id: 10, due_date: new Date('2026-09-01') },
-        { book_id: 11, due_date: new Date('2026-09-01') },
-        { book_id: 12, due_date: new Date('2026-09-01') },
+        { book_id: 10, due_date: daysFromNow(14) },
+        { book_id: 11, due_date: daysFromNow(14) },
+        { book_id: 12, due_date: daysFromNow(14) },
       ]);
 
       await expect(service.create(studentDto, libraryUser)).rejects.toThrow(
@@ -424,8 +440,8 @@ describe('BorrowRecordsService', () => {
       });
       mockPrismaService.students.findUnique.mockResolvedValue({ id: 5 });
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
-        { book_id: 10, due_date: new Date('2026-09-01') },
-        { book_id: 11, due_date: new Date('2026-09-01') },
+        { book_id: 10, due_date: daysFromNow(14) },
+        { book_id: 11, due_date: daysFromNow(14) },
       ]);
       mockPrismaService.books.updateMany.mockResolvedValue({ count: 1 });
       mockPrismaService.book_borrow_records.create.mockResolvedValue(
@@ -453,11 +469,11 @@ describe('BorrowRecordsService', () => {
       // 5 other active borrows — well past the student cap of 3 — should
       // still succeed, since the cap only applies when studentId is set.
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
-        { book_id: 10, due_date: new Date('2026-09-01') },
-        { book_id: 11, due_date: new Date('2026-09-01') },
-        { book_id: 12, due_date: new Date('2026-09-01') },
-        { book_id: 13, due_date: new Date('2026-09-01') },
-        { book_id: 14, due_date: new Date('2026-09-01') },
+        { book_id: 10, due_date: daysFromNow(14) },
+        { book_id: 11, due_date: daysFromNow(14) },
+        { book_id: 12, due_date: daysFromNow(14) },
+        { book_id: 13, due_date: daysFromNow(14) },
+        { book_id: 14, due_date: daysFromNow(14) },
       ]);
       mockPrismaService.books.updateMany.mockResolvedValue({ count: 1 });
       mockPrismaService.book_borrow_records.create.mockResolvedValue(
@@ -794,7 +810,7 @@ describe('BorrowRecordsService', () => {
 
     it('should compute a fine_amount of 0 for a record that is neither overdue nor returned late', async () => {
       mockPrismaService.book_borrow_records.findUnique.mockResolvedValue(
-        makeRecord({ due_date: new Date('2026-08-15') }),
+        makeRecord({ due_date: daysFromNow(14) }),
       );
 
       const result = await service.findOne(3, libraryUser);
@@ -959,18 +975,18 @@ describe('BorrowRecordsService', () => {
     });
 
     describe('action: renew', () => {
-      // A fixed date in the future relative to "now" so these fixtures never
-      // go stale and start looking overdue as real time passes (a hardcoded
-      // past-tense literal here previously broke once the calendar caught up).
-      const notYetDueDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
       it('should extend due_date by 14 days by default and bump renewal_count', async () => {
+        const dueDate = daysFromNow(30);
+        const renewedDueDate = new Date(
+          dueDate.getTime() + 14 * 24 * 60 * 60 * 1000,
+        );
+
         mockPrismaService.book_borrow_records.findUnique.mockResolvedValue(
-          makeRecord({ due_date: notYetDueDate }),
+          makeRecord({ due_date: dueDate }),
         );
         mockPrismaService.book_borrow_records.update.mockResolvedValue(
           makeRecord({
-            due_date: new Date('2026-08-15'),
+            due_date: renewedDueDate,
             renewal_count: 1,
             last_renewed_at: new Date(),
           }),
@@ -985,7 +1001,7 @@ describe('BorrowRecordsService', () => {
         ).toHaveBeenCalledWith({
           where: { id: 3 },
           data: {
-            due_date: new Date(notYetDueDate.getTime() + 14 * 24 * 60 * 60 * 1000),
+            due_date: renewedDueDate,
             renewal_count: { increment: 1 },
             last_renewed_at: expect.any(Date),
           },
@@ -995,16 +1011,19 @@ describe('BorrowRecordsService', () => {
       });
 
       it('should use the provided new_due_date when given', async () => {
+        const dueDate = daysFromNow(30);
+        const newDueDate = isoDateFromNow(60);
+
         mockPrismaService.book_borrow_records.findUnique.mockResolvedValue(
-          makeRecord({ due_date: notYetDueDate }),
+          makeRecord({ due_date: dueDate }),
         );
         mockPrismaService.book_borrow_records.update.mockResolvedValue(
-          makeRecord({ due_date: new Date('2026-09-01'), renewal_count: 1 }),
+          makeRecord({ due_date: new Date(newDueDate), renewal_count: 1 }),
         );
 
         await service.update(3, {
           action: BorrowRecordAction.renew,
-          new_due_date: '2026-09-01',
+          new_due_date: newDueDate,
         });
 
         expect(
@@ -1012,7 +1031,7 @@ describe('BorrowRecordsService', () => {
         ).toHaveBeenCalledWith(
           expect.objectContaining({
             data: expect.objectContaining({
-              due_date: new Date('2026-09-01'),
+              due_date: new Date(newDueDate),
             }),
           }),
         );
@@ -1020,13 +1039,13 @@ describe('BorrowRecordsService', () => {
 
       it('should throw BadRequestException when new_due_date is not after the current due_date', async () => {
         mockPrismaService.book_borrow_records.findUnique.mockResolvedValue(
-          makeRecord({ due_date: notYetDueDate }),
+          makeRecord({ due_date: daysFromNow(30) }),
         );
 
         await expect(
           service.update(3, {
             action: BorrowRecordAction.renew,
-            new_due_date: '2026-07-01',
+            new_due_date: isoDateFromNow(10),
           }),
         ).rejects.toThrow(BadRequestException);
         expect(
@@ -1050,7 +1069,7 @@ describe('BorrowRecordsService', () => {
       it('should throw ConflictException when the renewal limit has already been reached', async () => {
         mockPrismaService.book_borrow_records.findUnique.mockResolvedValue(
           makeRecord({
-            due_date: notYetDueDate,
+            due_date: daysFromNow(30),
             renewal_count: 2,
           }),
         );
