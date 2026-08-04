@@ -103,11 +103,17 @@ export class PurchaseIndentsService {
       });
     }
 
-    if (dto.requested_by_user_id !== undefined && dto.requested_by_user_id !== indent.requested_by_user_id) {
+    if (
+      dto.requested_by_user_id !== undefined &&
+      dto.requested_by_user_id !== indent.requested_by_user_id
+    ) {
       await this.assertUserExists(dto.requested_by_user_id);
     }
 
-    if (dto.department_id !== undefined && dto.department_id !== indent.department_id) {
+    if (
+      dto.department_id !== undefined &&
+      dto.department_id !== indent.department_id
+    ) {
       await this.assertDepartmentExists(dto.department_id);
     }
 
@@ -208,7 +214,9 @@ export class PurchaseIndentsService {
     let department: unknown;
 
     try {
-      department = await this.prisma.departments.findUnique({ where: { id: departmentId } });
+      department = await this.prisma.departments.findUnique({
+        where: { id: departmentId },
+      });
     } catch (err) {
       this.logger.error('DB error during department lookup', err);
       throw new InternalServerErrorException({

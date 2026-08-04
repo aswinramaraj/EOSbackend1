@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { CanActivate, ExecutionContext, INestApplication } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  INestApplication,
+} from '@nestjs/common';
 import request from 'supertest';
 import { AlumniModule } from './alumni.module';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -52,7 +56,11 @@ describe('Alumni module (integration)', () => {
     mockPrisma = {
       students: { findUnique: jest.fn() },
       alumni_members: { findUnique: jest.fn(), update: jest.fn() },
-      alumni_batches: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+      alumni_batches: {
+        findUnique: jest.fn(),
+        findMany: jest.fn(),
+        count: jest.fn(),
+      },
       alumni_group_messages: {
         findMany: jest.fn(),
         count: jest.fn(),
@@ -60,7 +68,11 @@ describe('Alumni module (integration)', () => {
         findUnique: jest.fn(),
         delete: jest.fn(),
       },
-      alumni_announcements: { findMany: jest.fn(), count: jest.fn(), create: jest.fn() },
+      alumni_announcements: {
+        findMany: jest.fn(),
+        count: jest.fn(),
+        create: jest.fn(),
+      },
       batches: { findMany: jest.fn() },
       $transaction: jest.fn((cb: (tx: any) => unknown) => cb(mockPrisma)),
     };
@@ -143,7 +155,7 @@ describe('Alumni module (integration)', () => {
   // ─── Batch isolation on group messages ────────────────────────────────────
 
   describe('batch isolation on group messages', () => {
-    it('blocks a batch-A alumnus from deleting batch-B\'s message, even knowing its id', async () => {
+    it("blocks a batch-A alumnus from deleting batch-B's message, even knowing its id", async () => {
       mockPrisma.students.findUnique.mockResolvedValue(STUDENT_A);
       mockPrisma.alumni_members.findUnique.mockResolvedValue(MEMBER_A);
       mockPrisma.alumni_group_messages.findUnique.mockResolvedValue({
@@ -160,7 +172,7 @@ describe('Alumni module (integration)', () => {
       expect(mockPrisma.alumni_group_messages.delete).not.toHaveBeenCalled();
     });
 
-    it('blocks deleting a same-batch member\'s message you don\'t own — 403', async () => {
+    it("blocks deleting a same-batch member's message you don't own — 403", async () => {
       mockPrisma.students.findUnique.mockResolvedValue(STUDENT_A);
       mockPrisma.alumni_members.findUnique.mockResolvedValue(MEMBER_A);
       mockPrisma.alumni_group_messages.findUnique.mockResolvedValue({
@@ -209,7 +221,7 @@ describe('Alumni module (integration)', () => {
       });
     });
 
-    it('posting a message always lands in the caller\'s own batch — the DTO has no batch field to target another one with', async () => {
+    it("posting a message always lands in the caller's own batch — the DTO has no batch field to target another one with", async () => {
       mockPrisma.students.findUnique.mockResolvedValue(STUDENT_B);
       mockPrisma.alumni_members.findUnique.mockResolvedValue(MEMBER_B);
       mockPrisma.alumni_group_messages.create.mockResolvedValue({ id: 1 });
@@ -246,7 +258,7 @@ describe('Alumni module (integration)', () => {
   // ─── Admin announcements are visible to alumni of every batch ─────────────
 
   describe('admin announcements reach alumni of every batch', () => {
-    it('an announcement posted by admin appears in both a batch-A and a batch-B alumnus\'s feed', async () => {
+    it("an announcement posted by admin appears in both a batch-A and a batch-B alumnus's feed", async () => {
       mockPrisma.alumni_announcements.create.mockResolvedValue({
         id: 1,
         title: 'Reunion 2026',
@@ -260,7 +272,12 @@ describe('Alumni module (integration)', () => {
       expect(createRes.status).toBe(201);
 
       const feed = [
-        { id: 1, title: 'Reunion 2026', content: 'Join us!', created_at: new Date() },
+        {
+          id: 1,
+          title: 'Reunion 2026',
+          content: 'Join us!',
+          created_at: new Date(),
+        },
       ];
       mockPrisma.alumni_announcements.findMany.mockResolvedValue(feed);
       mockPrisma.alumni_announcements.count.mockResolvedValue(1);
@@ -274,8 +291,12 @@ describe('Alumni module (integration)', () => {
 
       expect(asBatchA.status).toBe(200);
       expect(asBatchB.status).toBe(200);
-      expect(asBatchA.body.data.data[0]).toMatchObject({ title: 'Reunion 2026' });
-      expect(asBatchB.body.data.data[0]).toMatchObject({ title: 'Reunion 2026' });
+      expect(asBatchA.body.data.data[0]).toMatchObject({
+        title: 'Reunion 2026',
+      });
+      expect(asBatchB.body.data.data[0]).toMatchObject({
+        title: 'Reunion 2026',
+      });
     });
 
     it('a non-admin alumnus cannot post an announcement', async () => {

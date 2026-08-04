@@ -25,7 +25,9 @@ import { HodReviewDto } from './dto/hod-review.dto';
 @Controller('purchase-order-proposals')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PurchaseOrderProposalsController {
-  constructor(private readonly purchaseOrderProposalsService: PurchaseOrderProposalsService) {}
+  constructor(
+    private readonly purchaseOrderProposalsService: PurchaseOrderProposalsService,
+  ) {}
 
   /**
    * POST /api/v1/purchase-order-proposals
@@ -59,7 +61,10 @@ export class PurchaseOrderProposalsController {
    */
   @Patch(':id/finance-review')
   @Roles(ROLES.ADMIN, ROLES.FINANCE)
-  financeReview(@Param('id', ParseIntPipe) id: number, @Body() dto: FinanceReviewDto) {
+  financeReview(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: FinanceReviewDto,
+  ) {
     return this.purchaseOrderProposalsService.financeReview(id, dto);
   }
 
@@ -90,7 +95,7 @@ export class PurchaseOrderProposalsController {
    *  500 INTERNAL_ERROR – unexpected server failure
    */
   @Get()
-  @Roles(ROLES.ADMIN,ROLES.FINANCE,ROLES.HOD)
+  @Roles(ROLES.ADMIN, ROLES.FINANCE, ROLES.HOD)
   findAll() {
     return this.purchaseOrderProposalsService.findAll();
   }
@@ -126,7 +131,10 @@ export class PurchaseOrderProposalsController {
    */
   @Put(':id')
   @Roles(ROLES.ADMIN)
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePurchaseOrderProposalDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePurchaseOrderProposalDto,
+  ) {
     return this.purchaseOrderProposalsService.update(id, dto);
   }
 
@@ -140,7 +148,10 @@ export class PurchaseOrderProposalsController {
    */
   @Patch(':id')
   @Roles(ROLES.ADMIN)
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePurchaseOrderProposalDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePurchaseOrderProposalDto,
+  ) {
     return this.purchaseOrderProposalsService.update(id, dto);
   }
 

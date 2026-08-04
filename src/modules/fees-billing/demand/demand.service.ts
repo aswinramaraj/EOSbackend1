@@ -176,7 +176,9 @@ export class DemandService {
 
   private async findByName(name: string) {
     try {
-      return await this.prisma.demand_categories.findUnique({ where: { name } });
+      return await this.prisma.demand_categories.findUnique({
+        where: { name },
+      });
     } catch (err) {
       this.logger.error('DB error during demand category duplicate check', err);
       throw new InternalServerErrorException({

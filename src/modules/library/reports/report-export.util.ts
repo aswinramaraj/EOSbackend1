@@ -40,7 +40,11 @@ export async function renderExcel(table: ReportTable): Promise<Buffer> {
  */
 export function renderPdf(table: ReportTable): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
+    const doc = new PDFDocument({
+      margin: 40,
+      size: 'A4',
+      layout: 'landscape',
+    });
     const chunks: Buffer[] = [];
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -50,7 +54,8 @@ export function renderPdf(table: ReportTable): Promise<Buffer> {
     doc.moveDown(0.5);
     doc.fontSize(9);
 
-    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const pageWidth =
+      doc.page.width - doc.page.margins.left - doc.page.margins.right;
     const colWidth = pageWidth / table.columns.length;
     const rowHeight = 18;
 
@@ -65,7 +70,11 @@ export function renderPdf(table: ReportTable): Promise<Buffer> {
     }
 
     let y = doc.y;
-    drawRow(table.columns.map((c) => c.header), y, true);
+    drawRow(
+      table.columns.map((c) => c.header),
+      y,
+      true,
+    );
     y += rowHeight;
     doc
       .moveTo(doc.page.margins.left, y - 4)

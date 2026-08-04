@@ -99,13 +99,17 @@ export class AcademicCalendarEventsService {
 
   findAll(academicCalendarId?: number) {
     return this.prisma.calendar_events.findMany({
-      where: academicCalendarId ? { academic_calendar_id: academicCalendarId } : undefined,
+      where: academicCalendarId
+        ? { academic_calendar_id: academicCalendarId }
+        : undefined,
       orderBy: { event_date: 'asc' },
     });
   }
 
   async findOne(id: number) {
-    const event = await this.prisma.calendar_events.findUnique({ where: { id } });
+    const event = await this.prisma.calendar_events.findUnique({
+      where: { id },
+    });
     if (!event) {
       throw new NotFoundException({
         message: 'Academic calendar event not found',
@@ -148,12 +152,19 @@ export class AcademicCalendarEventsService {
     }
 
     const eventDate =
-      dto.event_date !== undefined ? this.toDateOnly(dto.event_date) : event.event_date;
+      dto.event_date !== undefined
+        ? this.toDateOnly(dto.event_date)
+        : event.event_date;
     this.assertDateWithinCalendar(eventDate, finalCalendar);
 
     const startTime =
-      dto.start_time !== undefined ? this.toTimeOnly(dto.start_time) : event.start_time;
-    const endTime = dto.end_time !== undefined ? this.toTimeOnly(dto.end_time) : event.end_time;
+      dto.start_time !== undefined
+        ? this.toTimeOnly(dto.start_time)
+        : event.start_time;
+    const endTime =
+      dto.end_time !== undefined
+        ? this.toTimeOnly(dto.end_time)
+        : event.end_time;
     if (startTime && endTime) {
       this.assertTimeRange(startTime, endTime);
     }
@@ -169,11 +180,13 @@ export class AcademicCalendarEventsService {
           event_type: dto.event_type,
           start_time: dto.start_time !== undefined ? startTime : undefined,
           end_time: dto.end_time !== undefined ? endTime : undefined,
-          
         },
       });
     } catch (err) {
-      this.logger.error(`DB error updating academic calendar event #${id}`, err);
+      this.logger.error(
+        `DB error updating academic calendar event #${id}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

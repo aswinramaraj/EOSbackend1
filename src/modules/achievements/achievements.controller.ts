@@ -61,7 +61,10 @@ export class AchievementsController {
 
   @Delete(':id')
   @Roles(ROLES.SECRETARY, ROLES.MEDIA_ROOM, ROLES.ADMIN)
-  remove(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+  remove(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
     return this.achievementsService.remove(user, id);
   }
 

@@ -1,4 +1,9 @@
-import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import { CreateVendorQuotationDto } from './dto/create-vendor-quotation.dto';
@@ -99,7 +104,10 @@ export class VendorQuotationsService {
       await this.assertVendorExists(dto.vendor_id);
     }
 
-    const quotedPrice = dto.quoted_price !== undefined ? new Prisma.Decimal(dto.quoted_price) : undefined;
+    const quotedPrice =
+      dto.quoted_price !== undefined
+        ? new Prisma.Decimal(dto.quoted_price)
+        : undefined;
 
     try {
       return await this.prisma.vendor_quotations.update({
@@ -152,7 +160,9 @@ export class VendorQuotationsService {
     let vendor: unknown;
 
     try {
-      vendor = await this.prisma.vendors.findUnique({ where: { id: vendorId } });
+      vendor = await this.prisma.vendors.findUnique({
+        where: { id: vendorId },
+      });
     } catch (err) {
       this.logger.error('DB error during vendor lookup', err);
       throw new InternalServerErrorException({

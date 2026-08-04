@@ -122,7 +122,10 @@ export class FeeConcessionService {
       });
     }
 
-    await this.assertWithinTotal(concession.fee_structure_id, dto.concession_amount);
+    await this.assertWithinTotal(
+      concession.fee_structure_id,
+      dto.concession_amount,
+    );
 
     try {
       return await this.prisma.fee_concessions.update({
@@ -171,7 +174,9 @@ export class FeeConcessionService {
     let feeStructure: unknown;
 
     try {
-      feeStructure = await this.prisma.fee_structures.findUnique({ where: { id: feeStructureId } });
+      feeStructure = await this.prisma.fee_structures.findUnique({
+        where: { id: feeStructureId },
+      });
     } catch (err) {
       this.logger.error('DB error during fee structure lookup', err);
       throw new InternalServerErrorException({
@@ -188,18 +193,24 @@ export class FeeConcessionService {
     }
   }
 
-  private async assertWithinTotal(feeStructureId: number, concessionAmount: number) {
+  private async assertWithinTotal(
+    feeStructureId: number,
+    concessionAmount: number,
+  ) {
     const totalAmount = await this.sumFeeStructureItemsAmount(feeStructureId);
 
     if (concessionAmount > totalAmount) {
       throw new UnprocessableEntityException({
-        message: 'Concession amount cannot exceed the total fee structure amount',
+        message:
+          'Concession amount cannot exceed the total fee structure amount',
         errorCode: 'CONCESSION_EXCEEDS_TOTAL',
       });
     }
   }
 
-  private async sumFeeStructureItemsAmount(feeStructureId: number): Promise<number> {
+  private async sumFeeStructureItemsAmount(
+    feeStructureId: number,
+  ): Promise<number> {
     try {
       const result = await this.prisma.fee_structure_items.aggregate({
         where: { fee_structure_id: feeStructureId },

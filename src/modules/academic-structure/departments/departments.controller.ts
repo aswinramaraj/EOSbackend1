@@ -28,7 +28,8 @@ export class DepartmentsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
   async create(@Body() createDepartmentDto: CreateDepartmentDto) {
-    const department = await this.departmentsService.create(createDepartmentDto);
+    const department =
+      await this.departmentsService.create(createDepartmentDto);
     return ApiResponse.created(department, 'Department created successfully');
   }
 
@@ -43,7 +44,10 @@ export class DepartmentsController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateDepartmentDto: UpdateDepartmentDto) {
+  update(
+    @Param('id') id: string,
+    @Body() updateDepartmentDto: UpdateDepartmentDto,
+  ) {
     return this.departmentsService.update(+id, updateDepartmentDto);
   }
 

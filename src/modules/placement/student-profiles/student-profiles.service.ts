@@ -141,10 +141,7 @@ export class StudentProfilesService {
     return { student_id: studentId, profile, projects };
   }
 
-  private async assertIsMentor(
-    facultyUserId: number,
-    classId: number | null,
-  ) {
+  private async assertIsMentor(facultyUserId: number, classId: number | null) {
     if (!classId) {
       throw new ForbiddenException(
         'This student is not currently assigned to a class',
@@ -155,7 +152,9 @@ export class StudentProfilesService {
       where: { user_id: facultyUserId },
     });
     if (!faculty) {
-      throw new ForbiddenException('Faculty profile not found for the current user');
+      throw new ForbiddenException(
+        'Faculty profile not found for the current user',
+      );
     }
 
     const mentorship = await this.prisma.class_mentors.findFirst({
@@ -176,7 +175,9 @@ export class StudentProfilesService {
       where: { user_id: userId },
     });
     if (!student) {
-      throw new NotFoundException('Student profile not found for the current user');
+      throw new NotFoundException(
+        'Student profile not found for the current user',
+      );
     }
     return student;
   }

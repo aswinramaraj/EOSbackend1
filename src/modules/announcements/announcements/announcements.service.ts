@@ -104,7 +104,9 @@ export class AnnouncementsService {
       });
     }
 
-    return announcements.map((announcement) => this.toResponseShape(announcement));
+    return announcements.map((announcement) =>
+      this.toResponseShape(announcement),
+    );
   }
 
   /**
@@ -181,7 +183,11 @@ export class AnnouncementsService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
-        if (dto.title !== undefined || dto.content !== undefined || dto.target_audience !== undefined) {
+        if (
+          dto.title !== undefined ||
+          dto.content !== undefined ||
+          dto.target_audience !== undefined
+        ) {
           await tx.announcements.update({
             where: { id },
             data: {
@@ -205,7 +211,9 @@ export class AnnouncementsService {
           classIds = currentMappings.map((m) => m.class_id);
         }
 
-        const updated = await tx.announcements.findUniqueOrThrow({ where: { id } });
+        const updated = await tx.announcements.findUniqueOrThrow({
+          where: { id },
+        });
         return { ...updated, class_ids: classIds };
       });
     } catch (err) {
@@ -274,7 +282,11 @@ export class AnnouncementsService {
           });
         }
 
-        return { role: ROLES.HOD, userId: user.sub, departmentId: faculty.department_id };
+        return {
+          role: ROLES.HOD,
+          userId: user.sub,
+          departmentId: faculty.department_id,
+        };
       }
 
       case ROLES.FACULTY: {
@@ -301,11 +313,17 @@ export class AnnouncementsService {
           });
         }
 
-        return { role: ROLES.STUDENT, userId: user.sub, studentClassId: student.class_id };
+        return {
+          role: ROLES.STUDENT,
+          userId: user.sub,
+          studentClassId: student.class_id,
+        };
       }
 
       case ROLES.PARENT: {
-        const linkedStudentClassIds = await this.getLinkedStudentClassIds(user.sub);
+        const linkedStudentClassIds = await this.getLinkedStudentClassIds(
+          user.sub,
+        );
         return { role: ROLES.PARENT, userId: user.sub, linkedStudentClassIds };
       }
 
@@ -316,14 +334,19 @@ export class AnnouncementsService {
 
   // ── Visibility algorithm ─────────────────────────────────────────────────
 
-  private buildVisibilityQuery(context: UserContext): Prisma.announcementsWhereInput {
+  private buildVisibilityQuery(
+    context: UserContext,
+  ): Prisma.announcementsWhereInput {
     switch (context.role) {
       case ROLES.ADMIN:
         return {};
 
       case ROLES.HOD:
         return {
-          OR: [{ posted_by_user_id: context.userId }, { users: { roles: { name: ROLES.ADMIN } } }],
+          OR: [
+            { posted_by_user_id: context.userId },
+            { users: { roles: { name: ROLES.ADMIN } } },
+          ],
         };
 
       case ROLES.FACULTY: {
@@ -338,7 +361,11 @@ export class AnnouncementsService {
                 { users: { roles: { name: ROLES.HOD } } },
                 {
                   announcement_class_mapping: {
-                    some: { class_id: { in: assignedClassIds.length ? assignedClassIds : [-1] } },
+                    some: {
+                      class_id: {
+                        in: assignedClassIds.length ? assignedClassIds : [-1],
+                      },
+                    },
                   },
                 },
               ],
@@ -355,7 +382,9 @@ export class AnnouncementsService {
       case ROLES.PARENT: {
         const classIds = context.linkedStudentClassIds ?? [];
         return {
-          announcement_class_mapping: { some: { class_id: { in: classIds.length ? classIds : [-1] } } },
+          announcement_class_mapping: {
+            some: { class_id: { in: classIds.length ? classIds : [-1] } },
+          },
         };
       }
 
@@ -379,10 +408,13 @@ export class AnnouncementsService {
     }
 
     if (context.role === ROLES.HOD) {
-      const outside = existing.filter((c) => c.department_id !== context.departmentId);
+      const outside = existing.filter(
+        (c) => c.department_id !== context.departmentId,
+      );
       if (outside.length > 0) {
         throw new ForbiddenException({
-          message: 'One or more selected classes do not belong to your department',
+          message:
+            'One or more selected classes do not belong to your department',
           errorCode: 'CLASS_OUTSIDE_DEPARTMENT',
         });
       }
@@ -437,7 +469,10 @@ export class AnnouncementsService {
 
     if (toInsert.length > 0) {
       await tx.announcement_class_mapping.createMany({
-        data: toInsert.map((class_id) => ({ announcement_id: announcementId, class_id })),
+        data: toInsert.map((class_id) => ({
+          announcement_id: announcementId,
+          class_id,
+        })),
       });
     }
   }
@@ -449,7 +484,10 @@ export class AnnouncementsService {
     user: JwtPayload,
     context: UserContext,
   ) {
-    if (context.role !== ROLES.ADMIN && existing.posted_by_user_id !== user.sub) {
+    if (
+      context.role !== ROLES.ADMIN &&
+      existing.posted_by_user_id !== user.sub
+    ) {
       throw new ForbiddenException({
         message: 'You may only modify your own announcements',
         errorCode: 'NOT_OWNER',
@@ -495,7 +533,11 @@ export class AnnouncementsService {
    * HOD: department_id must not be supplied — it is always resolved from the
    * HOD's own department instead.
    */
-  async lookupClasses(batchId: number, departmentId: number | undefined, user: JwtPayload) {
+  async lookupClasses(
+    batchId: number,
+    departmentId: number | undefined,
+    user: JwtPayload,
+  ) {
     const context = await this.resolveUserContext(user);
 
     let effectiveDepartmentId: number;
@@ -523,7 +565,10 @@ export class AnnouncementsService {
         where: { batch_id: batchId, department_id: effectiveDepartmentId },
       });
     } catch (err) {
-      this.logger.error('DB error while resolving classes for batch/department', err);
+      this.logger.error(
+        'DB error while resolving classes for batch/department',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -544,7 +589,9 @@ export class AnnouncementsService {
     }
 
     try {
-      return await this.prisma.classes.findMany({ where: { id: { in: classIds } } });
+      return await this.prisma.classes.findMany({
+        where: { id: { in: classIds } },
+      });
     } catch (err) {
       this.logger.error('DB error while resolving assigned classes', err);
       throw new InternalServerErrorException({
@@ -586,7 +633,9 @@ export class AnnouncementsService {
     }
   }
 
-  private async getLinkedStudentClassIds(parentUserId: number): Promise<number[]> {
+  private async getLinkedStudentClassIds(
+    parentUserId: number,
+  ): Promise<number[]> {
     try {
       const links = await this.prisma.parent_student_mapping.findMany({
         where: { parent_user_id: parentUserId },
@@ -620,7 +669,9 @@ export class AnnouncementsService {
         }),
       ]);
 
-      const classIds = [...subjectMappings, ...mentorMappings].map((row) => row.class_id);
+      const classIds = [...subjectMappings, ...mentorMappings].map(
+        (row) => row.class_id,
+      );
       return [...new Set(classIds)];
     } catch (err) {
       this.logger.error('DB error while resolving assigned classes', err);
@@ -655,7 +706,9 @@ export class AnnouncementsService {
     const where = this.buildVisibilityQuery(context);
 
     try {
-      return await this.prisma.announcements.findFirst({ where: { AND: [{ id }, where] } });
+      return await this.prisma.announcements.findFirst({
+        where: { AND: [{ id }, where] },
+      });
     } catch (err) {
       this.logger.error('DB error during announcement lookup', err);
       throw new InternalServerErrorException({
@@ -665,8 +718,12 @@ export class AnnouncementsService {
     }
   }
 
-  private toResponseShape(announcement: { id: number } & Record<string, unknown>) {
-    const mappings = (announcement.announcement_class_mapping ?? []) as { class_id: number }[];
+  private toResponseShape(
+    announcement: { id: number } & Record<string, unknown>,
+  ) {
+    const mappings = (announcement.announcement_class_mapping ?? []) as {
+      class_id: number;
+    }[];
     const { announcement_class_mapping, ...rest } = announcement;
     return { ...rest, class_ids: mappings.map((m) => m.class_id) };
   }

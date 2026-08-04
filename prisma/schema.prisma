@@ -844,11 +844,109 @@ model hostel_room_types {
 
 model hostel_rooms {
   id                     Int                      @id @default(autoincrement())
-  room_number            String                   @unique @db.VarChar(20)
+  hostel_id              Int
+  room_number            String                   @db.VarChar(20)
   room_type_id           Int
   capacity               Int                      @db.SmallInt
+  hostels                hostels                  @relation(fields: [hostel_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   hostel_room_types      hostel_room_types        @relation(fields: [room_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_hostel_mapping student_hostel_mapping[]
+
+  @@unique([hostel_id, room_number])
+}
+
+enum hostel_wing_enum {
+  boys
+  girls
+}
+
+/// The parent hostel/block entity (e.g. "A Block") — did not exist before;
+/// hostel_rooms previously had no relation to any building-level record.
+model hostels {
+  id                   Int                    @id @default(autoincrement())
+  name                 String                 @db.VarChar(100)
+  code                 String                 @unique @db.VarChar(20)
+  wing                 hostel_wing_enum
+  warden_user_id       Int?
+  phone                String?                @db.VarChar(20)
+  mess_type            String?                @db.VarChar(100)
+  established_year     Int?
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  hostel_complaints    hostel_complaints[]
+  hostel_mess_feedback hostel_mess_feedback[]
+  hostel_rooms         hostel_rooms[]
+  users                users?                 @relation(fields: [warden_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+enum hostel_complaint_category_enum {
+  plumbing
+  electrical
+  carpentry
+  network
+  mess
+  facilities
+  other
+}
+
+enum hostel_complaint_priority_enum {
+  low
+  medium
+  high
+}
+
+enum hostel_complaint_status_enum {
+  open
+  in_progress
+  resolved
+  escalated
+}
+
+/// Hostel-specific complaint/ticket tracking — distinct from feedback_forms
+/// (course/teaching feedback about staff); this is maintenance/mess tickets
+/// raised by hostel residents.
+model hostel_complaints {
+  id              Int                            @id @default(autoincrement())
+  student_id      Int
+  hostel_id       Int?
+  category        hostel_complaint_category_enum
+  title           String                         @db.VarChar(150)
+  description     String?
+  priority        hostel_complaint_priority_enum @default(medium)
+  status          hostel_complaint_status_enum   @default(open)
+  assigned_to     String?                        @db.VarChar(150)
+  resolution_note String?
+  resolved_at     DateTime?                      @db.Timestamptz(6)
+  created_at      DateTime                       @default(now()) @db.Timestamptz(6)
+  hostels         hostels?                       @relation(fields: [hostel_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students        students                       @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// Per-submission mess rating/feedback — distinct from hostel_complaints
+/// (a complaint is a ticket needing resolution; this is a standing rating).
+model hostel_mess_feedback {
+  id         Int      @id @default(autoincrement())
+  student_id Int
+  hostel_id  Int?
+  rating     Int      @db.SmallInt
+  comment    String?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  hostels    hostels? @relation(fields: [hostel_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students   students @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// Singleton hostel-wide policy config — mirrors library_settings' lazy
+/// getOrCreateRow() pattern (see LibrarySettingsService).
+model hostel_settings {
+  id                          Int      @id @default(autoincrement())
+  auto_approve_low_risk       Boolean  @default(true)
+  min_attendance_for_auto_pct Decimal  @default(85) @db.Decimal(5, 2)
+  require_biometric_pop       Boolean  @default(false)
+  sms_guardian_on_checkout    Boolean  @default(true)
+  alert_on_overdue_return     Boolean  @default(true)
+  weekly_arrears_reminder     Boolean  @default(true)
+  publish_resolved_complaints Boolean  @default(false)
+  max_outing_days             Int      @default(7)
+  updated_at                  DateTime @updatedAt
 }
 
 model invigilation_duties {
@@ -1566,7 +1664,9 @@ model students {
   feedback_responses                                                feedback_responses[]
   hall_ticket_clearance_exceptions                                  hall_ticket_clearance_exceptions[]
   hall_tickets                                                      hall_tickets[]
+  hostel_complaints                                                 hostel_complaints[]
   hostel_in_out_ledger                                              hostel_in_out_ledger[]
+  hostel_mess_feedback                                              hostel_mess_feedback[]
   hostel_outings                                                    hostel_outings[]
   main_gate_in_out_ledger                                           main_gate_in_out_ledger[]
   marksheets                                                        marksheets[]
@@ -1696,6 +1796,7 @@ model users {
   hall_ticket_clearance_exceptions                                                hall_ticket_clearance_exceptions[]
   hostel_in_out_ledger                                                            hostel_in_out_ledger[]
   hostel_outings                                                                  hostel_outings[]
+  hostels                                                                         hostels[]
   main_gate_in_out_ledger                                                         main_gate_in_out_ledger[]
   non_teaching_staff                                                              non_teaching_staff[]
   notifications                                                                   notifications[]

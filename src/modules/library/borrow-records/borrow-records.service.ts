@@ -32,7 +32,6 @@ function startOfDay(date: Date | string) {
   return d;
 }
 
-
 function daysBetween(later: Date | string, earlier: Date | string) {
   return Math.round(
     (startOfDay(later).getTime() - startOfDay(earlier).getTime()) / MS_PER_DAY,
@@ -356,7 +355,10 @@ export class BorrowRecordsService {
   // endpoint's documented contract). A caller with no linked student profile
   // gets an empty list via the same -1 sentinel id used elsewhere, not an
   // error, matching findAll()'s ownership-scoping behavior.
-  async findMyBorrowRecords(dto: GetMyBorrowRecordsDto, currentUser: JwtPayload) {
+  async findMyBorrowRecords(
+    dto: GetMyBorrowRecordsDto,
+    currentUser: JwtPayload,
+  ) {
     const ownStudentId =
       (await this.resolveOwnStudentId(currentUser.sub)) ?? -1;
 
@@ -465,9 +467,11 @@ export class BorrowRecordsService {
     // with no linked profile, so the query returns an empty page instead
     // of throwing.
     if (currentUser?.role === 'student') {
-      where.student_id = (await this.resolveOwnStudentId(currentUser.sub)) ?? -1;
+      where.student_id =
+        (await this.resolveOwnStudentId(currentUser.sub)) ?? -1;
     } else if (currentUser?.role === 'faculty') {
-      where.faculty_id = (await this.resolveOwnFacultyId(currentUser.sub)) ?? -1;
+      where.faculty_id =
+        (await this.resolveOwnFacultyId(currentUser.sub)) ?? -1;
     }
 
     const [rules, [records, total]] = await Promise.all([
@@ -677,7 +681,8 @@ export class BorrowRecordsService {
       const result = await tx.book_borrow_records.updateMany({
         where: { id, status: 'borrowed' },
         data: {
-          status: dto.action === BorrowRecordAction.damaged ? 'damaged' : 'lost',
+          status:
+            dto.action === BorrowRecordAction.damaged ? 'damaged' : 'lost',
           damage_lost_charge_amount: chargeAmount,
           damage_lost_declared_at: new Date(),
         },

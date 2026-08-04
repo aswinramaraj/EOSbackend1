@@ -24,7 +24,9 @@ import { UpdatePurchaseIndentDto } from './dto/update-purchase-indent.dto';
 @Roles(ROLES.ADMIN)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PurchaseIndentsController {
-  constructor(private readonly purchaseIndentsService: PurchaseIndentsService) {}
+  constructor(
+    private readonly purchaseIndentsService: PurchaseIndentsService,
+  ) {}
 
   /**
    * POST /api/v1/purchase-indents
@@ -83,7 +85,10 @@ export class PurchaseIndentsController {
    *  500 INTERNAL_ERROR            – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePurchaseIndentDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePurchaseIndentDto,
+  ) {
     return this.purchaseIndentsService.update(id, dto);
   }
 
@@ -96,7 +101,10 @@ export class PurchaseIndentsController {
    * Error responses: see PUT /api/v1/purchase-indents/:id
    */
   @Patch(':id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePurchaseIndentDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePurchaseIndentDto,
+  ) {
     return this.purchaseIndentsService.update(id, dto);
   }
 

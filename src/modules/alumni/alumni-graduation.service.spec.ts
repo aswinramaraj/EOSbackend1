@@ -62,9 +62,7 @@ describe('AlumniGraduationService', () => {
         batch_id: 1,
       });
 
-      await expect(service.graduateBatch(1)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(service.graduateBatch(1)).rejects.toThrow(ConflictException);
       // Never even opens a transaction for a batch we already know is done.
       expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     });
@@ -82,9 +80,7 @@ describe('AlumniGraduationService', () => {
         // ...but by the time we're inside the transaction, another caller won the race.
         .mockResolvedValueOnce({ id: 5, batch_id: 1 });
 
-      await expect(service.graduateBatch(1)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(service.graduateBatch(1)).rejects.toThrow(ConflictException);
       expect(mockPrisma.alumni_batches.create).not.toHaveBeenCalled();
     });
 
@@ -191,9 +187,7 @@ describe('AlumniGraduationService', () => {
         .mockResolvedValueOnce({}) // student 101 succeeds
         .mockRejectedValueOnce(new Error('DB write failed')); // student 102 fails
 
-      await expect(service.graduateBatch(1)).rejects.toThrow(
-        'DB write failed',
-      );
+      await expect(service.graduateBatch(1)).rejects.toThrow('DB write failed');
       // The second student's role must never have been flipped once its
       // alumni_members insert failed — proves the failure isn't swallowed
       // partway through the loop.

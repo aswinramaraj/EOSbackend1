@@ -1,4 +1,12 @@
-import { IsDateString, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
+import {
+  IsDateString,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
 
 export class UpdatePurchaseOrderDto {
   @ValidateIf((dto) => dto.proposal_id !== undefined)

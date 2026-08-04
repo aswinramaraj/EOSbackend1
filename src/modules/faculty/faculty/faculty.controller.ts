@@ -55,7 +55,6 @@ export class FacultyController {
   }
 
   /** PATCH /api/v1/faculty/profile — faculty self-service update of editable fields only. */
-  
 
   /** GET /api/v1/faculty/:id — Admin/HoD only. Excludes sensitive HR information. */
   @Get('faculty/:id')

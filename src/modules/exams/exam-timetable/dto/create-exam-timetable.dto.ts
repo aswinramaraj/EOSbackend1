@@ -23,11 +23,15 @@ export class CreateExamTimetableDto {
   exam_date!: string;
 
   @IsNotEmpty({ message: 'start_time is required' })
-  @Matches(TIME_REGEX, { message: 'start_time must be in HH:mm or HH:mm:ss format' })
+  @Matches(TIME_REGEX, {
+    message: 'start_time must be in HH:mm or HH:mm:ss format',
+  })
   start_time!: string;
 
   @IsNotEmpty({ message: 'end_time is required' })
-  @Matches(TIME_REGEX, { message: 'end_time must be in HH:mm or HH:mm:ss format' })
+  @Matches(TIME_REGEX, {
+    message: 'end_time must be in HH:mm or HH:mm:ss format',
+  })
   end_time!: string;
 
   @IsOptional()

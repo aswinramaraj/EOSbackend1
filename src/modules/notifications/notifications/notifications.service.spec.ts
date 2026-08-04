@@ -27,7 +27,11 @@ describe('NotificationsService', () => {
   });
 
   it('create should persist a notification via Prisma', async () => {
-    const dto = { user_id: 1, title: 'Overdue', message: 'Please return the book.' };
+    const dto = {
+      user_id: 1,
+      title: 'Overdue',
+      message: 'Please return the book.',
+    };
     mockPrismaService.notifications.create.mockResolvedValue({ id: 5, ...dto });
 
     const result = await service.create(dto);

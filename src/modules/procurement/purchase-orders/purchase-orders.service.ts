@@ -110,16 +110,25 @@ export class PurchaseOrdersService {
       });
     }
 
-    if (dto.proposal_id !== undefined && dto.proposal_id !== purchaseOrder.proposal_id) {
+    if (
+      dto.proposal_id !== undefined &&
+      dto.proposal_id !== purchaseOrder.proposal_id
+    ) {
       await this.assertProposalExists(dto.proposal_id);
       await this.assertProposalNotAlreadyUsed(dto.proposal_id, id);
     }
 
-    if (dto.po_number !== undefined && dto.po_number !== purchaseOrder.po_number) {
+    if (
+      dto.po_number !== undefined &&
+      dto.po_number !== purchaseOrder.po_number
+    ) {
       await this.assertPoNumberAvailable(dto.po_number, id);
     }
 
-    if (dto.approved_by_user_id !== undefined && dto.approved_by_user_id !== null) {
+    if (
+      dto.approved_by_user_id !== undefined &&
+      dto.approved_by_user_id !== null
+    ) {
       await this.assertUserExists(dto.approved_by_user_id);
     }
 
@@ -199,7 +208,9 @@ export class PurchaseOrdersService {
     let proposal: unknown;
 
     try {
-      proposal = await this.prisma.purchase_order_proposals.findUnique({ where: { id: proposalId } });
+      proposal = await this.prisma.purchase_order_proposals.findUnique({
+        where: { id: proposalId },
+      });
     } catch (err) {
       this.logger.error('DB error during purchase order proposal lookup', err);
       throw new InternalServerErrorException({
@@ -216,7 +227,10 @@ export class PurchaseOrdersService {
     }
   }
 
-  private async assertProposalNotAlreadyUsed(proposalId: number, excludeId?: number) {
+  private async assertProposalNotAlreadyUsed(
+    proposalId: number,
+    excludeId?: number,
+  ) {
     let existing: { id: number } | null;
 
     try {
@@ -225,7 +239,10 @@ export class PurchaseOrdersService {
         select: { id: true },
       });
     } catch (err) {
-      this.logger.error('DB error during purchase order proposal usage check', err);
+      this.logger.error(
+        'DB error during purchase order proposal usage check',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -234,7 +251,8 @@ export class PurchaseOrdersService {
 
     if (existing && existing.id !== excludeId) {
       throw new ConflictException({
-        message: 'This proposal has already been converted into a purchase order',
+        message:
+          'This proposal has already been converted into a purchase order',
         errorCode: 'PURCHASE_ORDER_PROPOSAL_IN_USE',
       });
     }
@@ -249,7 +267,10 @@ export class PurchaseOrdersService {
         select: { id: true },
       });
     } catch (err) {
-      this.logger.error('DB error during purchase order number duplicate check', err);
+      this.logger.error(
+        'DB error during purchase order number duplicate check',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

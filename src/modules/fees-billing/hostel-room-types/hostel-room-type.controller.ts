@@ -21,7 +21,7 @@ import { CreateHostelRoomTypeDto } from './dto/create-hostel-room-type.dto';
 import { UpdateHostelRoomTypeDto } from './dto/update-hostel-room-type.dto';
 
 @Controller('hostel-room-types')
-@Roles(ROLES.ADMIN)
+@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class HostelRoomTypeController {
   constructor(private readonly hostelRoomTypeService: HostelRoomTypeService) {}
@@ -81,7 +81,10 @@ export class HostelRoomTypeController {
    *  500 INTERNAL_ERROR             – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateHostelRoomTypeDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateHostelRoomTypeDto,
+  ) {
     return this.hostelRoomTypeService.update(id, dto);
   }
 
@@ -94,7 +97,10 @@ export class HostelRoomTypeController {
    * Error responses: see PUT /api/v1/hostel-room-types/:id
    */
   @Patch(':id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateHostelRoomTypeDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateHostelRoomTypeDto,
+  ) {
     return this.hostelRoomTypeService.update(id, dto);
   }
 

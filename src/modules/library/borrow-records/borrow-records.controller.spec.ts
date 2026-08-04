@@ -40,7 +40,12 @@ describe('BorrowRecordsController', () => {
     expect(controller).toBeDefined();
   });
 
-  const libraryUser = { sub: 1, email: 'library@eos.test', role: 'library', roleId: 8 };
+  const libraryUser = {
+    sub: 1,
+    email: 'library@eos.test',
+    role: 'library',
+    roleId: 8,
+  };
 
   it('findAll should call service.findAll with the query dto, the current user, and return its result', async () => {
     const query = { student_id: 5, page: 1, page_size: 20 };
@@ -76,7 +81,12 @@ describe('BorrowRecordsController', () => {
       student_id: 5,
       due_date: '2026-08-15',
     };
-    const user = { sub: 1, email: 'library@eos.test', role: 'library', roleId: 8 };
+    const user = {
+      sub: 1,
+      email: 'library@eos.test',
+      role: 'library',
+      roleId: 8,
+    };
     const expected = { id: 3, ...dto, status: 'borrowed' };
     mockBorrowRecordsService.create.mockResolvedValue(expected);
 
@@ -107,7 +117,12 @@ describe('BorrowRecordsController', () => {
     expect(result).toBe(expected);
   });
 
-  const studentUser = { sub: 40, email: 'student@eos.test', role: 'student', roleId: 4 };
+  const studentUser = {
+    sub: 40,
+    email: 'student@eos.test',
+    role: 'student',
+    roleId: 4,
+  };
 
   it('findMyBorrowRecords should call service.findMyBorrowRecords with the query dto, the current user, and return its result', async () => {
     const query = { status: 'borrowed' as any };

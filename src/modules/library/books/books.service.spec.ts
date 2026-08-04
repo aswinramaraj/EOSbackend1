@@ -3,7 +3,11 @@ jest.mock('src/prisma/prisma.service', () => ({
 }));
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  ConflictException,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { BooksService } from './books.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 
@@ -469,14 +473,17 @@ describe('BooksService', () => {
         total_copies: 5,
       });
 
-      await expect(
-        service.update(1, { available_copies: 10 }),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.update(1, { available_copies: 10 })).rejects.toThrow(
+        BadRequestException,
+      );
       expect(mockPrismaService.books.update).not.toHaveBeenCalled();
     });
 
     it('should throw ConflictException when new QR code belongs to another book', async () => {
-      mockPrismaService.books.findUnique.mockResolvedValue({ id: 1, total_copies: 1 });
+      mockPrismaService.books.findUnique.mockResolvedValue({
+        id: 1,
+        total_copies: 1,
+      });
       mockPrismaService.books.findFirst.mockResolvedValue({ id: 2 });
 
       await expect(service.update(1, { qr_code: 'QR-DUP' })).rejects.toThrow(
@@ -489,7 +496,10 @@ describe('BooksService', () => {
     });
 
     it('should throw NotFoundException when new category does not exist', async () => {
-      mockPrismaService.books.findUnique.mockResolvedValue({ id: 1, total_copies: 1 });
+      mockPrismaService.books.findUnique.mockResolvedValue({
+        id: 1,
+        total_copies: 1,
+      });
       mockPrismaService.book_categories.findUnique.mockResolvedValue(null);
 
       await expect(service.update(1, { category_id: 99 })).rejects.toThrow(
@@ -499,17 +509,23 @@ describe('BooksService', () => {
     });
 
     it('should throw NotFoundException when new department does not exist', async () => {
-      mockPrismaService.books.findUnique.mockResolvedValue({ id: 1, total_copies: 1 });
+      mockPrismaService.books.findUnique.mockResolvedValue({
+        id: 1,
+        total_copies: 1,
+      });
       mockPrismaService.departments.findUnique.mockResolvedValue(null);
 
-      await expect(
-        service.update(1, { department_id: 99 }),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.update(1, { department_id: 99 })).rejects.toThrow(
+        NotFoundException,
+      );
       expect(mockPrismaService.books.update).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException when new rack does not exist', async () => {
-      mockPrismaService.books.findUnique.mockResolvedValue({ id: 1, total_copies: 1 });
+      mockPrismaService.books.findUnique.mockResolvedValue({
+        id: 1,
+        total_copies: 1,
+      });
       mockPrismaService.library_racks.findUnique.mockResolvedValue(null);
 
       await expect(service.update(1, { rack_id: 99 })).rejects.toThrow(
@@ -519,7 +535,10 @@ describe('BooksService', () => {
     });
 
     it('should update the book successfully', async () => {
-      mockPrismaService.books.findUnique.mockResolvedValue({ id: 1, total_copies: 5 });
+      mockPrismaService.books.findUnique.mockResolvedValue({
+        id: 1,
+        total_copies: 5,
+      });
       mockPrismaService.books.update.mockResolvedValue({
         id: 1,
         qr_code: 'QR-1',

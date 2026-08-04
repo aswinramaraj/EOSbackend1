@@ -1,4 +1,11 @@
-import { IsInt, IsNotEmpty, IsNumber, IsString, MaxLength, ValidateIf } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsString,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
 
 export class UpdateVendorQuotationDto {
   @ValidateIf((dto) => dto.vendor_id !== undefined)

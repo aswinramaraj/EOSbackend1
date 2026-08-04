@@ -6,5 +6,7 @@ export class HodReviewDto {
   hod_reviewed_by: number;
 
   @IsIn([proposal_status_enum.hod_approved, proposal_status_enum.rejected])
-  status: typeof proposal_status_enum.hod_approved | typeof proposal_status_enum.rejected;
+  status:
+    | typeof proposal_status_enum.hod_approved
+    | typeof proposal_status_enum.rejected;
 }

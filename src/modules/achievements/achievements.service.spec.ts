@@ -11,8 +11,18 @@ describe('AchievementsService', () => {
   let service: AchievementsService;
   let mockPrisma: any;
 
-  const secretaryUser = { sub: 1, email: 's@eos.test', role: 'secretary', roleId: 1 };
-  const mediaUser = { sub: 2, email: 'm@eos.test', role: 'media_room', roleId: 2 };
+  const secretaryUser = {
+    sub: 1,
+    email: 's@eos.test',
+    role: 'secretary',
+    roleId: 1,
+  };
+  const mediaUser = {
+    sub: 2,
+    email: 'm@eos.test',
+    role: 'media_room',
+    roleId: 2,
+  };
   const adminUser = { sub: 3, email: 'a@eos.test', role: 'admin', roleId: 3 };
 
   beforeEach(async () => {
@@ -122,7 +132,7 @@ describe('AchievementsService', () => {
       expect(mockPrisma.department_achievements.update).toHaveBeenCalled();
     });
 
-    it('allows admin to update someone else\'s post (oversight)', async () => {
+    it("allows admin to update someone else's post (oversight)", async () => {
       mockPrisma.department_achievements.findUnique.mockResolvedValue({
         id: 5,
         posted_by_user_id: 1,
@@ -159,7 +169,7 @@ describe('AchievementsService', () => {
       mockPrisma.achievement_media.create.mockResolvedValue({ id: 1 });
 
       await service.addMedia(secretaryUser, 5, {
-        media_type: 'photo' as any,
+        media_type: 'photo',
         media_url: 'https://x.com/c.jpg',
       });
 
@@ -180,9 +190,9 @@ describe('AchievementsService', () => {
         achievement_id: 999,
       });
 
-      await expect(
-        service.removeMedia(secretaryUser, 5, 1),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.removeMedia(secretaryUser, 5, 1)).rejects.toThrow(
+        NotFoundException,
+      );
       expect(mockPrisma.achievement_media.delete).not.toHaveBeenCalled();
     });
   });
@@ -206,20 +216,20 @@ describe('AchievementsService', () => {
       });
     });
 
-    it('403s deleting someone else\'s comment', async () => {
+    it("403s deleting someone else's comment", async () => {
       mockPrisma.achievement_comments.findUnique.mockResolvedValue({
         id: 1,
         achievement_id: 5,
         commented_by_user_id: 2,
       });
 
-      await expect(
-        service.removeComment(secretaryUser, 5, 1),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.removeComment(secretaryUser, 5, 1)).rejects.toThrow(
+        ForbiddenException,
+      );
       expect(mockPrisma.achievement_comments.delete).not.toHaveBeenCalled();
     });
 
-    it('allows admin to delete someone else\'s comment', async () => {
+    it("allows admin to delete someone else's comment", async () => {
       mockPrisma.achievement_comments.findUnique.mockResolvedValue({
         id: 1,
         achievement_id: 5,

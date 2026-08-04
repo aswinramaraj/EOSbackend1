@@ -38,9 +38,13 @@ type MemberRow = Prisma.studentsGetPayload<{ select: typeof MEMBER_SELECT }>;
 
 function toMemberSummary(student: MemberRow) {
   const records = student.book_borrow_records;
-  const currentlyBorrowed = records.filter((r) => r.status === 'borrowed').length;
+  const currentlyBorrowed = records.filter(
+    (r) => r.status === 'borrowed',
+  ).length;
   const hasOverdue = records.some(
-    (r) => r.status === 'borrowed' && startOfDay(r.due_date) < startOfDay(new Date()),
+    (r) =>
+      r.status === 'borrowed' &&
+      startOfDay(r.due_date) < startOfDay(new Date()),
   );
   const last = records[0] ?? null;
 

@@ -201,7 +201,10 @@ export class AchievementsService {
       });
     }
 
-    if (comment.commented_by_user_id !== user.sub && user.role !== ROLES.ADMIN) {
+    if (
+      comment.commented_by_user_id !== user.sub &&
+      user.role !== ROLES.ADMIN
+    ) {
       throw new ForbiddenException({
         message: 'You can only delete your own comment',
         errorCode: 'NOT_COMMENT_OWNER',
@@ -231,7 +234,10 @@ export class AchievementsService {
     user: JwtPayload,
     achievement: { posted_by_user_id: number },
   ) {
-    if (achievement.posted_by_user_id !== user.sub && user.role !== ROLES.ADMIN) {
+    if (
+      achievement.posted_by_user_id !== user.sub &&
+      user.role !== ROLES.ADMIN
+    ) {
       throw new ForbiddenException({
         message: 'You can only modify your own achievement post',
         errorCode: 'NOT_POST_OWNER',

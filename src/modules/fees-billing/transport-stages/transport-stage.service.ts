@@ -70,7 +70,10 @@ export class TransportStageService {
       });
     }
 
-    if (dto.sequence_no !== undefined && dto.sequence_no !== stage.sequence_no) {
+    if (
+      dto.sequence_no !== undefined &&
+      dto.sequence_no !== stage.sequence_no
+    ) {
       await this.assertSequenceNoAvailable(stage.route_id, dto.sequence_no, id);
     }
 
@@ -113,8 +116,12 @@ export class TransportStageService {
 
     try {
       usageCounts = await Promise.all([
-        this.prisma.student_transport_mapping.count({ where: { boarding_stage_id: id } }),
-        this.prisma.student_transport_mapping.count({ where: { destination_stage_id: id } }),
+        this.prisma.student_transport_mapping.count({
+          where: { boarding_stage_id: id },
+        }),
+        this.prisma.student_transport_mapping.count({
+          where: { destination_stage_id: id },
+        }),
       ]);
     } catch (err) {
       this.logger.error('DB error while checking transport stage usage', err);
@@ -144,12 +151,18 @@ export class TransportStageService {
     }
   }
 
-  private async assertSequenceNoAvailable(routeId: number, sequenceNo: number, excludeId: number) {
+  private async assertSequenceNoAvailable(
+    routeId: number,
+    sequenceNo: number,
+    excludeId: number,
+  ) {
     let existing: { id: number } | null;
 
     try {
       existing = await this.prisma.transport_stages.findUnique({
-        where: { route_id_sequence_no: { route_id: routeId, sequence_no: sequenceNo } },
+        where: {
+          route_id_sequence_no: { route_id: routeId, sequence_no: sequenceNo },
+        },
         select: { id: true },
       });
     } catch (err) {
@@ -162,7 +175,8 @@ export class TransportStageService {
 
     if (existing && existing.id !== excludeId) {
       throw new ConflictException({
-        message: 'A stage with this sequence number already exists for this route',
+        message:
+          'A stage with this sequence number already exists for this route',
         errorCode: 'TRANSPORT_STAGE_EXISTS',
       });
     }

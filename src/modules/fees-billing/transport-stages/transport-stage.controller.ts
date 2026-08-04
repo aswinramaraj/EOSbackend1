@@ -61,7 +61,10 @@ export class TransportStageController {
    *  500 INTERNAL_ERROR            – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTransportStageDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTransportStageDto,
+  ) {
     return this.transportStageService.update(id, dto);
   }
 
@@ -74,7 +77,10 @@ export class TransportStageController {
    * Error responses: see PUT /api/v1/transport-stages/:id
    */
   @Patch(':id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTransportStageDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTransportStageDto,
+  ) {
     return this.transportStageService.update(id, dto);
   }
 

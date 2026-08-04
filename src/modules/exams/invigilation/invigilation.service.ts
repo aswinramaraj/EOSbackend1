@@ -30,14 +30,24 @@ export class InvigilationService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateInvigilationDto) {
-    const exam = await this.prisma.exams.findUnique({ where: { id: dto.exam_id } });
+    const exam = await this.prisma.exams.findUnique({
+      where: { id: dto.exam_id },
+    });
     if (!exam) {
-      throw new NotFoundException({ message: 'Exam not found', errorCode: 'EXAM_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Exam not found',
+        errorCode: 'EXAM_NOT_FOUND',
+      });
     }
 
-    const hallPlan = await this.prisma.hall_plans.findUnique({ where: { id: dto.hall_plan_id } });
+    const hallPlan = await this.prisma.hall_plans.findUnique({
+      where: { id: dto.hall_plan_id },
+    });
     if (!hallPlan) {
-      throw new NotFoundException({ message: 'Hall plan not found', errorCode: 'HALL_PLAN_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Hall plan not found',
+        errorCode: 'HALL_PLAN_NOT_FOUND',
+      });
     }
 
     if (hallPlan.exam_id !== dto.exam_id) {
@@ -47,16 +57,25 @@ export class InvigilationService {
       });
     }
 
-    const faculty = await this.prisma.faculty.findUnique({ where: { id: dto.faculty_id } });
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { id: dto.faculty_id },
+    });
     if (!faculty) {
-      throw new NotFoundException({ message: 'Faculty not found', errorCode: 'FACULTY_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Faculty not found',
+        errorCode: 'FACULTY_NOT_FOUND',
+      });
     }
 
     const dutyDate = new Date(dto.duty_date);
 
     return this.prisma.$transaction(async (tx) => {
       const existingDuty = await tx.invigilation_duties.findFirst({
-        where: { faculty_id: dto.faculty_id, duty_date: dutyDate, shift: dto.shift },
+        where: {
+          faculty_id: dto.faculty_id,
+          duty_date: dutyDate,
+          shift: dto.shift,
+        },
       });
 
       if (existingDuty) {
@@ -93,9 +112,11 @@ export class InvigilationService {
   async findAll(query: FindInvigilationQueryDto) {
     const where: Prisma.invigilation_dutiesWhereInput = {};
     if (query.exam_id !== undefined) where.exam_id = query.exam_id;
-    if (query.hall_plan_id !== undefined) where.hall_plan_id = query.hall_plan_id;
+    if (query.hall_plan_id !== undefined)
+      where.hall_plan_id = query.hall_plan_id;
     if (query.faculty_id !== undefined) where.faculty_id = query.faculty_id;
-    if (query.duty_date !== undefined) where.duty_date = new Date(query.duty_date);
+    if (query.duty_date !== undefined)
+      where.duty_date = new Date(query.duty_date);
 
     const [data, total] = await this.prisma.$transaction([
       this.prisma.invigilation_duties.findMany({
@@ -120,7 +141,14 @@ export class InvigilationService {
       include: {
         faculty: { select: FACULTY_SELECT },
         hall_plans: { select: HALL_PLAN_SELECT },
-        exams: { select: { id: true, academic_year: true, semester: true, status: true } },
+        exams: {
+          select: {
+            id: true,
+            academic_year: true,
+            semester: true,
+            status: true,
+          },
+        },
       },
     });
 
@@ -135,7 +163,9 @@ export class InvigilationService {
   }
 
   async update(id: number, dto: UpdateInvigilationDto) {
-    const existing = await this.prisma.invigilation_duties.findUnique({ where: { id } });
+    const existing = await this.prisma.invigilation_duties.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new NotFoundException({
         message: 'Invigilation duty not found',
@@ -144,9 +174,14 @@ export class InvigilationService {
     }
 
     if (dto.exam_id !== undefined) {
-      const exam = await this.prisma.exams.findUnique({ where: { id: dto.exam_id } });
+      const exam = await this.prisma.exams.findUnique({
+        where: { id: dto.exam_id },
+      });
       if (!exam) {
-        throw new NotFoundException({ message: 'Exam not found', errorCode: 'EXAM_NOT_FOUND' });
+        throw new NotFoundException({
+          message: 'Exam not found',
+          errorCode: 'EXAM_NOT_FOUND',
+        });
       }
     }
 
@@ -154,12 +189,19 @@ export class InvigilationService {
 
     let hallPlan: { id: number; exam_id: number } | null = null;
     if (dto.hall_plan_id !== undefined) {
-      hallPlan = await this.prisma.hall_plans.findUnique({ where: { id: dto.hall_plan_id } });
+      hallPlan = await this.prisma.hall_plans.findUnique({
+        where: { id: dto.hall_plan_id },
+      });
       if (!hallPlan) {
-        throw new NotFoundException({ message: 'Hall plan not found', errorCode: 'HALL_PLAN_NOT_FOUND' });
+        throw new NotFoundException({
+          message: 'Hall plan not found',
+          errorCode: 'HALL_PLAN_NOT_FOUND',
+        });
       }
     } else if (dto.exam_id !== undefined) {
-      hallPlan = await this.prisma.hall_plans.findUnique({ where: { id: existing.hall_plan_id } });
+      hallPlan = await this.prisma.hall_plans.findUnique({
+        where: { id: existing.hall_plan_id },
+      });
     }
 
     if (hallPlan && hallPlan.exam_id !== examId) {
@@ -170,15 +212,23 @@ export class InvigilationService {
     }
 
     if (dto.faculty_id !== undefined) {
-      const faculty = await this.prisma.faculty.findUnique({ where: { id: dto.faculty_id } });
+      const faculty = await this.prisma.faculty.findUnique({
+        where: { id: dto.faculty_id },
+      });
       if (!faculty) {
-        throw new NotFoundException({ message: 'Faculty not found', errorCode: 'FACULTY_NOT_FOUND' });
+        throw new NotFoundException({
+          message: 'Faculty not found',
+          errorCode: 'FACULTY_NOT_FOUND',
+        });
       }
     }
 
     const facultyId = dto.faculty_id ?? existing.faculty_id;
     const hallPlanId = dto.hall_plan_id ?? existing.hall_plan_id;
-    const dutyDate = dto.duty_date !== undefined ? new Date(dto.duty_date) : existing.duty_date;
+    const dutyDate =
+      dto.duty_date !== undefined
+        ? new Date(dto.duty_date)
+        : existing.duty_date;
     const shift = dto.shift !== undefined ? dto.shift : existing.shift;
 
     return this.prisma.$transaction(async (tx) => {
@@ -225,7 +275,9 @@ export class InvigilationService {
   }
 
   async remove(id: number) {
-    const existing = await this.prisma.invigilation_duties.findUnique({ where: { id } });
+    const existing = await this.prisma.invigilation_duties.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new NotFoundException({
         message: 'Invigilation duty not found',

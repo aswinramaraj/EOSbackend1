@@ -140,7 +140,9 @@ export class ExamTimetableService {
   }
 
   async update(id: number, updateExamTimetableDto: UpdateExamTimetableDto) {
-    const existing = await this.prisma.exam_timetable.findUnique({ where: { id } });
+    const existing = await this.prisma.exam_timetable.findUnique({
+      where: { id },
+    });
 
     if (!existing) {
       throw new NotFoundException({
@@ -150,11 +152,13 @@ export class ExamTimetableService {
     }
 
     const exam_subject_mapping_id =
-      updateExamTimetableDto.exam_subject_mapping_id ?? existing.exam_subject_mapping_id;
+      updateExamTimetableDto.exam_subject_mapping_id ??
+      existing.exam_subject_mapping_id;
 
     if (
       updateExamTimetableDto.exam_subject_mapping_id !== undefined &&
-      updateExamTimetableDto.exam_subject_mapping_id !== existing.exam_subject_mapping_id
+      updateExamTimetableDto.exam_subject_mapping_id !==
+        existing.exam_subject_mapping_id
     ) {
       const mapping = await this.prisma.exam_subject_mapping.findUnique({
         where: { id: updateExamTimetableDto.exam_subject_mapping_id },
@@ -192,7 +196,8 @@ export class ExamTimetableService {
       return await this.prisma.exam_timetable.update({
         where: { id },
         data: {
-          exam_subject_mapping_id: updateExamTimetableDto.exam_subject_mapping_id,
+          exam_subject_mapping_id:
+            updateExamTimetableDto.exam_subject_mapping_id,
           exam_date: updateExamTimetableDto.exam_date
             ? new Date(updateExamTimetableDto.exam_date)
             : undefined,

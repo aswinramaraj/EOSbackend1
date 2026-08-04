@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+} from '@nestjs/common';
 import { BonafideService } from './bonafide.service';
 import { CreateBonafideDto } from './dto/create-bonafide.dto';
 import { UpdateBonafideDto } from './dto/update-bonafide.dto';
@@ -23,7 +31,10 @@ export class BonafideController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateBonafideDto: UpdateBonafideDto) {
+  update(
+    @Param('id') id: string,
+    @Body() updateBonafideDto: UpdateBonafideDto,
+  ) {
     return this.bonafideService.update(+id, updateBonafideDto);
   }
 

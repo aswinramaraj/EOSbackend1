@@ -112,7 +112,9 @@ export class ExamSubjectMappingService {
     let mapping: any;
 
     try {
-      mapping = await this.prisma.exam_subject_mapping.findUnique({ where: { id } });
+      mapping = await this.prisma.exam_subject_mapping.findUnique({
+        where: { id },
+      });
     } catch (err: any) {
       this.logger.error('DB error while fetching exam subject mapping', err);
       throw new InternalServerErrorException({
@@ -131,8 +133,13 @@ export class ExamSubjectMappingService {
     return mapping;
   }
 
-  async update(id: number, updateExamSubjectMappingDto: UpdateExamSubjectMappingDto) {
-    const existing = await this.prisma.exam_subject_mapping.findUnique({ where: { id } });
+  async update(
+    id: number,
+    updateExamSubjectMappingDto: UpdateExamSubjectMappingDto,
+  ) {
+    const existing = await this.prisma.exam_subject_mapping.findUnique({
+      where: { id },
+    });
 
     if (!existing) {
       throw new NotFoundException({
@@ -143,7 +150,8 @@ export class ExamSubjectMappingService {
 
     const exam_id = updateExamSubjectMappingDto.exam_id ?? existing.exam_id;
     const class_id = updateExamSubjectMappingDto.class_id ?? existing.class_id;
-    const subject_id = updateExamSubjectMappingDto.subject_id ?? existing.subject_id;
+    const subject_id =
+      updateExamSubjectMappingDto.subject_id ?? existing.subject_id;
 
     if (updateExamSubjectMappingDto.exam_id !== undefined) {
       const exam = await this.prisma.exams.findUnique({
@@ -195,7 +203,8 @@ export class ExamSubjectMappingService {
 
       if (duplicate) {
         throw new ConflictException({
-          message: 'This exam, class, and subject combination is already mapped.',
+          message:
+            'This exam, class, and subject combination is already mapped.',
           errorCode: 'EXAM_SUBJECT_MAPPING_EXISTS',
         });
       }
@@ -213,7 +222,8 @@ export class ExamSubjectMappingService {
     } catch (err: any) {
       if (err?.code === 'P2002') {
         throw new ConflictException({
-          message: 'This exam, class, and subject combination is already mapped.',
+          message:
+            'This exam, class, and subject combination is already mapped.',
           errorCode: 'EXAM_SUBJECT_MAPPING_EXISTS',
         });
       }

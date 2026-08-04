@@ -25,7 +25,9 @@ export class ExamSubjectMappingController {
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.COE)
-  async create(@Body() createExamSubjectMappingDto: CreateExamSubjectMappingDto) {
+  async create(
+    @Body() createExamSubjectMappingDto: CreateExamSubjectMappingDto,
+  ) {
     const result = await this.examSubjectMappingService.create(
       createExamSubjectMappingDto,
     );
@@ -53,7 +55,10 @@ export class ExamSubjectMappingController {
       +id,
       updateExamSubjectMappingDto,
     );
-    return ApiResponse.ok(mapping, 'Exam subject mapping updated successfully.');
+    return ApiResponse.ok(
+      mapping,
+      'Exam subject mapping updated successfully.',
+    );
   }
 
   @Delete(':id')

@@ -48,10 +48,7 @@ export class MeAlumniController {
   }
 
   @Get('group/messages')
-  listMessages(
-    @CurrentUser() user: JwtPayload,
-    @Query() query: PaginationDto,
-  ) {
+  listMessages(@CurrentUser() user: JwtPayload, @Query() query: PaginationDto) {
     return this.messagesService.listMessages(user.sub, query);
   }
 

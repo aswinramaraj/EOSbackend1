@@ -28,14 +28,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost) {
-    const ctx      = host.switchToHttp();
+    const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const request  = ctx.getRequest<Request>();
+    const request = ctx.getRequest<Request>();
 
     // ── Determine status ────────────────────────────────────────────────────
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     if (exception instanceof ThrottlerException) {
-      status = HttpStatus.TOO_MANY_REQUESTS;      // 429
+      status = HttpStatus.TOO_MANY_REQUESTS; // 429
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
     }
@@ -48,12 +48,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let errorCode: string = DEFAULT_ERROR_CODES[status] ?? 'INTERNAL_ERROR';
 
     if (exception instanceof ThrottlerException) {
-      message   = 'Too many login attempts. Try again later.';
+      message = 'Too many login attempts. Try again later.';
       errorCode = 'RATE_LIMIT_EXCEEDED';
-    } else if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
+    } else if (
+      typeof exceptionResponse === 'object' &&
+      exceptionResponse !== null
+    ) {
       const r = exceptionResponse as any;
       // message: could be a string or an array (from class-validator)
-      message   = r.message  ?? message;
+      message = r.message ?? message;
       // errorCode: can be set explicitly when throwing (e.g. new HttpException({ ..., errorCode: 'INVALID_CREDENTIALS' }, 401))
       errorCode = r.errorCode ?? errorCode;
     } else if (typeof exceptionResponse === 'string') {
@@ -77,12 +80,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     // ── Response ─────────────────────────────────────────────────────────────
     response.status(status).json({
-      success:   false,
+      success: false,
       statusCode: status,
       errorCode,
       message,
       timestamp: new Date().toISOString(),
-      path:      request.url,
+      path: request.url,
     });
   }
 }

@@ -1,4 +1,10 @@
-import { IsInt, IsNotEmpty, IsString, MaxLength, ValidateIf } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsString,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
 
 export class UpdateServiceIndentDto {
   @ValidateIf((dto) => dto.requested_by_user_id !== undefined)

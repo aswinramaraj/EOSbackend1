@@ -102,6 +102,17 @@ import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-
 import { AlumniModule } from './modules/alumni/alumni.module';
 import { AchievementsModule } from './modules/achievements/achievements.module';
 
+import { HostelsModule } from './modules/hostel/hostels/hostels.module';
+import { ResidentsModule } from './modules/hostel/residents/residents.module';
+import { OutingsModule } from './modules/hostel/outings/outings.module';
+import { GateLogModule } from './modules/hostel/gate-log/gate-log.module';
+import { HostelDashboardModule } from './modules/hostel/dashboard/dashboard.module';
+import { ComplaintsModule } from './modules/hostel/complaints/complaints.module';
+import { MessFeedbackModule } from './modules/hostel/mess-feedback/mess-feedback.module';
+import { HostelFeesModule } from './modules/hostel/fees/fees.module';
+import { HostelSettingsModule } from './modules/hostel/settings/settings.module';
+import { HostelReportsModule } from './modules/hostel/reports/reports.module';
+
 @Module({
   imports: [
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
@@ -206,13 +217,21 @@ import { AchievementsModule } from './modules/achievements/achievements.module';
 
     AlumniModule,
     AchievementsModule,
+
+    HostelsModule,
+    ResidentsModule,
+    OutingsModule,
+    GateLogModule,
+    HostelDashboardModule,
+    ComplaintsModule,
+    MessFeedbackModule,
+    HostelFeesModule,
+    HostelSettingsModule,
+    HostelReportsModule,
   ],
 
   controllers: [AppController],
 
-  providers: [
-    AppService,
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
-  ],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

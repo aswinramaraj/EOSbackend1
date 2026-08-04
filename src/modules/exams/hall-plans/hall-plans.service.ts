@@ -11,26 +11,45 @@ import { CreateHallPlanDto } from './dto/create-hall-plan.dto';
 import { UpdateHallPlanDto } from './dto/update-hall-plan.dto';
 import { FindHallPlansQueryDto } from './dto/find-hall-plans-query.dto';
 
-const VENUE_SELECT = { id: true, name: true, location: true, capacity: true } as const;
+const VENUE_SELECT = {
+  id: true,
+  name: true,
+  location: true,
+  capacity: true,
+} as const;
 
 @Injectable()
 export class HallPlansService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateHallPlanDto) {
-    const exam = await this.prisma.exams.findUnique({ where: { id: dto.exam_id } });
+    const exam = await this.prisma.exams.findUnique({
+      where: { id: dto.exam_id },
+    });
     if (!exam) {
-      throw new NotFoundException({ message: 'Exam not found', errorCode: 'EXAM_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Exam not found',
+        errorCode: 'EXAM_NOT_FOUND',
+      });
     }
 
-    const venue = await this.prisma.venues.findUnique({ where: { id: dto.venue_id } });
+    const venue = await this.prisma.venues.findUnique({
+      where: { id: dto.venue_id },
+    });
     if (!venue) {
-      throw new NotFoundException({ message: 'Venue not found', errorCode: 'VENUE_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Venue not found',
+        errorCode: 'VENUE_NOT_FOUND',
+      });
     }
 
     const capacity = dto.capacity ?? venue.capacity ?? null;
 
-    if (capacity !== null && venue.capacity !== null && capacity > venue.capacity) {
+    if (
+      capacity !== null &&
+      venue.capacity !== null &&
+      capacity > venue.capacity
+    ) {
       throw new UnprocessableEntityException({
         message: `Capacity (${capacity}) cannot exceed the venue's physical capacity (${venue.capacity})`,
         errorCode: 'CAPACITY_EXCEEDS_VENUE',
@@ -46,7 +65,9 @@ export class HallPlansService {
       },
       include: {
         venues: { select: VENUE_SELECT },
-        _count: { select: { seating_arrangements: true, invigilation_duties: true } },
+        _count: {
+          select: { seating_arrangements: true, invigilation_duties: true },
+        },
       },
     });
   }
@@ -54,7 +75,8 @@ export class HallPlansService {
   async findAll(query: FindHallPlansQueryDto) {
     const where: Prisma.hall_plansWhereInput = {};
     if (query.exam_id !== undefined) where.exam_id = query.exam_id;
-    if (query.exam_date !== undefined) where.exam_date = new Date(query.exam_date);
+    if (query.exam_date !== undefined)
+      where.exam_date = new Date(query.exam_date);
 
     const [data, total] = await this.prisma.$transaction([
       this.prisma.hall_plans.findMany({
@@ -64,7 +86,9 @@ export class HallPlansService {
         orderBy: { id: 'asc' },
         include: {
           venues: { select: VENUE_SELECT },
-          _count: { select: { seating_arrangements: true, invigilation_duties: true } },
+          _count: {
+            select: { seating_arrangements: true, invigilation_duties: true },
+          },
         },
       }),
       this.prisma.hall_plans.count({ where }),
@@ -77,14 +101,26 @@ export class HallPlansService {
     const hallPlan = await this.prisma.hall_plans.findUnique({
       where: { id },
       include: {
-        exams: { select: { id: true, academic_year: true, semester: true, status: true } },
+        exams: {
+          select: {
+            id: true,
+            academic_year: true,
+            semester: true,
+            status: true,
+          },
+        },
         venues: { select: VENUE_SELECT },
-        _count: { select: { seating_arrangements: true, invigilation_duties: true } },
+        _count: {
+          select: { seating_arrangements: true, invigilation_duties: true },
+        },
       },
     });
 
     if (!hallPlan) {
-      throw new NotFoundException({ message: 'Hall plan not found', errorCode: 'HALL_PLAN_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Hall plan not found',
+        errorCode: 'HALL_PLAN_NOT_FOUND',
+      });
     }
 
     return hallPlan;
@@ -100,27 +136,41 @@ export class HallPlansService {
     });
 
     if (!existing) {
-      throw new NotFoundException({ message: 'Hall plan not found', errorCode: 'HALL_PLAN_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Hall plan not found',
+        errorCode: 'HALL_PLAN_NOT_FOUND',
+      });
     }
 
     if (dto.exam_id !== undefined) {
-      const exam = await this.prisma.exams.findUnique({ where: { id: dto.exam_id } });
+      const exam = await this.prisma.exams.findUnique({
+        where: { id: dto.exam_id },
+      });
       if (!exam) {
-        throw new NotFoundException({ message: 'Exam not found', errorCode: 'EXAM_NOT_FOUND' });
+        throw new NotFoundException({
+          message: 'Exam not found',
+          errorCode: 'EXAM_NOT_FOUND',
+        });
       }
     }
 
     let effectiveVenue = existing.venues;
     if (dto.venue_id !== undefined) {
-      const venue = await this.prisma.venues.findUnique({ where: { id: dto.venue_id } });
+      const venue = await this.prisma.venues.findUnique({
+        where: { id: dto.venue_id },
+      });
       if (!venue) {
-        throw new NotFoundException({ message: 'Venue not found', errorCode: 'VENUE_NOT_FOUND' });
+        throw new NotFoundException({
+          message: 'Venue not found',
+          errorCode: 'VENUE_NOT_FOUND',
+        });
       }
       effectiveVenue = venue;
     }
 
     const seatedCount = existing._count.seating_arrangements;
-    const effectiveCapacity = dto.capacity !== undefined ? dto.capacity : existing.capacity;
+    const effectiveCapacity =
+      dto.capacity !== undefined ? dto.capacity : existing.capacity;
 
     if (effectiveCapacity !== null && seatedCount > effectiveCapacity) {
       throw new UnprocessableEntityException({
@@ -151,7 +201,9 @@ export class HallPlansService {
       data,
       include: {
         venues: { select: VENUE_SELECT },
-        _count: { select: { seating_arrangements: true, invigilation_duties: true } },
+        _count: {
+          select: { seating_arrangements: true, invigilation_duties: true },
+        },
       },
     });
   }
@@ -160,24 +212,31 @@ export class HallPlansService {
     const existing = await this.prisma.hall_plans.findUnique({
       where: { id },
       include: {
-        _count: { select: { seating_arrangements: true, invigilation_duties: true } },
+        _count: {
+          select: { seating_arrangements: true, invigilation_duties: true },
+        },
       },
     });
 
     if (!existing) {
-      throw new NotFoundException({ message: 'Hall plan not found', errorCode: 'HALL_PLAN_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Hall plan not found',
+        errorCode: 'HALL_PLAN_NOT_FOUND',
+      });
     }
 
     if (existing._count.invigilation_duties > 0) {
       throw new ConflictException({
-        message: 'Cannot delete a hall plan that already has invigilation duties assigned to it',
+        message:
+          'Cannot delete a hall plan that already has invigilation duties assigned to it',
         errorCode: 'HALL_PLAN_HAS_INVIGILATION_DUTIES',
       });
     }
 
     if (existing._count.seating_arrangements > 0) {
       throw new ConflictException({
-        message: 'Cannot delete a hall plan that already has students allocated to it',
+        message:
+          'Cannot delete a hall plan that already has students allocated to it',
         errorCode: 'HALL_PLAN_HAS_SEATED_STUDENTS',
       });
     }

@@ -24,7 +24,9 @@ import { UpdateStudentFeeDemandMappingDto } from './dto/update-student-fee-deman
 @Roles(ROLES.ADMIN)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class StudentFeeDemandMappingController {
-  constructor(private readonly studentFeeDemandMappingService: StudentFeeDemandMappingService) {}
+  constructor(
+    private readonly studentFeeDemandMappingService: StudentFeeDemandMappingService,
+  ) {}
 
   /**
    * POST /api/v1/student-fee-demand-mappings
@@ -83,7 +85,10 @@ export class StudentFeeDemandMappingController {
    *  500 INTERNAL_ERROR               – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateStudentFeeDemandMappingDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateStudentFeeDemandMappingDto,
+  ) {
     return this.studentFeeDemandMappingService.update(id, dto);
   }
 
@@ -96,7 +101,10 @@ export class StudentFeeDemandMappingController {
    * Error responses: see PUT /api/v1/student-fee-demand-mappings/:id
    */
   @Patch(':id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateStudentFeeDemandMappingDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateStudentFeeDemandMappingDto,
+  ) {
     return this.studentFeeDemandMappingService.update(id, dto);
   }
 

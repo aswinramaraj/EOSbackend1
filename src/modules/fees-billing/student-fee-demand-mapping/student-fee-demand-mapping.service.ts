@@ -23,10 +23,17 @@ export class StudentFeeDemandMappingService {
   async findAll() {
     try {
       return await this.prisma.student_fee_demand_mapping.findMany({
-        orderBy: [{ student_id: 'asc' }, { academic_year: 'asc' }, { semester: 'asc' }],
+        orderBy: [
+          { student_id: 'asc' },
+          { academic_year: 'asc' },
+          { semester: 'asc' },
+        ],
       });
     } catch (err) {
-      this.logger.error('DB error while fetching student fee demand mappings', err);
+      this.logger.error(
+        'DB error while fetching student fee demand mappings',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -81,7 +88,10 @@ export class StudentFeeDemandMappingService {
         },
       });
     } catch (err) {
-      this.logger.error('DB error while creating student fee demand mapping', err);
+      this.logger.error(
+        'DB error while creating student fee demand mapping',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -117,7 +127,10 @@ export class StudentFeeDemandMappingService {
         },
       });
     } catch (err) {
-      this.logger.error('DB error while updating student fee demand mapping', err);
+      this.logger.error(
+        'DB error while updating student fee demand mapping',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -146,11 +159,18 @@ export class StudentFeeDemandMappingService {
 
     try {
       usageCounts = await Promise.all([
-        this.prisma.fee_payments.count({ where: { student_fee_demand_mapping_id: id } }),
-        this.prisma.education_loan_dd.count({ where: { student_fee_demand_mapping_id: id } }),
+        this.prisma.fee_payments.count({
+          where: { student_fee_demand_mapping_id: id },
+        }),
+        this.prisma.education_loan_dd.count({
+          where: { student_fee_demand_mapping_id: id },
+        }),
       ]);
     } catch (err) {
-      this.logger.error('DB error while checking student fee demand mapping usage', err);
+      this.logger.error(
+        'DB error while checking student fee demand mapping usage',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -159,7 +179,8 @@ export class StudentFeeDemandMappingService {
 
     if (usageCounts.some((count) => count > 0)) {
       throw new ConflictException({
-        message: 'This student fee demand mapping is in use and cannot be deleted',
+        message:
+          'This student fee demand mapping is in use and cannot be deleted',
         errorCode: 'STUDENT_FEE_DEMAND_IN_USE',
       });
     }
@@ -169,7 +190,10 @@ export class StudentFeeDemandMappingService {
         where: { id },
       });
     } catch (err) {
-      this.logger.error('DB error while deleting student fee demand mapping', err);
+      this.logger.error(
+        'DB error while deleting student fee demand mapping',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -181,7 +205,9 @@ export class StudentFeeDemandMappingService {
     let student: unknown;
 
     try {
-      student = await this.prisma.students.findUnique({ where: { id: studentId } });
+      student = await this.prisma.students.findUnique({
+        where: { id: studentId },
+      });
     } catch (err) {
       this.logger.error('DB error during student lookup', err);
       throw new InternalServerErrorException({
@@ -202,7 +228,9 @@ export class StudentFeeDemandMappingService {
     let feeStructure: unknown;
 
     try {
-      feeStructure = await this.prisma.fee_structures.findUnique({ where: { id: feeStructureId } });
+      feeStructure = await this.prisma.fee_structures.findUnique({
+        where: { id: feeStructureId },
+      });
     } catch (err) {
       this.logger.error('DB error during fee structure lookup', err);
       throw new InternalServerErrorException({
@@ -256,7 +284,10 @@ export class StudentFeeDemandMappingService {
         select: { id: true },
       });
     } catch (err) {
-      this.logger.error('DB error during student fee demand duplicate check', err);
+      this.logger.error(
+        'DB error during student fee demand duplicate check',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -265,13 +296,16 @@ export class StudentFeeDemandMappingService {
 
     if (existing) {
       throw new ConflictException({
-        message: 'A fee demand already exists for this student, fee structure, academic year and semester',
+        message:
+          'A fee demand already exists for this student, fee structure, academic year and semester',
         errorCode: 'STUDENT_FEE_DEMAND_ALREADY_EXISTS',
       });
     }
   }
 
-  private async calculateTotalAmount(feeStructureId: number): Promise<Prisma.Decimal> {
+  private async calculateTotalAmount(
+    feeStructureId: number,
+  ): Promise<Prisma.Decimal> {
     await this.assertFeeStructureHasItems(feeStructureId);
 
     try {
@@ -292,9 +326,14 @@ export class StudentFeeDemandMappingService {
 
   private async findById(id: number) {
     try {
-      return await this.prisma.student_fee_demand_mapping.findUnique({ where: { id } });
+      return await this.prisma.student_fee_demand_mapping.findUnique({
+        where: { id },
+      });
     } catch (err) {
-      this.logger.error('DB error during student fee demand mapping lookup', err);
+      this.logger.error(
+        'DB error during student fee demand mapping lookup',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

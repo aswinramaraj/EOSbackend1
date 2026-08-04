@@ -11,7 +11,9 @@ describe('AcademicCalendarController', () => {
       providers: [AcademicCalendarService],
     }).compile();
 
-    controller = module.get<AcademicCalendarController>(AcademicCalendarController);
+    controller = module.get<AcademicCalendarController>(
+      AcademicCalendarController,
+    );
   });
 
   it('should be defined', () => {

@@ -51,10 +51,7 @@ export class BorrowRecordsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('student', 'library', 'admin')
   @Post('library/borrow-records')
-  create(
-    @Body() dto: CreateBorrowRecordDto,
-    @CurrentUser() user: JwtPayload,
-  ) {
+  create(@Body() dto: CreateBorrowRecordDto, @CurrentUser() user: JwtPayload) {
     return this.borrowRecordsService.create(dto, user);
   }
 

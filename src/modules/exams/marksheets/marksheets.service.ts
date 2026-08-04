@@ -13,17 +13,27 @@ export class MarksheetsService {
   async generate(examId: number, studentId: number) {
     const exam = await this.prisma.exams.findUnique({ where: { id: examId } });
     if (!exam) {
-      throw new NotFoundException({ message: 'Exam not found', errorCode: 'EXAM_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Exam not found',
+        errorCode: 'EXAM_NOT_FOUND',
+      });
     }
 
-    const student = await this.prisma.students.findUnique({ where: { id: studentId } });
-    if (!student) {
-      throw new NotFoundException({ message: 'Student not found', errorCode: 'STUDENT_NOT_FOUND' });
-    }
-
-    const originalPublication = await this.prisma.result_publications.findFirst({
-      where: { exam_id: examId, publication_type: 'original' },
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
     });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const originalPublication = await this.prisma.result_publications.findFirst(
+      {
+        where: { exam_id: examId, publication_type: 'original' },
+      },
+    );
     if (!originalPublication) {
       throw new UnprocessableEntityException({
         message: 'Results for this exam have not been published yet',
@@ -38,7 +48,8 @@ export class MarksheetsService {
     });
     if (existing) {
       throw new ConflictException({
-        message: 'Marksheet has already been generated for this student and exam',
+        message:
+          'Marksheet has already been generated for this student and exam',
         errorCode: 'ALREADY_GENERATED',
       });
     }

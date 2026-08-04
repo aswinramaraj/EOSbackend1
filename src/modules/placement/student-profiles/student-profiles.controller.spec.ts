@@ -16,10 +16,15 @@ describe('StudentProfilesController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [StudentProfilesController],
-      providers: [StudentProfilesService, { provide: PrismaService, useValue: {} }],
+      providers: [
+        StudentProfilesService,
+        { provide: PrismaService, useValue: {} },
+      ],
     }).compile();
 
-    controller = module.get<StudentProfilesController>(StudentProfilesController);
+    controller = module.get<StudentProfilesController>(
+      StudentProfilesController,
+    );
   });
 
   it('should be defined', () => {

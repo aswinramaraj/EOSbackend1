@@ -27,8 +27,14 @@ export class HallTicketsController {
     @Param('id', ParseIntPipe) examId: number,
     @Param('studentId', ParseIntPipe) studentId: number,
   ) {
-    const hallTicket = await this.hallTicketsService.generate(examId, studentId);
-    return ApiResponse.created(hallTicket, 'Hall ticket generated successfully');
+    const hallTicket = await this.hallTicketsService.generate(
+      examId,
+      studentId,
+    );
+    return ApiResponse.created(
+      hallTicket,
+      'Hall ticket generated successfully',
+    );
   }
 
   @Get(':studentId')

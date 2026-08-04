@@ -10,6 +10,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -21,8 +22,6 @@ import { CreateHostelRoomDto } from './dto/create-hostel-room.dto';
 import { UpdateHostelRoomDto } from './dto/update-hostel-room.dto';
 
 @Controller('hostel-rooms')
-@Roles(ROLES.ADMIN)
-@UseGuards(JwtAuthGuard, RolesGuard)
 export class HostelRoomController {
   constructor(private readonly hostelRoomService: HostelRoomService) {}
 
@@ -32,28 +31,33 @@ export class HostelRoomController {
    * Error responses:
    *  400 VALIDATION_ERROR           – missing/invalid fields
    *  401 UNAUTHORIZED               – missing/invalid access token
-   *  403 FORBIDDEN                  – authenticated user is not an admin
+   *  403 FORBIDDEN                  – authenticated user is not an admin/warden
+   *  404 HOSTEL_NOT_FOUND           – hostel_id does not exist
    *  404 HOSTEL_ROOM_TYPE_NOT_FOUND – room_type_id does not exist
-   *  409 HOSTEL_ROOM_EXISTS         – a room with the same room_number already exists
+   *  409 HOSTEL_ROOM_EXISTS         – a room with the same room_number already exists in this hostel
    *  500 INTERNAL_ERROR             – unexpected server failure
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
   create(@Body() dto: CreateHostelRoomDto) {
     return this.hostelRoomService.create(dto);
   }
 
   /**
-   * GET /api/v1/hostel-rooms
+   * GET /api/v1/hostel-rooms?hostel_id=
    *
    * Error responses:
    *  401 UNAUTHORIZED   – missing/invalid access token
-   *  403 FORBIDDEN      – authenticated user is not an admin
    *  500 INTERNAL_ERROR – unexpected server failure
    */
   @Get()
-  findAll() {
-    return this.hostelRoomService.findAll();
+  @UseGuards(JwtAuthGuard)
+  findAll(@Query('hostel_id') hostelId?: string) {
+    return this.hostelRoomService.findAll(
+      hostelId ? Number(hostelId) : undefined,
+    );
   }
 
   /**
@@ -61,11 +65,11 @@ export class HostelRoomController {
    *
    * Error responses:
    *  401 UNAUTHORIZED          – missing/invalid access token
-   *  403 FORBIDDEN             – authenticated user is not an admin
    *  404 HOSTEL_ROOM_NOT_FOUND – no room with the given id
    *  500 INTERNAL_ERROR        – unexpected server failure
    */
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.hostelRoomService.findOne(id);
   }
@@ -76,14 +80,20 @@ export class HostelRoomController {
    * Error responses:
    *  400 VALIDATION_ERROR           – invalid fields
    *  401 UNAUTHORIZED               – missing/invalid access token
-   *  403 FORBIDDEN                  – authenticated user is not an admin
+   *  403 FORBIDDEN                  – authenticated user is not an admin/warden
    *  404 HOSTEL_ROOM_NOT_FOUND      – no room with the given id
+   *  404 HOSTEL_NOT_FOUND           – hostel_id does not exist
    *  404 HOSTEL_ROOM_TYPE_NOT_FOUND – room_type_id does not exist
-   *  409 HOSTEL_ROOM_EXISTS         – another room already uses this room_number
+   *  409 HOSTEL_ROOM_EXISTS         – another room already uses this room_number in this hostel
    *  500 INTERNAL_ERROR             – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateHostelRoomDto) {
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateHostelRoomDto,
+  ) {
     return this.hostelRoomService.update(id, dto);
   }
 
@@ -96,7 +106,12 @@ export class HostelRoomController {
    * Error responses: see PUT /api/v1/hostel-rooms/:id
    */
   @Patch(':id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateHostelRoomDto) {
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateHostelRoomDto,
+  ) {
     return this.hostelRoomService.update(id, dto);
   }
 
@@ -105,12 +120,14 @@ export class HostelRoomController {
    *
    * Error responses:
    *  401 UNAUTHORIZED          – missing/invalid access token
-   *  403 FORBIDDEN             – authenticated user is not an admin
+   *  403 FORBIDDEN             – authenticated user is not an admin/warden
    *  404 HOSTEL_ROOM_NOT_FOUND – no room with the given id
    *  409 HOSTEL_ROOM_IN_USE    – room is referenced by student_hostel_mapping
    *  500 INTERNAL_ERROR        – unexpected server failure
    */
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.hostelRoomService.remove(id);
   }

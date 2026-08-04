@@ -78,12 +78,7 @@ export class DrivesController {
     @Param('studentId', ParseIntPipe) studentId: number,
     @Body() dto: UpdateDriveApplicationStatusDto,
   ) {
-    return this.drivesService.updateApplicationStatus(
-      user,
-      id,
-      studentId,
-      dto,
-    );
+    return this.drivesService.updateApplicationStatus(user, id, studentId, dto);
   }
 
   @Delete(':id/applications/:studentId')

@@ -111,8 +111,14 @@ export class EResourcesService {
   }
 
   async findAll(searchDto: SearchEResourcesDto) {
-    const { q, category_id, format, publish_state, page = 1, page_size = 20 } =
-      searchDto;
+    const {
+      q,
+      category_id,
+      format,
+      publish_state,
+      page = 1,
+      page_size = 20,
+    } = searchDto;
 
     const where: Prisma.e_resourcesWhereInput = {};
 

@@ -87,7 +87,10 @@ export class ServiceIndentsController {
    *  500 INTERNAL_ERROR           – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceIndentDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateServiceIndentDto,
+  ) {
     return this.serviceIndentsService.update(id, dto);
   }
 
@@ -101,7 +104,10 @@ export class ServiceIndentsController {
    * Error responses: see PUT /api/v1/service-indents/:id
    */
   @Patch(':id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceIndentDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateServiceIndentDto,
+  ) {
     return this.serviceIndentsService.update(id, dto);
   }
 

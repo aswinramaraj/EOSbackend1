@@ -1,4 +1,9 @@
-import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateGrnDto } from './dto/create-grn.dto';
 import { UpdateGrnDto } from './dto/update-grn.dto';
@@ -104,15 +109,24 @@ export class GrnService {
       });
     }
 
-    if (dto.purchase_order_id !== undefined && dto.purchase_order_id !== grn.purchase_order_id) {
+    if (
+      dto.purchase_order_id !== undefined &&
+      dto.purchase_order_id !== grn.purchase_order_id
+    ) {
       await this.assertPurchaseOrderExists(dto.purchase_order_id);
     }
 
-    if (dto.issued_to_venue_id !== undefined && dto.issued_to_venue_id !== null) {
+    if (
+      dto.issued_to_venue_id !== undefined &&
+      dto.issued_to_venue_id !== null
+    ) {
       await this.assertVenueExists(dto.issued_to_venue_id);
     }
 
-    if (dto.recorded_by_user_id !== undefined && dto.recorded_by_user_id !== null) {
+    if (
+      dto.recorded_by_user_id !== undefined &&
+      dto.recorded_by_user_id !== null
+    ) {
       await this.assertUserExists(dto.recorded_by_user_id);
     }
 
@@ -173,7 +187,9 @@ export class GrnService {
     let purchaseOrder: unknown;
 
     try {
-      purchaseOrder = await this.prisma.purchase_orders.findUnique({ where: { id: purchaseOrderId } });
+      purchaseOrder = await this.prisma.purchase_orders.findUnique({
+        where: { id: purchaseOrderId },
+      });
     } catch (err) {
       this.logger.error('DB error during purchase order lookup', err);
       throw new InternalServerErrorException({

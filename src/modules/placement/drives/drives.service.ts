@@ -119,9 +119,11 @@ export class DrivesService {
   async remove(id: number) {
     await this.findOrThrow(id);
 
-    const applicationCount = await this.prisma.student_drive_applications.count({
-      where: { drive_id: id },
-    });
+    const applicationCount = await this.prisma.student_drive_applications.count(
+      {
+        where: { drive_id: id },
+      },
+    );
     if (applicationCount > 0) {
       throw new ConflictException(
         'Cannot delete a drive that already has student applications',
@@ -205,7 +207,9 @@ export class DrivesService {
       where: { user_id: user.sub },
     });
     if (!student) {
-      throw new NotFoundException('Student profile not found for the current user');
+      throw new NotFoundException(
+        'Student profile not found for the current user',
+      );
     }
 
     const applications = await this.prisma.student_drive_applications.findMany({
@@ -241,7 +245,9 @@ export class DrivesService {
       data: { is_disclosed: true },
     });
     if (count > 0) {
-      this.logger.log(`Revealed ${count} placement drive compan${count === 1 ? 'y' : 'ies'}`);
+      this.logger.log(
+        `Revealed ${count} placement drive compan${count === 1 ? 'y' : 'ies'}`,
+      );
     }
   }
 
@@ -259,7 +265,9 @@ export class DrivesService {
     });
 
     for (const drive of drives) {
-      const companyLabel = drive.is_disclosed ? drive.companies.name : 'A company';
+      const companyLabel = drive.is_disclosed
+        ? drive.companies.name
+        : 'A company';
       await this.prisma.announcements.create({
         data: {
           posted_by_user_id: drive.created_by_user_id as number,
@@ -276,7 +284,9 @@ export class DrivesService {
     }
 
     if (drives.length > 0) {
-      this.logger.log(`Posted ${drives.length} day-before drive announcement(s)`);
+      this.logger.log(
+        `Posted ${drives.length} day-before drive announcement(s)`,
+      );
     }
   }
 

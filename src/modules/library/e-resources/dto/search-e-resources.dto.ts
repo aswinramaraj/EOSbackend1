@@ -1,6 +1,9 @@
 import { Transform } from 'class-transformer';
 import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
-import { EResourceFormat, EResourcePublishState } from './create-e-resource.dto';
+import {
+  EResourceFormat,
+  EResourcePublishState,
+} from './create-e-resource.dto';
 
 export class SearchEResourcesDto {
   @IsOptional()

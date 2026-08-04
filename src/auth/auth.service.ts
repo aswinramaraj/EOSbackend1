@@ -30,13 +30,13 @@ export class AuthService {
 
     try {
       user = await (this.prisma as any).users.findUnique({
-        where:   { email: dto.email },
+        where: { email: dto.email },
         include: { roles: true },
       });
     } catch (err) {
       this.logger.error('DB error during login lookup', err);
       throw new InternalServerErrorException({
-        message:   'Something went wrong. Please try again.',
+        message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
     }
@@ -44,7 +44,7 @@ export class AuthService {
     // ── 401: user not found ──────────────────────────────────────────────────
     if (!user) {
       throw new UnauthorizedException({
-        message:   'Invalid email or password',
+        message: 'Invalid email or password',
         errorCode: 'INVALID_CREDENTIALS',
       });
     }
@@ -52,7 +52,7 @@ export class AuthService {
     // ── 403: account inactive ────────────────────────────────────────────────
     if (user.status !== 'active') {
       throw new ForbiddenException({
-        message:   'Account is inactive. Contact administrator.',
+        message: 'Account is inactive. Contact administrator.',
         errorCode: 'ACCOUNT_INACTIVE',
       });
     }
@@ -61,7 +61,7 @@ export class AuthService {
     const hash = crypto.createHash('sha256').update(dto.password).digest('hex');
     if (hash !== user.password_hash) {
       throw new UnauthorizedException({
-        message:   'Invalid email or password',
+        message: 'Invalid email or password',
         errorCode: 'INVALID_CREDENTIALS',
       });
     }
@@ -70,19 +70,19 @@ export class AuthService {
     let accessToken: string;
     try {
       const payload: JwtPayload = {
-        sub:    user.id,
-        email:  user.email,
-        role:   user.roles.name,
+        sub: user.id,
+        email: user.email,
+        role: user.roles.name,
         roleId: user.roles.id,
       };
 
-      const secret    = process.env.JWT_SECRET    || 'CHANGE_ME_IN_PRODUCTION';
+      const secret = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
       const expiresIn = process.env.JWT_EXPIRES_IN || '8h';
       accessToken = jwt.sign(payload, secret, { expiresIn } as any);
     } catch (err) {
       this.logger.error('JWT signing failed', err);
       throw new InternalServerErrorException({
-        message:   'Something went wrong. Please try again.',
+        message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
     }
@@ -92,9 +92,9 @@ export class AuthService {
     return {
       accessToken,
       user: {
-        id:     user.id,
-        email:  user.email,
-        role:   user.roles.name,
+        id: user.id,
+        email: user.email,
+        role: user.roles.name,
         roleId: user.roles.id,
       },
     };
@@ -106,31 +106,31 @@ export class AuthService {
    */
   async getMe(userId: number) {
     const user = await (this.prisma as any).users.findUnique({
-      where:  { id: userId },
+      where: { id: userId },
       select: {
-        id:         true,
-        email:      true,
-        phone:      true,
-        status:     true,
+        id: true,
+        email: true,
+        phone: true,
+        status: true,
         created_at: true,
-        roles:    { select: { id: true, name: true, description: true } },
-        faculty:  {
+        roles: { select: { id: true, name: true, description: true } },
+        faculty: {
           select: {
-            id:          true,
-            first_name:  true,
-            last_name:   true,
+            id: true,
+            first_name: true,
+            last_name: true,
             designation: true,
             departments: { select: { id: true, name: true, code: true } },
           },
         },
         students: {
           select: {
-            id:            true,
+            id: true,
             student_id_no: true,
-            roll_no:       true,
-            register_no:   true,
-            student_type:  true,
-            status:        true,
+            roll_no: true,
+            register_no: true,
+            student_type: true,
+            status: true,
           },
         },
       },
@@ -138,7 +138,7 @@ export class AuthService {
 
     if (!user) {
       throw new UnauthorizedException({
-        message:   'User not found',
+        message: 'User not found',
         errorCode: 'INVALID_CREDENTIALS',
       });
     }

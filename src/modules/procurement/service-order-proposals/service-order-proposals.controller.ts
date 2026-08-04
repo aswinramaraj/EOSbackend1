@@ -25,7 +25,9 @@ import { HodReviewDto } from './dto/hod-review.dto';
 @Controller('service-order-proposals')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ServiceOrderProposalsController {
-  constructor(private readonly serviceOrderProposalsService: ServiceOrderProposalsService) {}
+  constructor(
+    private readonly serviceOrderProposalsService: ServiceOrderProposalsService,
+  ) {}
 
   /**
    * POST /api/v1/service-order-proposals
@@ -59,7 +61,10 @@ export class ServiceOrderProposalsController {
    */
   @Patch(':id/finance-review')
   @Roles(ROLES.ADMIN, ROLES.FINANCE)
-  financeReview(@Param('id', ParseIntPipe) id: number, @Body() dto: FinanceReviewDto) {
+  financeReview(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: FinanceReviewDto,
+  ) {
     return this.serviceOrderProposalsService.financeReview(id, dto);
   }
 
@@ -126,7 +131,10 @@ export class ServiceOrderProposalsController {
    */
   @Put(':id')
   @Roles(ROLES.ADMIN)
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceOrderProposalDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateServiceOrderProposalDto,
+  ) {
     return this.serviceOrderProposalsService.update(id, dto);
   }
 
@@ -140,7 +148,10 @@ export class ServiceOrderProposalsController {
    */
   @Patch(':id')
   @Roles(ROLES.ADMIN)
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceOrderProposalDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateServiceOrderProposalDto,
+  ) {
     return this.serviceOrderProposalsService.update(id, dto);
   }
 

@@ -176,9 +176,14 @@ export class HostelRoomTypeService {
 
   private async findByName(name: string) {
     try {
-      return await this.prisma.hostel_room_types.findUnique({ where: { name } });
+      return await this.prisma.hostel_room_types.findUnique({
+        where: { name },
+      });
     } catch (err) {
-      this.logger.error('DB error during hostel room type duplicate check', err);
+      this.logger.error(
+        'DB error during hostel room type duplicate check',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

@@ -32,9 +32,14 @@ export class SeatingArrangementsService {
   async allocate(dto: ExamDateDto) {
     const examDate = new Date(dto.exam_date);
 
-    const exam = await this.prisma.exams.findUnique({ where: { id: dto.exam_id } });
+    const exam = await this.prisma.exams.findUnique({
+      where: { id: dto.exam_id },
+    });
     if (!exam) {
-      throw new NotFoundException({ message: 'Exam not found', errorCode: 'EXAM_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Exam not found',
+        errorCode: 'EXAM_NOT_FOUND',
+      });
     }
 
     const mappings = await this.prisma.exam_subject_mapping.findMany({
@@ -89,7 +94,11 @@ export class SeatingArrangementsService {
       });
     }
 
-    const rows: { hall_plan_id: number; student_id: number; seat_number: string }[] = [];
+    const rows: {
+      hall_plan_id: number;
+      student_id: number;
+      seat_number: string;
+    }[] = [];
     let cursor = 0;
     hallPlans.forEach((hallPlan, hallIndex) => {
       const capacity = hallPlan.capacity ?? hallPlan.venues.capacity ?? 0;
@@ -122,7 +131,10 @@ export class SeatingArrangementsService {
         await tx.seating_arrangements.createMany({ data: rows });
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
         throw new ConflictException({
           message:
             'Seating has already been allocated for this exam/date. Clear existing seating before reallocating.',
@@ -153,7 +165,11 @@ export class SeatingArrangementsService {
       where: { hall_plan_id: { in: hallPlanIds } },
     });
 
-    return { exam_id: examId, exam_date: examDate, deleted_count: result.count };
+    return {
+      exam_id: examId,
+      exam_date: examDate,
+      deleted_count: result.count,
+    };
   }
 
   async findByExamDate(examId: number, examDate: string) {
@@ -174,9 +190,14 @@ export class SeatingArrangementsService {
   }
 
   async findByHallPlan(hallPlanId: number) {
-    const hallPlan = await this.prisma.hall_plans.findUnique({ where: { id: hallPlanId } });
+    const hallPlan = await this.prisma.hall_plans.findUnique({
+      where: { id: hallPlanId },
+    });
     if (!hallPlan) {
-      throw new NotFoundException({ message: 'Hall plan not found', errorCode: 'HALL_PLAN_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Hall plan not found',
+        errorCode: 'HALL_PLAN_NOT_FOUND',
+      });
     }
 
     return this.prisma.seating_arrangements.findMany({
@@ -204,9 +225,11 @@ export class SeatingArrangementsService {
 
   async findAll(query: FindSeatingArrangementsQueryDto) {
     const where: Prisma.seating_arrangementsWhereInput = {};
-    if (query.hall_plan_id !== undefined) where.hall_plan_id = query.hall_plan_id;
+    if (query.hall_plan_id !== undefined)
+      where.hall_plan_id = query.hall_plan_id;
     if (query.student_id !== undefined) where.student_id = query.student_id;
-    if (query.exam_id !== undefined) where.hall_plans = { exam_id: query.exam_id };
+    if (query.exam_id !== undefined)
+      where.hall_plans = { exam_id: query.exam_id };
 
     const [data, total] = await this.prisma.$transaction([
       this.prisma.seating_arrangements.findMany({
@@ -245,7 +268,9 @@ export class SeatingArrangementsService {
   }
 
   async update(id: number, dto: UpdateSeatingArrangementDto) {
-    const existing = await this.prisma.seating_arrangements.findUnique({ where: { id } });
+    const existing = await this.prisma.seating_arrangements.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new NotFoundException({
         message: 'Seating arrangement not found',
@@ -264,26 +289,36 @@ export class SeatingArrangementsService {
             _count: { select: { seating_arrangements: true } },
           },
         }),
-        this.prisma.hall_plans.findUnique({ where: { id: existing.hall_plan_id } }),
+        this.prisma.hall_plans.findUnique({
+          where: { id: existing.hall_plan_id },
+        }),
       ]);
 
       if (!targetHallPlan) {
-        throw new NotFoundException({ message: 'Hall plan not found', errorCode: 'HALL_PLAN_NOT_FOUND' });
+        throw new NotFoundException({
+          message: 'Hall plan not found',
+          errorCode: 'HALL_PLAN_NOT_FOUND',
+        });
       }
 
-      if (originalHallPlan && targetHallPlan.exam_id !== originalHallPlan.exam_id) {
+      if (
+        originalHallPlan &&
+        targetHallPlan.exam_id !== originalHallPlan.exam_id
+      ) {
         throw new UnprocessableEntityException({
-          message: 'Cannot move a student to a hall plan belonging to a different exam',
+          message:
+            'Cannot move a student to a hall plan belonging to a different exam',
           errorCode: 'HALL_PLAN_EXAM_MISMATCH',
         });
       }
 
-      const capacity = targetHallPlan.capacity ?? targetHallPlan.venues.capacity ?? null;
-       if (
-       dto.hall_plan_id !== existing.hall_plan_id &&
-       capacity !== null &&
-       targetHallPlan._count.seating_arrangements >= capacity
-        )  {
+      const capacity =
+        targetHallPlan.capacity ?? targetHallPlan.venues.capacity ?? null;
+      if (
+        dto.hall_plan_id !== existing.hall_plan_id &&
+        capacity !== null &&
+        targetHallPlan._count.seating_arrangements >= capacity
+      ) {
         throw new UnprocessableEntityException({
           message: 'Target hall plan is already at full capacity',
           errorCode: 'CAPACITY_EXCEEDED',
@@ -296,7 +331,11 @@ export class SeatingArrangementsService {
     const seatNumber = dto.seat_number ?? existing.seat_number;
 
     const conflict = await this.prisma.seating_arrangements.findFirst({
-      where: { hall_plan_id: targetHallPlanId, seat_number: seatNumber, NOT: { id } },
+      where: {
+        hall_plan_id: targetHallPlanId,
+        seat_number: seatNumber,
+        NOT: { id },
+      },
     });
     if (conflict) {
       throw new ConflictException({
@@ -319,7 +358,9 @@ export class SeatingArrangementsService {
   }
 
   async remove(id: number) {
-    const existing = await this.prisma.seating_arrangements.findUnique({ where: { id } });
+    const existing = await this.prisma.seating_arrangements.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new NotFoundException({
         message: 'Seating arrangement not found',

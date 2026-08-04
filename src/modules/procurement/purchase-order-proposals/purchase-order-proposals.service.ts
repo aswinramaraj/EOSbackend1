@@ -62,7 +62,10 @@ export class PurchaseOrderProposalsService {
         orderBy: { id: 'asc' },
       });
     } catch (err) {
-      this.logger.error('DB error while fetching purchase order proposals', err);
+      this.logger.error(
+        'DB error while fetching purchase order proposals',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -155,7 +158,8 @@ export class PurchaseOrderProposalsService {
 
     if (proposal.status !== proposal_status_enum.pending) {
       throw new UnprocessableEntityException({
-        message: 'Finance review can only be recorded while the proposal is pending',
+        message:
+          'Finance review can only be recorded while the proposal is pending',
         errorCode: 'INVALID_WORKFLOW_STATE',
       });
     }
@@ -203,7 +207,8 @@ export class PurchaseOrderProposalsService {
 
     if (proposal.status !== proposal_status_enum.finance_approved) {
       throw new UnprocessableEntityException({
-        message: 'HoD review can only be recorded once the proposal is finance approved',
+        message:
+          'HoD review can only be recorded once the proposal is finance approved',
         errorCode: 'INVALID_WORKFLOW_STATE',
       });
     }
@@ -250,7 +255,10 @@ export class PurchaseOrderProposalsService {
         where: { proposal_id: id },
       });
     } catch (err) {
-      this.logger.error('DB error while checking purchase order proposal usage', err);
+      this.logger.error(
+        'DB error while checking purchase order proposal usage',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -259,7 +267,8 @@ export class PurchaseOrderProposalsService {
 
     if (purchaseOrderCount > 0) {
       throw new ConflictException({
-        message: 'This proposal has already been converted into a purchase order and cannot be deleted',
+        message:
+          'This proposal has already been converted into a purchase order and cannot be deleted',
         errorCode: 'PROPOSAL_IN_USE',
       });
     }
@@ -281,7 +290,9 @@ export class PurchaseOrderProposalsService {
     let indent: unknown;
 
     try {
-      indent = await this.prisma.purchase_indents.findUnique({ where: { id: indentId } });
+      indent = await this.prisma.purchase_indents.findUnique({
+        where: { id: indentId },
+      });
     } catch (err) {
       this.logger.error('DB error during purchase indent lookup', err);
       throw new InternalServerErrorException({
@@ -302,7 +313,9 @@ export class PurchaseOrderProposalsService {
     let vendor: unknown;
 
     try {
-      vendor = await this.prisma.vendors.findUnique({ where: { id: vendorId } });
+      vendor = await this.prisma.vendors.findUnique({
+        where: { id: vendorId },
+      });
     } catch (err) {
       this.logger.error('DB error during vendor lookup', err);
       throw new InternalServerErrorException({
@@ -342,7 +355,9 @@ export class PurchaseOrderProposalsService {
 
   private async findById(id: number) {
     try {
-      return await this.prisma.purchase_order_proposals.findUnique({ where: { id } });
+      return await this.prisma.purchase_order_proposals.findUnique({
+        where: { id },
+      });
     } catch (err) {
       this.logger.error('DB error during purchase order proposal lookup', err);
       throw new InternalServerErrorException({

@@ -45,16 +45,19 @@ export class ResultsController {
   @Patch('results/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.COE)
-  async update(@Param('id') id: string, @Body() updateResultDto: UpdateResultDto) {
+  async update(
+    @Param('id') id: string,
+    @Body() updateResultDto: UpdateResultDto,
+  ) {
     const result = await this.resultsService.update(+id, updateResultDto);
     return ApiResponse.ok(result, 'Result updated successfully.');
   }
   // results.controller.ts — add this method (Delete already imported from before)
-@Delete('results/:id')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.COE)
-async remove(@Param('id') id: string) {
-  const result = await this.resultsService.remove(+id);
-  return ApiResponse.ok(result, 'Result deleted successfully.');
-}
+  @Delete('results/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
+  async remove(@Param('id') id: string) {
+    const result = await this.resultsService.remove(+id);
+    return ApiResponse.ok(result, 'Result deleted successfully.');
+  }
 }

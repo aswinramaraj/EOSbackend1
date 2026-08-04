@@ -10,5 +10,4 @@ export class AcademicCalendarEvent {
   start_time?: Date | null;
   end_time?: Date | null;
   created_by_user_id?: number | null;
-  
 }

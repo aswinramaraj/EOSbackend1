@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+} from '@nestjs/common';
 import { ExamsService } from './exams.service';
 import { CreateExamDto } from './dto/create-exam.dto';
 import { UpdateExamDto } from './dto/update-exam.dto';
@@ -14,12 +23,15 @@ export class ExamsController {
   constructor(private readonly examsService: ExamsService) {}
 
   @Post()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.COE)
-async create(@Body() createExamDto: CreateExamDto, @CurrentUser() user: JwtPayload) {
-  const result = await this.examsService.create(createExamDto, user.sub);
-  return ApiResponse.created(result, 'Exam created successfully');
-}
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
+  async create(
+    @Body() createExamDto: CreateExamDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const result = await this.examsService.create(createExamDto, user.sub);
+    return ApiResponse.created(result, 'Exam created successfully');
+  }
   @Get()
   findAll() {
     return this.examsService.findAll();

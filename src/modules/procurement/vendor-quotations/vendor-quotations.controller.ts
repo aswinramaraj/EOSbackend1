@@ -24,7 +24,9 @@ import { UpdateVendorQuotationDto } from './dto/update-vendor-quotation.dto';
 @Roles(ROLES.ADMIN)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class VendorQuotationsController {
-  constructor(private readonly vendorQuotationsService: VendorQuotationsService) {}
+  constructor(
+    private readonly vendorQuotationsService: VendorQuotationsService,
+  ) {}
 
   /**
    * POST /api/v1/vendor-quotations
@@ -81,7 +83,10 @@ export class VendorQuotationsController {
    *  500 INTERNAL_ERROR             – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateVendorQuotationDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateVendorQuotationDto,
+  ) {
     return this.vendorQuotationsService.update(id, dto);
   }
 
@@ -94,7 +99,10 @@ export class VendorQuotationsController {
    * Error responses: see PUT /api/v1/vendor-quotations/:id
    */
   @Patch(':id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateVendorQuotationDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateVendorQuotationDto,
+  ) {
     return this.vendorQuotationsService.update(id, dto);
   }
 

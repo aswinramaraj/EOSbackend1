@@ -4,12 +4,7 @@ import { ExamSubjectMappingService } from './exam-subject-mapping.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Module({
-  controllers: [
-    ExamSubjectMappingController,
-  ],
-  providers: [
-    ExamSubjectMappingService,
-    PrismaService,
-  ],
+  controllers: [ExamSubjectMappingController],
+  providers: [ExamSubjectMappingService, PrismaService],
 })
 export class ExamSubjectMappingModule {}

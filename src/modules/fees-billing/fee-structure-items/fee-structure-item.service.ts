@@ -125,9 +125,16 @@ export class FeeStructureItemService {
       });
     }
 
-    if (dto.demand_category_id !== undefined && dto.demand_category_id !== item.demand_category_id) {
+    if (
+      dto.demand_category_id !== undefined &&
+      dto.demand_category_id !== item.demand_category_id
+    ) {
       await this.assertDemandCategoryExists(dto.demand_category_id);
-      await this.assertNoDuplicate(item.fee_structure_id, dto.demand_category_id, id);
+      await this.assertNoDuplicate(
+        item.fee_structure_id,
+        dto.demand_category_id,
+        id,
+      );
     }
 
     try {
@@ -180,7 +187,9 @@ export class FeeStructureItemService {
     let feeStructure: unknown;
 
     try {
-      feeStructure = await this.prisma.fee_structures.findUnique({ where: { id: feeStructureId } });
+      feeStructure = await this.prisma.fee_structures.findUnique({
+        where: { id: feeStructureId },
+      });
     } catch (err) {
       this.logger.error('DB error during fee structure lookup', err);
       throw new InternalServerErrorException({
@@ -220,7 +229,11 @@ export class FeeStructureItemService {
     }
   }
 
-  private async assertNoDuplicate(feeStructureId: number, demandCategoryId: number, excludeId?: number) {
+  private async assertNoDuplicate(
+    feeStructureId: number,
+    demandCategoryId: number,
+    excludeId?: number,
+  ) {
     let existing: { id: number } | null;
 
     try {
@@ -234,7 +247,10 @@ export class FeeStructureItemService {
         select: { id: true },
       });
     } catch (err) {
-      this.logger.error('DB error during fee structure item duplicate check', err);
+      this.logger.error(
+        'DB error during fee structure item duplicate check',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -243,7 +259,8 @@ export class FeeStructureItemService {
 
     if (existing && existing.id !== excludeId) {
       throw new ConflictException({
-        message: 'This fee structure already has an item for this demand category',
+        message:
+          'This fee structure already has an item for this demand category',
         errorCode: 'FEE_STRUCTURE_ITEM_EXISTS',
       });
     }
@@ -251,7 +268,9 @@ export class FeeStructureItemService {
 
   private async findById(id: number) {
     try {
-      return await this.prisma.fee_structure_items.findUnique({ where: { id } });
+      return await this.prisma.fee_structure_items.findUnique({
+        where: { id },
+      });
     } catch (err) {
       this.logger.error('DB error during fee structure item lookup', err);
       throw new InternalServerErrorException({

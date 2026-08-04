@@ -56,7 +56,10 @@ export class TransportRouteController {
    */
   @Post(':id/stages')
   @HttpCode(HttpStatus.CREATED)
-  addStage(@Param('id', ParseIntPipe) id: number, @Body() dto: AddTransportStageDto) {
+  addStage(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AddTransportStageDto,
+  ) {
     return this.transportRouteService.addStage(id, dto);
   }
 
@@ -99,7 +102,10 @@ export class TransportRouteController {
    *  500 INTERNAL_ERROR            – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTransportRouteDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTransportRouteDto,
+  ) {
     return this.transportRouteService.update(id, dto);
   }
 
@@ -112,7 +118,10 @@ export class TransportRouteController {
    * Error responses: see PUT /api/v1/transport-routes/:id
    */
   @Patch(':id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTransportRouteDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTransportRouteDto,
+  ) {
     return this.transportRouteService.update(id, dto);
   }
 

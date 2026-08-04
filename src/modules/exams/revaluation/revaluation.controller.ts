@@ -29,7 +29,10 @@ export class RevaluationController {
   @Roles(ROLES.STUDENT)
   async create(@Body() createRevaluationDto: CreateRevaluationDto) {
     const request = await this.revaluationService.create(createRevaluationDto);
-    return ApiResponse.created(request, 'Revaluation request created successfully.');
+    return ApiResponse.created(
+      request,
+      'Revaluation request created successfully.',
+    );
   }
 
   @Get('revaluation-requests')
@@ -37,7 +40,10 @@ export class RevaluationController {
   @Roles(ROLES.COE)
   async findAll(@Query('status') status?: string) {
     const requests = await this.revaluationService.findAll(status);
-    return ApiResponse.ok(requests, 'Revaluation requests fetched successfully.');
+    return ApiResponse.ok(
+      requests,
+      'Revaluation requests fetched successfully.',
+    );
   }
 
   @Get('revaluation-requests/:id')
@@ -55,7 +61,10 @@ export class RevaluationController {
     @Param('id') id: string,
     @Body() updateRevaluationDto: UpdateRevaluationDto,
   ) {
-    const request = await this.revaluationService.update(+id, updateRevaluationDto);
+    const request = await this.revaluationService.update(
+      +id,
+      updateRevaluationDto,
+    );
     return ApiResponse.ok(request, 'Revaluation request updated successfully.');
   }
 
@@ -70,8 +79,17 @@ export class RevaluationController {
   @Post('exams/:id/results/publish-revaluation')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.COE)
-  async publishRevaluation(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    const result = await this.revaluationService.publishRevaluation(+id, user.sub);
-    return ApiResponse.created(result, 'Revaluation results published successfully.');
+  async publishRevaluation(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const result = await this.revaluationService.publishRevaluation(
+      +id,
+      user.sub,
+    );
+    return ApiResponse.created(
+      result,
+      'Revaluation results published successfully.',
+    );
   }
 }

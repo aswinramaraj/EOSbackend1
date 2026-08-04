@@ -56,7 +56,9 @@ const BOOK_INCLUDE = {
   },
 } satisfies Prisma.booksInclude;
 
-type BookWithRelations = Prisma.booksGetPayload<{ include: typeof BOOK_INCLUDE }>;
+type BookWithRelations = Prisma.booksGetPayload<{
+  include: typeof BOOK_INCLUDE;
+}>;
 
 function toBookResponse(book: BookWithRelations) {
   return {
@@ -112,7 +114,9 @@ export class BooksService {
       where: {
         title: { equals: dto.title, mode: 'insensitive' },
         author: dto.author ? { equals: dto.author, mode: 'insensitive' } : null,
-        edition: dto.edition ? { equals: dto.edition, mode: 'insensitive' } : null,
+        edition: dto.edition
+          ? { equals: dto.edition, mode: 'insensitive' }
+          : null,
       },
       include: BOOK_INCLUDE,
     });
@@ -347,7 +351,8 @@ export class BooksService {
       rack: row.rack_id ? { id: row.rack_id, rack_code: row.rack_code } : null,
       total_copies: row.total_copies,
       available_copies: row.available_copies,
-      price_per_copy: row.price_per_copy !== null ? Number(row.price_per_copy) : null,
+      price_per_copy:
+        row.price_per_copy !== null ? Number(row.price_per_copy) : null,
       vendor_fund: row.vendor_fund,
       similarity: Number(row.similarity),
     }));

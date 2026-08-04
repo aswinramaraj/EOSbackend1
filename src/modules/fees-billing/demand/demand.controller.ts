@@ -80,7 +80,10 @@ export class DemandController {
    *  500 INTERNAL_ERROR            – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateDemandCategoryDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateDemandCategoryDto,
+  ) {
     return this.demandService.update(id, dto);
   }
 

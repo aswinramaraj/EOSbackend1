@@ -87,7 +87,10 @@ export class PurchaseOrdersController {
    *  500 INTERNAL_ERROR                    – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePurchaseOrderDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePurchaseOrderDto,
+  ) {
     return this.purchaseOrdersService.update(id, dto);
   }
 
@@ -100,7 +103,10 @@ export class PurchaseOrdersController {
    * Error responses: see PUT /api/v1/purchase-orders/:id
    */
   @Patch(':id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePurchaseOrderDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePurchaseOrderDto,
+  ) {
     return this.purchaseOrdersService.update(id, dto);
   }
 

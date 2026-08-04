@@ -80,7 +80,10 @@ export class FeeConcessionController {
    */
   @Post('fee-structures/:id/concessions')
   @HttpCode(HttpStatus.CREATED)
-  create(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateFeeConcessionDto) {
+  create(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateFeeConcessionDto,
+  ) {
     return this.feeConcessionService.create(id, dto);
   }
 
@@ -96,7 +99,10 @@ export class FeeConcessionController {
    *  500 INTERNAL_ERROR            – unexpected server failure
    */
   @Put('fee-concessions/:id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateFeeConcessionDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateFeeConcessionDto,
+  ) {
     return this.feeConcessionService.update(id, dto);
   }
 
@@ -109,7 +115,10 @@ export class FeeConcessionController {
    * Error responses: see PUT /api/v1/fee-concessions/:id
    */
   @Patch('fee-concessions/:id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateFeeConcessionDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateFeeConcessionDto,
+  ) {
     return this.feeConcessionService.update(id, dto);
   }
 

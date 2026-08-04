@@ -65,7 +65,12 @@ describe('EResourcesController', () => {
       url: 'https://example.com',
       category_id: 1,
     };
-    const user = { sub: 1, email: 'library@eos.test', role: 'library', roleId: 8 };
+    const user = {
+      sub: 1,
+      email: 'library@eos.test',
+      role: 'library',
+      roleId: 8,
+    };
     const expected = { id: 1, ...dto };
     mockEResourcesService.create.mockResolvedValue(expected);
 

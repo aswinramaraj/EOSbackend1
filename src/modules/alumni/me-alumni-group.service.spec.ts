@@ -39,9 +39,7 @@ describe('MeAlumniGroupService', () => {
       mockPrisma.students.findUnique.mockResolvedValue({ id: 10 });
       mockPrisma.alumni_members.findUnique.mockResolvedValue(null);
 
-      await expect(service.getOwnGroup(1)).rejects.toThrow(
-        ForbiddenException,
-      );
+      await expect(service.getOwnGroup(1)).rejects.toThrow(ForbiddenException);
     });
 
     it('returns the batch and roster, preferring soa_applications name then falling back to email', async () => {

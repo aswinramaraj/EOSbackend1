@@ -110,16 +110,25 @@ export class ServiceOrdersService {
       });
     }
 
-    if (dto.proposal_id !== undefined && dto.proposal_id !== serviceOrder.proposal_id) {
+    if (
+      dto.proposal_id !== undefined &&
+      dto.proposal_id !== serviceOrder.proposal_id
+    ) {
       await this.assertProposalExists(dto.proposal_id);
       await this.assertProposalNotAlreadyUsed(dto.proposal_id, id);
     }
 
-    if (dto.so_number !== undefined && dto.so_number !== serviceOrder.so_number) {
+    if (
+      dto.so_number !== undefined &&
+      dto.so_number !== serviceOrder.so_number
+    ) {
       await this.assertSoNumberAvailable(dto.so_number, id);
     }
 
-    if (dto.approved_by_user_id !== undefined && dto.approved_by_user_id !== null) {
+    if (
+      dto.approved_by_user_id !== undefined &&
+      dto.approved_by_user_id !== null
+    ) {
       await this.assertUserExists(dto.approved_by_user_id);
     }
 
@@ -180,7 +189,9 @@ export class ServiceOrdersService {
     let proposal: unknown;
 
     try {
-      proposal = await this.prisma.service_order_proposals.findUnique({ where: { id: proposalId } });
+      proposal = await this.prisma.service_order_proposals.findUnique({
+        where: { id: proposalId },
+      });
     } catch (err) {
       this.logger.error('DB error during service order proposal lookup', err);
       throw new InternalServerErrorException({
@@ -197,7 +208,10 @@ export class ServiceOrdersService {
     }
   }
 
-  private async assertProposalNotAlreadyUsed(proposalId: number, excludeId?: number) {
+  private async assertProposalNotAlreadyUsed(
+    proposalId: number,
+    excludeId?: number,
+  ) {
     let existing: { id: number } | null;
 
     try {
@@ -206,7 +220,10 @@ export class ServiceOrdersService {
         select: { id: true },
       });
     } catch (err) {
-      this.logger.error('DB error during service order proposal usage check', err);
+      this.logger.error(
+        'DB error during service order proposal usage check',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -215,7 +232,8 @@ export class ServiceOrdersService {
 
     if (existing && existing.id !== excludeId) {
       throw new ConflictException({
-        message: 'This proposal has already been converted into a service order',
+        message:
+          'This proposal has already been converted into a service order',
         errorCode: 'SERVICE_ORDER_PROPOSAL_IN_USE',
       });
     }
@@ -230,7 +248,10 @@ export class ServiceOrdersService {
         select: { id: true },
       });
     } catch (err) {
-      this.logger.error('DB error during service order number duplicate check', err);
+      this.logger.error(
+        'DB error during service order number duplicate check',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

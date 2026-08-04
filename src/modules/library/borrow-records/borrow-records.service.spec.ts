@@ -157,8 +157,18 @@ describe('BorrowRecordsService', () => {
       due_date: '2026-08-15',
     };
 
-    const libraryUser = { sub: 1, email: 'library@eos.test', role: 'library', roleId: 8 };
-    const studentUser = { sub: 40, email: 'student@eos.test', role: 'student', roleId: 4 };
+    const libraryUser = {
+      sub: 1,
+      email: 'library@eos.test',
+      role: 'library',
+      roleId: 8,
+    };
+    const studentUser = {
+      sub: 40,
+      email: 'student@eos.test',
+      role: 'student',
+      roleId: 4,
+    };
 
     it('should create a borrow record for a student successfully (issued by library staff)', async () => {
       mockPrismaService.books.findUnique.mockResolvedValue({
@@ -503,10 +513,7 @@ describe('BorrowRecordsService', () => {
         makeRecord(),
       );
 
-      await service.create(
-        { ...studentDto, faculty_id: 999 } as any,
-        libraryUser,
-      );
+      await service.create({ ...studentDto, faculty_id: 999 }, libraryUser);
 
       expect(mockPrismaService.book_borrow_records.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -516,7 +523,7 @@ describe('BorrowRecordsService', () => {
     });
 
     describe('self-service student authorization', () => {
-      it('resolves student_id from the caller\'s own profile and ignores an absent student_id', async () => {
+      it("resolves student_id from the caller's own profile and ignores an absent student_id", async () => {
         mockPrismaService.books.findUnique.mockResolvedValue({
           id: 2,
           available_copies: 3,
@@ -533,7 +540,7 @@ describe('BorrowRecordsService', () => {
             book_id: 2,
             borrower_type: BorrowerType.student,
             due_date: '2026-08-15',
-          } as any,
+          },
           studentUser,
         );
 
@@ -616,9 +623,24 @@ describe('BorrowRecordsService', () => {
   });
 
   describe('findAll', () => {
-    const libraryUser = { sub: 1, email: 'library@eos.test', role: 'library', roleId: 8 };
-    const studentUser = { sub: 40, email: 'student@eos.test', role: 'student', roleId: 4 };
-    const facultyUser = { sub: 41, email: 'faculty@eos.test', role: 'faculty', roleId: 3 };
+    const libraryUser = {
+      sub: 1,
+      email: 'library@eos.test',
+      role: 'library',
+      roleId: 8,
+    };
+    const studentUser = {
+      sub: 40,
+      email: 'student@eos.test',
+      role: 'student',
+      roleId: 4,
+    };
+    const facultyUser = {
+      sub: 41,
+      email: 'faculty@eos.test',
+      role: 'faculty',
+      roleId: 3,
+    };
 
     it('should return paginated results with no filters (library — unrestricted)', async () => {
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
@@ -712,12 +734,12 @@ describe('BorrowRecordsService', () => {
       );
     });
 
-    it('should scope results to the caller\'s own student_id and ignore a different requested student_id', async () => {
+    it("should scope results to the caller's own student_id and ignore a different requested student_id", async () => {
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
       mockPrismaService.book_borrow_records.count.mockResolvedValue(0);
       mockPrismaService.students.findUnique.mockResolvedValue({ id: 7 });
 
-      await service.findAll({ student_id: 999 } as any, studentUser);
+      await service.findAll({ student_id: 999 }, studentUser);
 
       expect(mockPrismaService.students.findUnique).toHaveBeenCalledWith({
         where: { user_id: studentUser.sub },
@@ -729,7 +751,7 @@ describe('BorrowRecordsService', () => {
       );
     });
 
-    it('should scope results to the caller\'s own faculty_id', async () => {
+    it("should scope results to the caller's own faculty_id", async () => {
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
       mockPrismaService.book_borrow_records.count.mockResolvedValue(0);
       mockPrismaService.faculty.findUnique.mockResolvedValue({ id: 9 });
@@ -759,8 +781,18 @@ describe('BorrowRecordsService', () => {
   });
 
   describe('findOne', () => {
-    const libraryUser = { sub: 1, email: 'library@eos.test', role: 'library', roleId: 8 };
-    const studentUser = { sub: 40, email: 'student@eos.test', role: 'student', roleId: 4 };
+    const libraryUser = {
+      sub: 1,
+      email: 'library@eos.test',
+      role: 'library',
+      roleId: 8,
+    };
+    const studentUser = {
+      sub: 40,
+      email: 'student@eos.test',
+      role: 'student',
+      roleId: 4,
+    };
 
     it('should return the formatted record when found (library — unrestricted)', async () => {
       mockPrismaService.book_borrow_records.findUnique.mockResolvedValue(
@@ -1085,7 +1117,12 @@ describe('BorrowRecordsService', () => {
   });
 
   describe('findMyBorrowRecords', () => {
-    const studentUser = { sub: 40, email: 'student@eos.test', role: 'student', roleId: 4 };
+    const studentUser = {
+      sub: 40,
+      email: 'student@eos.test',
+      role: 'student',
+      roleId: 4,
+    };
 
     const makeMyRecord = (overrides: Partial<Record<string, any>> = {}) => ({
       id: 3,
@@ -1143,7 +1180,10 @@ describe('BorrowRecordsService', () => {
       mockPrismaService.students.findUnique.mockResolvedValue({ id: 7 });
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
 
-      await service.findMyBorrowRecords({ status: 'returned' as any }, studentUser);
+      await service.findMyBorrowRecords(
+        { status: 'returned' as any },
+        studentUser,
+      );
 
       expect(
         mockPrismaService.book_borrow_records.findMany,
@@ -1154,11 +1194,14 @@ describe('BorrowRecordsService', () => {
       );
     });
 
-    it("maps status=overdue to the derived borrowed+past-due-date filter, since the DB never stores that literal status", async () => {
+    it('maps status=overdue to the derived borrowed+past-due-date filter, since the DB never stores that literal status', async () => {
       mockPrismaService.students.findUnique.mockResolvedValue({ id: 7 });
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
 
-      await service.findMyBorrowRecords({ status: 'overdue' as any }, studentUser);
+      await service.findMyBorrowRecords(
+        { status: 'overdue' as any },
+        studentUser,
+      );
 
       expect(
         mockPrismaService.book_borrow_records.findMany,

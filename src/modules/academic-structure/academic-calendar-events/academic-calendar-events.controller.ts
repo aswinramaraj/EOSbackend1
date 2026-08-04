@@ -22,7 +22,9 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 @Controller('academic-calendar-events')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AcademicCalendarEventsController {
-  constructor(private readonly academicCalendarEventsService: AcademicCalendarEventsService) {}
+  constructor(
+    private readonly academicCalendarEventsService: AcademicCalendarEventsService,
+  ) {}
 
   @Post()
   @Roles(ROLES.ACADEMIC_COORDINATOR)
@@ -30,7 +32,10 @@ export class AcademicCalendarEventsController {
     @Body() createAcademicCalendarEventDto: CreateAcademicCalendarEventDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.academicCalendarEventsService.create(createAcademicCalendarEventDto, user.sub);
+    return this.academicCalendarEventsService.create(
+      createAcademicCalendarEventDto,
+      user.sub,
+    );
   }
 
   @Get()
@@ -51,7 +56,10 @@ export class AcademicCalendarEventsController {
     @Param('id') id: string,
     @Body() updateAcademicCalendarEventDto: UpdateAcademicCalendarEventDto,
   ) {
-    return this.academicCalendarEventsService.update(+id, updateAcademicCalendarEventDto);
+    return this.academicCalendarEventsService.update(
+      +id,
+      updateAcademicCalendarEventDto,
+    );
   }
 
   @Delete(':id')

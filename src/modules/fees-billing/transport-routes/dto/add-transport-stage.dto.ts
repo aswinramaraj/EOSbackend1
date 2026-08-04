@@ -1,4 +1,11 @@
-import { IsInt, IsNotEmpty, IsNumber, IsString, Min, MaxLength } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsString,
+  Min,
+  MaxLength,
+} from 'class-validator';
 
 export class AddTransportStageDto {
   @IsString()

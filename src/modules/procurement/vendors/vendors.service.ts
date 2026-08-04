@@ -131,7 +131,9 @@ export class VendorsService {
 
     try {
       usageCounts = await Promise.all([
-        this.prisma.purchase_order_proposals.count({ where: { vendor_id: id } }),
+        this.prisma.purchase_order_proposals.count({
+          where: { vendor_id: id },
+        }),
         this.prisma.service_order_proposals.count({ where: { vendor_id: id } }),
         this.prisma.vendor_quotations.count({ where: { vendor_id: id } }),
       ]);

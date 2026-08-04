@@ -1,4 +1,10 @@
-import { IsInt, IsNotEmpty, IsNumber, IsString, MaxLength } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateVendorQuotationDto {
   @IsInt()

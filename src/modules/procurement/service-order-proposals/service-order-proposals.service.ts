@@ -155,7 +155,8 @@ export class ServiceOrderProposalsService {
 
     if (proposal.status !== proposal_status_enum.pending) {
       throw new UnprocessableEntityException({
-        message: 'Finance review can only be recorded while the proposal is pending',
+        message:
+          'Finance review can only be recorded while the proposal is pending',
         errorCode: 'INVALID_WORKFLOW_STATE',
       });
     }
@@ -203,7 +204,8 @@ export class ServiceOrderProposalsService {
 
     if (proposal.status !== proposal_status_enum.finance_approved) {
       throw new UnprocessableEntityException({
-        message: 'HoD review can only be recorded once the proposal is finance approved',
+        message:
+          'HoD review can only be recorded once the proposal is finance approved',
         errorCode: 'INVALID_WORKFLOW_STATE',
       });
     }
@@ -250,7 +252,10 @@ export class ServiceOrderProposalsService {
         where: { proposal_id: id },
       });
     } catch (err) {
-      this.logger.error('DB error while checking service order proposal usage', err);
+      this.logger.error(
+        'DB error while checking service order proposal usage',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -259,7 +264,8 @@ export class ServiceOrderProposalsService {
 
     if (serviceOrderCount > 0) {
       throw new ConflictException({
-        message: 'This proposal has already been converted into a service order and cannot be deleted',
+        message:
+          'This proposal has already been converted into a service order and cannot be deleted',
         errorCode: 'PROPOSAL_IN_USE',
       });
     }
@@ -281,7 +287,9 @@ export class ServiceOrderProposalsService {
     let indent: unknown;
 
     try {
-      indent = await this.prisma.service_indents.findUnique({ where: { id: indentId } });
+      indent = await this.prisma.service_indents.findUnique({
+        where: { id: indentId },
+      });
     } catch (err) {
       this.logger.error('DB error during service indent lookup', err);
       throw new InternalServerErrorException({
@@ -302,7 +310,9 @@ export class ServiceOrderProposalsService {
     let vendor: unknown;
 
     try {
-      vendor = await this.prisma.vendors.findUnique({ where: { id: vendorId } });
+      vendor = await this.prisma.vendors.findUnique({
+        where: { id: vendorId },
+      });
     } catch (err) {
       this.logger.error('DB error during vendor lookup', err);
       throw new InternalServerErrorException({
@@ -342,7 +352,9 @@ export class ServiceOrderProposalsService {
 
   private async findById(id: number) {
     try {
-      return await this.prisma.service_order_proposals.findUnique({ where: { id } });
+      return await this.prisma.service_order_proposals.findUnique({
+        where: { id },
+      });
     } catch (err) {
       this.logger.error('DB error during service order proposal lookup', err);
       throw new InternalServerErrorException({

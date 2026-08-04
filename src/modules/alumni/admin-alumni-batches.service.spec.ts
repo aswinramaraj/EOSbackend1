@@ -23,9 +23,7 @@ describe('AdminAlumniBatchesService', () => {
       ],
     }).compile();
 
-    service = module.get<AdminAlumniBatchesService>(
-      AdminAlumniBatchesService,
-    );
+    service = module.get<AdminAlumniBatchesService>(AdminAlumniBatchesService);
   });
 
   it('resolves member_count via a single aggregate query, not N+1', async () => {

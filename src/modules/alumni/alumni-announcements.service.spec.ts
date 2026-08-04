@@ -34,7 +34,12 @@ describe('AlumniAnnouncementsService', () => {
 
   it('lists announcements with no batch filter — same feed for every alumnus', async () => {
     mockPrisma.alumni_announcements.findMany.mockResolvedValue([
-      { id: 1, title: 'Reunion 2026', content: 'Details...', created_at: new Date() },
+      {
+        id: 1,
+        title: 'Reunion 2026',
+        content: 'Details...',
+        created_at: new Date(),
+      },
     ]);
     mockPrisma.alumni_announcements.count.mockResolvedValue(1);
 
@@ -55,7 +60,11 @@ describe('AlumniAnnouncementsService', () => {
     });
 
     expect(mockPrisma.alumni_announcements.create).toHaveBeenCalledWith({
-      data: { posted_by_user_id: 42, title: 'Reunion 2026', content: 'Join us!' },
+      data: {
+        posted_by_user_id: 42,
+        title: 'Reunion 2026',
+        content: 'Join us!',
+      },
     });
   });
 });

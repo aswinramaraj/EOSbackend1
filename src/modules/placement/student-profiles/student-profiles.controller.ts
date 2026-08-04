@@ -33,7 +33,9 @@ import type { JwtPayload } from '../../../auth/interfaces/jwt-payload.interface'
 @Controller('student-profiles')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class StudentProfilesController {
-  constructor(private readonly studentProfilesService: StudentProfilesService) {}
+  constructor(
+    private readonly studentProfilesService: StudentProfilesService,
+  ) {}
 
   @Get('me')
   @Roles(ROLES.STUDENT)

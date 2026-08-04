@@ -13,12 +13,20 @@ export class HallTicketsService {
   async generate(examId: number, studentId: number) {
     const exam = await this.prisma.exams.findUnique({ where: { id: examId } });
     if (!exam) {
-      throw new NotFoundException({ message: 'Exam not found', errorCode: 'EXAM_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Exam not found',
+        errorCode: 'EXAM_NOT_FOUND',
+      });
     }
 
-    const student = await this.prisma.students.findUnique({ where: { id: studentId } });
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+    });
     if (!student) {
-      throw new NotFoundException({ message: 'Student not found', errorCode: 'STUDENT_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
     }
 
     const publishedSlot = await this.prisma.exam_timetable.findFirst({
@@ -39,7 +47,8 @@ export class HallTicketsService {
     });
     if (existing) {
       throw new ConflictException({
-        message: 'Hall ticket has already been generated for this student and exam',
+        message:
+          'Hall ticket has already been generated for this student and exam',
         errorCode: 'ALREADY_GENERATED',
       });
     }

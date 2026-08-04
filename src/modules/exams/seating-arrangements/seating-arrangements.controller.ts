@@ -26,7 +26,9 @@ import { ApiResponse } from 'src/common/dto/api-response.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(ROLES.COE)
 export class SeatingArrangementsController {
-  constructor(private readonly seatingArrangementsService: SeatingArrangementsService) {}
+  constructor(
+    private readonly seatingArrangementsService: SeatingArrangementsService,
+  ) {}
 
   @Post('allocate')
   @HttpCode(HttpStatus.CREATED)

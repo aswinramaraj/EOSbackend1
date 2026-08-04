@@ -24,7 +24,9 @@ import { UpdateEducationLoanDdDto } from './dto/update-education-loan-dd.dto';
 @Roles(ROLES.ADMIN)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class EducationLoanDdController {
-  constructor(private readonly educationLoanDdService: EducationLoanDdService) {}
+  constructor(
+    private readonly educationLoanDdService: EducationLoanDdService,
+  ) {}
 
   /**
    * GET /api/v1/education-loan-dds
@@ -82,7 +84,10 @@ export class EducationLoanDdController {
    */
   @Post('student-fee-demand-mappings/:id/education-loan-dds')
   @HttpCode(HttpStatus.CREATED)
-  create(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateEducationLoanDdDto) {
+  create(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateEducationLoanDdDto,
+  ) {
     return this.educationLoanDdService.create(id, dto);
   }
 
@@ -100,7 +105,10 @@ export class EducationLoanDdController {
    *  500 INTERNAL_ERROR                       – unexpected server failure
    */
   @Put('education-loan-dds/:id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateEducationLoanDdDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateEducationLoanDdDto,
+  ) {
     return this.educationLoanDdService.update(id, dto);
   }
 
@@ -113,7 +121,10 @@ export class EducationLoanDdController {
    * Error responses: see PUT /api/v1/education-loan-dds/:id
    */
   @Patch('education-loan-dds/:id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateEducationLoanDdDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateEducationLoanDdDto,
+  ) {
     return this.educationLoanDdService.update(id, dto);
   }
 

@@ -16,7 +16,6 @@ export class CreateFeedbackQuestionDto {
   question_text: string;
 
   @IsOptional()
-  
   @IsInt()
   @Min(1)
   sequence_no?: number;

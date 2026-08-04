@@ -1,4 +1,8 @@
-import { WebSocketGateway, SubscribeMessage, MessageBody } from '@nestjs/websockets';
+import {
+  WebSocketGateway,
+  SubscribeMessage,
+  MessageBody,
+} from '@nestjs/websockets';
 import { NotificationsService } from './notifications.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { UpdateNotificationDto } from './dto/update-notification.dto';
@@ -24,7 +28,10 @@ export class NotificationsGateway {
 
   @SubscribeMessage('updateNotification')
   update(@MessageBody() updateNotificationDto: UpdateNotificationDto) {
-    return this.notificationsService.update(updateNotificationDto.id, updateNotificationDto);
+    return this.notificationsService.update(
+      updateNotificationDto.id,
+      updateNotificationDto,
+    );
   }
 
   @SubscribeMessage('removeNotification')

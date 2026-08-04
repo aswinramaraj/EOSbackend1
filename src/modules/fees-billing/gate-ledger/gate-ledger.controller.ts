@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+} from '@nestjs/common';
 import { GateLedgerService } from './gate-ledger.service';
 import { CreateGateLedgerDto } from './dto/create-gate-ledger.dto';
 import { UpdateGateLedgerDto } from './dto/update-gate-ledger.dto';
@@ -23,7 +31,10 @@ export class GateLedgerController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateGateLedgerDto: UpdateGateLedgerDto) {
+  update(
+    @Param('id') id: string,
+    @Body() updateGateLedgerDto: UpdateGateLedgerDto,
+  ) {
     return this.gateLedgerService.update(+id, updateGateLedgerDto);
   }
 

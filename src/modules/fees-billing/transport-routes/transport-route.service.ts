@@ -147,7 +147,9 @@ export class TransportRouteService {
       usageCounts = await Promise.all([
         this.prisma.transport_stages.count({ where: { route_id: id } }),
         this.prisma.buses.count({ where: { route_id: id } }),
-        this.prisma.student_transport_mapping.count({ where: { route_id: id } }),
+        this.prisma.student_transport_mapping.count({
+          where: { route_id: id },
+        }),
       ]);
     } catch (err) {
       this.logger.error('DB error while checking transport route usage', err);
@@ -199,7 +201,12 @@ export class TransportRouteService {
 
     try {
       existingStage = await this.prisma.transport_stages.findUnique({
-        where: { route_id_sequence_no: { route_id: routeId, sequence_no: dto.sequence_no } },
+        where: {
+          route_id_sequence_no: {
+            route_id: routeId,
+            sequence_no: dto.sequence_no,
+          },
+        },
       });
     } catch (err) {
       this.logger.error('DB error during transport stage duplicate check', err);
@@ -211,7 +218,8 @@ export class TransportRouteService {
 
     if (existingStage) {
       throw new ConflictException({
-        message: 'A stage with this sequence number already exists for this route',
+        message:
+          'A stage with this sequence number already exists for this route',
         errorCode: 'TRANSPORT_STAGE_EXISTS',
       });
     }

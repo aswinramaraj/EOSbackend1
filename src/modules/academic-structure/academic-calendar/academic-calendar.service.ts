@@ -17,60 +17,61 @@ export class AcademicCalendarService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateAcademicCalendarDto, userId: number) {
-  if (new Date(dto.end_date) <= new Date(dto.start_date)) {
-    throw new UnprocessableEntityException({
-      message: 'end_date must be after start_date',
-      errorCode: 'INVALID_DATE_RANGE',
+    if (new Date(dto.end_date) <= new Date(dto.start_date)) {
+      throw new UnprocessableEntityException({
+        message: 'end_date must be after start_date',
+        errorCode: 'INVALID_DATE_RANGE',
+      });
+    }
+
+    const batch = await this.prisma.batches.findUnique({
+      where: { id: dto.batch_id },
     });
-  }
 
-  const batch = await this.prisma.batches.findUnique({
-    where: { id: dto.batch_id },
-  });
+    if (!batch) {
+      throw new NotFoundException({
+        message: 'Batch not found',
+        errorCode: 'NOT_FOUND',
+      });
+    }
 
-  if (!batch) {
-    throw new NotFoundException({
-      message: 'Batch not found',
-      errorCode: 'NOT_FOUND',
-    });
-  }
-
-  const existing = await this.prisma.academic_calendars.findUnique({
-    where: {
-      batch_id_semester: {
-        batch_id: dto.batch_id,
-        semester: dto.semester,
-      },
-    },
-  });
-
-  if (existing) {
-    throw new ConflictException({
-      message: 'An academic calendar already exists for this batch and semester',
-      errorCode: 'CALENDAR_ALREADY_EXISTS',
-    });
-  }
-
-  try {
-    return await this.prisma.academic_calendars.create({
-      data: {
-        batch_id: dto.batch_id,
-        semester: dto.semester,
-        start_date: new Date(dto.start_date),
-        end_date: new Date(dto.end_date),
-        created_by_user_id: userId,
+    const existing = await this.prisma.academic_calendars.findUnique({
+      where: {
+        batch_id_semester: {
+          batch_id: dto.batch_id,
+          semester: dto.semester,
+        },
       },
     });
-  } catch (err) {
-    this.logger.error('DB error creating academic calendar', err);
 
-    throw new InternalServerErrorException({
-      message: 'Something went wrong. Please try again.',
-      errorCode: 'INTERNAL_ERROR',
-    });
+    if (existing) {
+      throw new ConflictException({
+        message:
+          'An academic calendar already exists for this batch and semester',
+        errorCode: 'CALENDAR_ALREADY_EXISTS',
+      });
+    }
+
+    try {
+      return await this.prisma.academic_calendars.create({
+        data: {
+          batch_id: dto.batch_id,
+          semester: dto.semester,
+          start_date: new Date(dto.start_date),
+          end_date: new Date(dto.end_date),
+          created_by_user_id: userId,
+        },
+      });
+    } catch (err) {
+      this.logger.error('DB error creating academic calendar', err);
+
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
   }
-  
-}  findAll() {
+  findAll() {
     return this.prisma.academic_calendars.findMany({
       orderBy: [{ batch_id: 'asc' }, { semester: 'asc' }],
     });
@@ -104,10 +105,7 @@ export class AcademicCalendarService {
       });
     }
 
-    if (
-      dto.batch_id !== undefined &&
-      dto.batch_id !== calendar.batch_id
-    ) {
+    if (dto.batch_id !== undefined && dto.batch_id !== calendar.batch_id) {
       const batch = await this.prisma.batches.findUnique({
         where: { id: dto.batch_id },
       });
@@ -120,22 +118,18 @@ export class AcademicCalendarService {
       }
     }
 
-    if (
-      dto.batch_id !== undefined ||
-      dto.semester !== undefined
-    ) {
+    if (dto.batch_id !== undefined || dto.semester !== undefined) {
       const nextBatchId = dto.batch_id ?? calendar.batch_id;
       const nextSemester = dto.semester ?? calendar.semester;
 
-      const duplicate =
-        await this.prisma.academic_calendars.findUnique({
-          where: {
-            batch_id_semester: {
-              batch_id: nextBatchId,
-              semester: nextSemester,
-            },
+      const duplicate = await this.prisma.academic_calendars.findUnique({
+        where: {
+          batch_id_semester: {
+            batch_id: nextBatchId,
+            semester: nextSemester,
           },
-        });
+        },
+      });
 
       if (duplicate && duplicate.id !== id) {
         throw new ConflictException({
@@ -152,19 +146,12 @@ export class AcademicCalendarService {
         data: {
           batch_id: dto.batch_id,
           semester: dto.semester,
-          start_date: dto.start_date
-            ? new Date(dto.start_date)
-            : undefined,
-          end_date: dto.end_date
-            ? new Date(dto.end_date)
-            : undefined,
+          start_date: dto.start_date ? new Date(dto.start_date) : undefined,
+          end_date: dto.end_date ? new Date(dto.end_date) : undefined,
         },
       });
     } catch (err) {
-      this.logger.error(
-        `DB error updating academic calendar #${id}`,
-        err,
-      );
+      this.logger.error(`DB error updating academic calendar #${id}`, err);
 
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
@@ -183,4 +170,5 @@ export class AcademicCalendarService {
     return {
       message: 'Academic calendar deleted successfully',
     };
-  }}
+  }
+}

@@ -9,6 +9,25 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateHostelRoomDto } from './dto/create-hostel-room.dto';
 import { UpdateHostelRoomDto } from './dto/update-hostel-room.dto';
 
+function toRoomResponse(room: {
+  id: number;
+  hostel_id: number;
+  room_number: string;
+  room_type_id: number;
+  capacity: number;
+  _count: { student_hostel_mapping: number };
+}) {
+  return {
+    id: room.id,
+    hostel_id: room.hostel_id,
+    room_number: room.room_number,
+    room_type_id: room.room_type_id,
+    capacity: room.capacity,
+    occupied: room._count.student_hostel_mapping,
+    vacant: room.capacity - room._count.student_hostel_mapping,
+  };
+}
+
 @Injectable()
 export class HostelRoomService {
   private readonly logger = new Logger(HostelRoomService.name);
@@ -19,30 +38,39 @@ export class HostelRoomService {
    * POST /hostel-rooms
    *
    * Error cases:
+   *  404 HOSTEL_NOT_FOUND           – hostel_id does not exist
    *  404 HOSTEL_ROOM_TYPE_NOT_FOUND – room_type_id does not exist
-   *  409 HOSTEL_ROOM_EXISTS         – a room with the same room_number already exists
+   *  409 HOSTEL_ROOM_EXISTS         – a room with the same room_number already exists in this hostel
    *  500 INTERNAL_ERROR             – unexpected failure (DB, etc.)
    */
   async create(dto: CreateHostelRoomDto) {
+    await this.assertHostelExists(dto.hostel_id);
     await this.assertRoomTypeExists(dto.room_type_id);
 
-    const existing = await this.findByRoomNumber(dto.room_number);
+    const existing = await this.findByHostelAndRoomNumber(
+      dto.hostel_id,
+      dto.room_number,
+    );
 
     if (existing) {
       throw new ConflictException({
-        message: 'A hostel room with this room number already exists',
+        message:
+          'A hostel room with this room number already exists in this hostel',
         errorCode: 'HOSTEL_ROOM_EXISTS',
       });
     }
 
     try {
-      return await this.prisma.hostel_rooms.create({
+      const room = await this.prisma.hostel_rooms.create({
         data: {
+          hostel_id: dto.hostel_id,
           room_number: dto.room_number,
           room_type_id: dto.room_type_id,
           capacity: dto.capacity,
         },
+        include: { _count: { select: { student_hostel_mapping: true } } },
       });
+      return toRoomResponse(room);
     } catch (err) {
       this.logger.error('DB error while creating hostel room', err);
       throw new InternalServerErrorException({
@@ -53,13 +81,16 @@ export class HostelRoomService {
   }
 
   /**
-   * GET /hostel-rooms
+   * GET /hostel-rooms?hostel_id=
    */
-  async findAll() {
+  async findAll(hostelId?: number) {
     try {
-      return await this.prisma.hostel_rooms.findMany({
+      const rooms = await this.prisma.hostel_rooms.findMany({
+        where: hostelId ? { hostel_id: hostelId } : {},
+        include: { _count: { select: { student_hostel_mapping: true } } },
         orderBy: { room_number: 'asc' },
       });
+      return rooms.map(toRoomResponse);
     } catch (err) {
       this.logger.error('DB error while fetching hostel rooms', err);
       throw new InternalServerErrorException({
@@ -85,7 +116,7 @@ export class HostelRoomService {
       });
     }
 
-    return room;
+    return toRoomResponse(room);
   }
 
   /**
@@ -93,8 +124,9 @@ export class HostelRoomService {
    *
    * Error cases:
    *  404 HOSTEL_ROOM_NOT_FOUND      – no room with the given id
+   *  404 HOSTEL_NOT_FOUND           – hostel_id does not exist
    *  404 HOSTEL_ROOM_TYPE_NOT_FOUND – room_type_id does not exist
-   *  409 HOSTEL_ROOM_EXISTS         – another room already uses this room_number
+   *  409 HOSTEL_ROOM_EXISTS         – another room already uses this room_number in this hostel
    */
   async update(id: number, dto: UpdateHostelRoomDto) {
     const room = await this.findById(id);
@@ -106,30 +138,43 @@ export class HostelRoomService {
       });
     }
 
+    if (dto.hostel_id) {
+      await this.assertHostelExists(dto.hostel_id);
+    }
+
     if (dto.room_type_id) {
       await this.assertRoomTypeExists(dto.room_type_id);
     }
 
-    if (dto.room_number) {
-      const existing = await this.findByRoomNumber(dto.room_number);
+    if (dto.room_number || dto.hostel_id) {
+      const effectiveHostelId = dto.hostel_id ?? room.hostel_id;
+      const effectiveRoomNumber = dto.room_number ?? room.room_number;
+      const existing = await this.findByHostelAndRoomNumber(
+        effectiveHostelId,
+        effectiveRoomNumber,
+      );
 
       if (existing && existing.id !== id) {
         throw new ConflictException({
-          message: 'A hostel room with this room number already exists',
+          message:
+            'A hostel room with this room number already exists in this hostel',
           errorCode: 'HOSTEL_ROOM_EXISTS',
         });
       }
     }
 
     try {
-      return await this.prisma.hostel_rooms.update({
+      const updated = await this.prisma.hostel_rooms.update({
         where: { id },
         data: {
+          hostel_id: dto.hostel_id,
           room_number: dto.room_number,
           room_type_id: dto.room_type_id,
           capacity: dto.capacity,
         },
+        include: { _count: { select: { student_hostel_mapping: true } } },
       });
+      return toRoomResponse(updated);
     } catch (err) {
       this.logger.error('DB error while updating hostel room', err);
       throw new InternalServerErrorException({
@@ -156,21 +201,7 @@ export class HostelRoomService {
       });
     }
 
-    let usageCount: number;
-
-    try {
-      usageCount = await this.prisma.student_hostel_mapping.count({
-        where: { room_id: id },
-      });
-    } catch (err) {
-      this.logger.error('DB error while checking hostel room usage', err);
-      throw new InternalServerErrorException({
-        message: 'Something went wrong. Please try again.',
-        errorCode: 'INTERNAL_ERROR',
-      });
-    }
-
-    if (usageCount > 0) {
+    if (room._count.student_hostel_mapping > 0) {
       throw new ConflictException({
         message: 'This hostel room is in use and cannot be deleted',
         errorCode: 'HOSTEL_ROOM_IN_USE',
@@ -178,9 +209,8 @@ export class HostelRoomService {
     }
 
     try {
-      return await this.prisma.hostel_rooms.delete({
-        where: { id },
-      });
+      await this.prisma.hostel_rooms.delete({ where: { id } });
+      return { message: 'Hostel room deleted successfully' };
     } catch (err) {
       this.logger.error('DB error while deleting hostel room', err);
       throw new InternalServerErrorException({
@@ -190,11 +220,35 @@ export class HostelRoomService {
     }
   }
 
+  private async assertHostelExists(hostelId: number) {
+    let hostel: unknown;
+    try {
+      hostel = await this.prisma.hostels.findUnique({
+        where: { id: hostelId },
+      });
+    } catch (err) {
+      this.logger.error('DB error during hostel lookup', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (!hostel) {
+      throw new NotFoundException({
+        message: 'Hostel not found',
+        errorCode: 'HOSTEL_NOT_FOUND',
+      });
+    }
+  }
+
   private async assertRoomTypeExists(roomTypeId: number) {
     let roomType: unknown;
 
     try {
-      roomType = await this.prisma.hostel_room_types.findUnique({ where: { id: roomTypeId } });
+      roomType = await this.prisma.hostel_room_types.findUnique({
+        where: { id: roomTypeId },
+      });
     } catch (err) {
       this.logger.error('DB error during hostel room type lookup', err);
       throw new InternalServerErrorException({
@@ -211,9 +265,14 @@ export class HostelRoomService {
     }
   }
 
-  private async findByRoomNumber(roomNumber: string) {
+  private async findByHostelAndRoomNumber(
+    hostelId: number,
+    roomNumber: string,
+  ) {
     try {
-      return await this.prisma.hostel_rooms.findUnique({ where: { room_number: roomNumber } });
+      return await this.prisma.hostel_rooms.findFirst({
+        where: { hostel_id: hostelId, room_number: roomNumber },
+      });
     } catch (err) {
       this.logger.error('DB error during hostel room duplicate check', err);
       throw new InternalServerErrorException({
@@ -225,7 +284,10 @@ export class HostelRoomService {
 
   private async findById(id: number) {
     try {
-      return await this.prisma.hostel_rooms.findUnique({ where: { id } });
+      return await this.prisma.hostel_rooms.findUnique({
+        where: { id },
+        include: { _count: { select: { student_hostel_mapping: true } } },
+      });
     } catch (err) {
       this.logger.error('DB error during hostel room lookup', err);
       throw new InternalServerErrorException({

@@ -59,7 +59,10 @@ export class FeeStructureController {
   @HttpCode(HttpStatus.CREATED)
   @Roles(ROLES.ADMIN)
   @UseGuards(JwtAuthGuard, RolesGuard)
-  addConcession(@Param('id') id: string, @Body() addConcessionDto: AddConcessionDto) {
+  addConcession(
+    @Param('id') id: string,
+    @Body() addConcessionDto: AddConcessionDto,
+  ) {
     return this.feeStructureService.addConcession(+id, addConcessionDto);
   }
 
@@ -109,7 +112,10 @@ export class FeeStructureController {
   @Patch(':id')
   @Roles(ROLES.ADMIN)
   @UseGuards(JwtAuthGuard, RolesGuard)
-  update(@Param('id') id: string, @Body() updateFeeStructureDto: UpdateFeeStructureDto) {
+  update(
+    @Param('id') id: string,
+    @Body() updateFeeStructureDto: UpdateFeeStructureDto,
+  ) {
     return this.feeStructureService.update(+id, updateFeeStructureDto);
   }
 

@@ -124,7 +124,6 @@ export class ClassesService {
     }
   }
 
-
   async findAll() {
     try {
       return await this.prisma.classes.findMany();
@@ -137,7 +136,6 @@ export class ClassesService {
       });
     }
   }
-
 
   async findOne(id: number) {
     const classRecord = await this.prisma.classes.findUnique({
@@ -154,9 +152,7 @@ export class ClassesService {
     return classRecord;
   }
 
-
   async update(id: number, updateClassDto: UpdateClassDto) {
-
     const existing = await this.prisma.classes.findUnique({
       where: { id },
     });
@@ -168,24 +164,18 @@ export class ClassesService {
       });
     }
 
-
-    const batch_id =
-      updateClassDto.batch_id ?? existing.batch_id;
+    const batch_id = updateClassDto.batch_id ?? existing.batch_id;
 
     const department_id =
       updateClassDto.department_id ?? existing.department_id;
 
-    const course_id =
-      updateClassDto.course_id ?? existing.course_id;
+    const course_id = updateClassDto.course_id ?? existing.course_id;
 
-    const section =
-      updateClassDto.section ?? existing.section;
-
+    const section = updateClassDto.section ?? existing.section;
 
     const course = await this.prisma.courses.findUnique({
       where: { id: course_id },
     });
-
 
     if (!course) {
       throw new NotFoundException({
@@ -194,7 +184,6 @@ export class ClassesService {
       });
     }
 
-
     if (course.department_id !== department_id) {
       throw new ConflictException({
         message:
@@ -202,7 +191,6 @@ export class ClassesService {
         errorCode: 'COURSE_DEPARTMENT_MISMATCH',
       });
     }
-
 
     const duplicate = await this.prisma.classes.findFirst({
       where: {
@@ -216,7 +204,6 @@ export class ClassesService {
       },
     });
 
-
     if (duplicate) {
       throw new ConflictException({
         message:
@@ -225,9 +212,7 @@ export class ClassesService {
       });
     }
 
-
     try {
-
       return await this.prisma.classes.update({
         where: { id },
 
@@ -236,16 +221,11 @@ export class ClassesService {
           department_id,
           course_id,
           section,
-          current_semester:
-            updateClassDto.current_semester,
+          current_semester: updateClassDto.current_semester,
         },
       });
-
-
     } catch (error: any) {
-
       this.logger.error('DB error while updating class', error);
-
 
       if (error.code === 'P2002') {
         throw new ConflictException({
@@ -255,7 +235,6 @@ export class ClassesService {
         });
       }
 
-
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -263,38 +242,25 @@ export class ClassesService {
     }
   }
 
-
-
   async remove(id: number) {
-
     try {
-
       return await this.prisma.classes.delete({
         where: { id },
       });
-
-
     } catch (error: any) {
-
-
       if (error.code === 'P2025') {
-
         throw new NotFoundException({
           message: 'Class not found',
           errorCode: 'CLASS_NOT_FOUND',
         });
-
       }
 
-
       this.logger.error('DB error while deleting class', error);
-
 
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
-
     }
   }
 }

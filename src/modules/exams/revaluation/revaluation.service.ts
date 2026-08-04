@@ -205,7 +205,9 @@ export class RevaluationService {
   }
 
   async remove(id: number) {
-    const existing = await this.prisma.revaluation_requests.findUnique({ where: { id } });
+    const existing = await this.prisma.revaluation_requests.findUnique({
+      where: { id },
+    });
 
     if (!existing) {
       throw new NotFoundException({
@@ -243,9 +245,11 @@ export class RevaluationService {
       });
     }
 
-    const originalPublication = await this.prisma.result_publications.findFirst({
-      where: { exam_id: examId, publication_type: 'original' },
-    });
+    const originalPublication = await this.prisma.result_publications.findFirst(
+      {
+        where: { exam_id: examId, publication_type: 'original' },
+      },
+    );
 
     if (!originalPublication) {
       throw new ConflictException({
@@ -271,13 +275,15 @@ export class RevaluationService {
       });
     }
 
-    const existingRevaluationPublication = await this.prisma.result_publications.findFirst({
-      where: { exam_id: examId, publication_type: 'revaluation' },
-    });
+    const existingRevaluationPublication =
+      await this.prisma.result_publications.findFirst({
+        where: { exam_id: examId, publication_type: 'revaluation' },
+      });
 
     if (existingRevaluationPublication) {
       throw new ConflictException({
-        message: 'Revaluation results have already been published for this exam.',
+        message:
+          'Revaluation results have already been published for this exam.',
         errorCode: 'ALREADY_PUBLISHED',
       });
     }

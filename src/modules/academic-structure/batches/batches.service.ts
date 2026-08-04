@@ -43,7 +43,10 @@ export class BatchesService {
         },
       });
     } catch (err) {
-      this.logger.error('DB error creating batch', err instanceof Error ? err.stack : String(err));
+      this.logger.error(
+        'DB error creating batch',
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -102,7 +105,10 @@ export class BatchesService {
         },
       });
     } catch (err) {
-      this.logger.error(`DB error updating batch #${id}`, err instanceof Error ? err.stack : String(err));
+      this.logger.error(
+        `DB error updating batch #${id}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -124,7 +130,10 @@ export class BatchesService {
           errorCode: 'BATCH_IN_USE',
         });
       }
-      this.logger.error(`DB error deleting batch #${id}`, err instanceof Error ? err.stack : String(err));
+      this.logger.error(
+        `DB error deleting batch #${id}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

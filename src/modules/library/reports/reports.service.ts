@@ -51,7 +51,10 @@ function borrowerDepartment(record: BorrowRecordForReport): {
     };
   }
   if (record.faculty) {
-    return { id: record.faculty.department_id, name: record.faculty.departments.name };
+    return {
+      id: record.faculty.department_id,
+      name: record.faculty.departments.name,
+    };
   }
   return { id: null, name: '—' };
 }
@@ -94,13 +97,18 @@ export class LibraryReportsService {
         rack: b.library_racks?.rack_code ?? '',
         total_copies: b.total_copies,
         available_copies: b.available_copies,
-        price_per_copy: b.price_per_copy !== null ? Number(b.price_per_copy) : '',
+        price_per_copy:
+          b.price_per_copy !== null ? Number(b.price_per_copy) : '',
       })),
     };
   }
 
   /** 2. CIRCULATION — issued books report: borrowings in period. */
-  async issued(from?: string, to?: string, departmentId?: number): Promise<ReportTable> {
+  async issued(
+    from?: string,
+    to?: string,
+    departmentId?: number,
+  ): Promise<ReportTable> {
     const where: Prisma.book_borrow_recordsWhereInput = {};
     if (from || to) {
       where.borrowed_date = {};
@@ -115,7 +123,9 @@ export class LibraryReportsService {
     });
 
     if (departmentId) {
-      records = records.filter((r) => borrowerDepartment(r).id === departmentId);
+      records = records.filter(
+        (r) => borrowerDepartment(r).id === departmentId,
+      );
     }
 
     return {
@@ -142,7 +152,11 @@ export class LibraryReportsService {
   }
 
   /** 3. CIRCULATION — returned books report: counter receipts incl. renewals/late returns. */
-  async returned(from?: string, to?: string, departmentId?: number): Promise<ReportTable> {
+  async returned(
+    from?: string,
+    to?: string,
+    departmentId?: number,
+  ): Promise<ReportTable> {
     const where: Prisma.book_borrow_recordsWhereInput = { status: 'returned' };
     if (from || to) {
       where.returned_date = {};
@@ -157,7 +171,9 @@ export class LibraryReportsService {
     });
 
     if (departmentId) {
-      records = records.filter((r) => borrowerDepartment(r).id === departmentId);
+      records = records.filter(
+        (r) => borrowerDepartment(r).id === departmentId,
+      );
     }
 
     return {
@@ -177,7 +193,9 @@ export class LibraryReportsService {
         title: r.books.title,
         borrower: borrowerName(r),
         department: borrowerDepartment(r).name,
-        returned_date: r.returned_date ? r.returned_date.toISOString().slice(0, 10) : '',
+        returned_date: r.returned_date
+          ? r.returned_date.toISOString().slice(0, 10)
+          : '',
         renewal_count: r.renewal_count,
         late: r.returned_date && r.returned_date > r.due_date ? 'Yes' : 'No',
         fine_paid: r.fine_paid ? 'Yes' : 'No',
@@ -195,7 +213,9 @@ export class LibraryReportsService {
     });
 
     if (departmentId) {
-      records = records.filter((r) => borrowerDepartment(r).id === departmentId);
+      records = records.filter(
+        (r) => borrowerDepartment(r).id === departmentId,
+      );
     }
 
     return {
@@ -214,7 +234,9 @@ export class LibraryReportsService {
         borrower: borrowerName(r),
         department: borrowerDepartment(r).name,
         due_date: r.due_date.toISOString().slice(0, 10),
-        days_overdue: Math.round((now.getTime() - r.due_date.getTime()) / 86_400_000),
+        days_overdue: Math.round(
+          (now.getTime() - r.due_date.getTime()) / 86_400_000,
+        ),
       })),
     };
   }
@@ -234,7 +256,11 @@ export class LibraryReportsService {
         borrower_type: 'student',
         OR: [
           { status: 'borrowed', due_date: { lt: now } },
-          { status: 'returned', fine_paid: false, returned_date: { not: null } },
+          {
+            status: 'returned',
+            fine_paid: false,
+            returned_date: { not: null },
+          },
           { status: { in: ['lost', 'damaged'] }, damage_lost_settled: false },
         ],
       },
@@ -306,7 +332,8 @@ export class LibraryReportsService {
         title: b.title,
         department: b.departments?.name ?? '',
         total_copies: b.total_copies,
-        price_per_copy: b.price_per_copy !== null ? Number(b.price_per_copy) : '',
+        price_per_copy:
+          b.price_per_copy !== null ? Number(b.price_per_copy) : '',
         vendor_fund: b.vendor_fund ?? '',
       })),
     };

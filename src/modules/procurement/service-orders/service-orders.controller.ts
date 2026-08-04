@@ -87,7 +87,10 @@ export class ServiceOrdersController {
    *  500 INTERNAL_ERROR                    – unexpected server failure
    */
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceOrderDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateServiceOrderDto,
+  ) {
     return this.serviceOrdersService.update(id, dto);
   }
 
@@ -100,7 +103,10 @@ export class ServiceOrdersController {
    * Error responses: see PUT /api/v1/service-orders/:id
    */
   @Patch(':id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceOrderDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateServiceOrderDto,
+  ) {
     return this.serviceOrdersService.update(id, dto);
   }
 

@@ -24,7 +24,9 @@ import { UpdateFeeStructureItemDto } from './dto/update-fee-structure-item.dto';
 @Roles(ROLES.ADMIN)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class FeeStructureItemController {
-  constructor(private readonly feeStructureItemService: FeeStructureItemService) {}
+  constructor(
+    private readonly feeStructureItemService: FeeStructureItemService,
+  ) {}
 
   /**
    * GET /api/v1/fee-structure-items
@@ -81,7 +83,10 @@ export class FeeStructureItemController {
    */
   @Post('fee-structures/:id/items')
   @HttpCode(HttpStatus.CREATED)
-  create(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateFeeStructureItemDto) {
+  create(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateFeeStructureItemDto,
+  ) {
     return this.feeStructureItemService.create(id, dto);
   }
 
@@ -98,7 +103,10 @@ export class FeeStructureItemController {
    *  500 INTERNAL_ERROR               – unexpected server failure
    */
   @Put('fee-structure-items/:id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateFeeStructureItemDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateFeeStructureItemDto,
+  ) {
     return this.feeStructureItemService.update(id, dto);
   }
 
@@ -111,7 +119,10 @@ export class FeeStructureItemController {
    * Error responses: see PUT /api/v1/fee-structure-items/:id
    */
   @Patch('fee-structure-items/:id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateFeeStructureItemDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateFeeStructureItemDto,
+  ) {
     return this.feeStructureItemService.update(id, dto);
   }
 

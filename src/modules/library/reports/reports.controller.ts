@@ -8,7 +8,10 @@ import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 
 function slugify(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
 }
 
 @Controller('library/reports')
@@ -95,8 +98,13 @@ export class LibraryReportsController {
   }
 
   @Get('accession-register')
-  async accessionRegister(@Query() query: ReportQueryDto, @Res() res: Response) {
-    const table = await this.reportsService.accessionRegister(query.department_id);
+  async accessionRegister(
+    @Query() query: ReportQueryDto,
+    @Res() res: Response,
+  ) {
+    const table = await this.reportsService.accessionRegister(
+      query.department_id,
+    );
     await this.respond(table, query.format, res);
   }
 }

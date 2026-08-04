@@ -98,7 +98,11 @@ export class EducationLoanDdService {
     await this.assertReferenceNumberAvailable(dto.dd_reference_number);
 
     const amount = new Prisma.Decimal(dto.amount);
-    await this.assertWithinDueAmount(demandMappingId, mapping.total_amount, amount);
+    await this.assertWithinDueAmount(
+      demandMappingId,
+      mapping.total_amount,
+      amount,
+    );
 
     try {
       return await this.prisma.education_loan_dd.create({
@@ -146,15 +150,26 @@ export class EducationLoanDdService {
       await this.assertUserExists(dto.received_by_user_id);
     }
 
-    if (dto.dd_reference_number !== undefined && dto.dd_reference_number !== dd.dd_reference_number) {
+    if (
+      dto.dd_reference_number !== undefined &&
+      dto.dd_reference_number !== dd.dd_reference_number
+    ) {
       await this.assertReferenceNumberAvailable(dto.dd_reference_number, id);
     }
 
-    const amount = dto.amount !== undefined ? new Prisma.Decimal(dto.amount) : undefined;
+    const amount =
+      dto.amount !== undefined ? new Prisma.Decimal(dto.amount) : undefined;
 
     if (amount !== undefined) {
-      const mapping = await this.assertDemandMappingExists(dd.student_fee_demand_mapping_id);
-      await this.assertWithinDueAmount(dd.student_fee_demand_mapping_id, mapping.total_amount, amount, id);
+      const mapping = await this.assertDemandMappingExists(
+        dd.student_fee_demand_mapping_id,
+      );
+      await this.assertWithinDueAmount(
+        dd.student_fee_demand_mapping_id,
+        mapping.total_amount,
+        amount,
+        id,
+      );
     }
 
     try {
@@ -216,7 +231,10 @@ export class EducationLoanDdService {
         select: { total_amount: true },
       });
     } catch (err) {
-      this.logger.error('DB error during student fee demand mapping lookup', err);
+      this.logger.error(
+        'DB error during student fee demand mapping lookup',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -254,7 +272,10 @@ export class EducationLoanDdService {
     }
   }
 
-  private async assertReferenceNumberAvailable(ddReferenceNumber: string, excludeId?: number) {
+  private async assertReferenceNumberAvailable(
+    ddReferenceNumber: string,
+    excludeId?: number,
+  ) {
     let existing: { id: number } | null;
 
     try {
@@ -263,7 +284,10 @@ export class EducationLoanDdService {
         select: { id: true },
       });
     } catch (err) {
-      this.logger.error('DB error during education loan DD reference duplicate check', err);
+      this.logger.error(
+        'DB error during education loan DD reference duplicate check',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -272,7 +296,8 @@ export class EducationLoanDdService {
 
     if (existing && existing.id !== excludeId) {
       throw new ConflictException({
-        message: 'An education loan DD with this reference number already exists',
+        message:
+          'An education loan DD with this reference number already exists',
         errorCode: 'EDUCATION_LOAN_DD_REFERENCE_EXISTS',
       });
     }
@@ -313,7 +338,8 @@ export class EducationLoanDdService {
 
     if (projectedTotal.greaterThan(totalAmount)) {
       throw new UnprocessableEntityException({
-        message: 'DD amount would exceed the total amount due for this fee demand',
+        message:
+          'DD amount would exceed the total amount due for this fee demand',
         errorCode: 'DD_AMOUNT_EXCEEDS_DUE_AMOUNT',
       });
     }

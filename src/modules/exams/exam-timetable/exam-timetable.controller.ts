@@ -25,8 +25,13 @@ export class ExamTimetableController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.COE)
   async create(@Body() createExamTimetableDto: CreateExamTimetableDto) {
-    const timetable = await this.examTimetableService.create(createExamTimetableDto);
-    return ApiResponse.created(timetable, 'Exam timetable created successfully.');
+    const timetable = await this.examTimetableService.create(
+      createExamTimetableDto,
+    );
+    return ApiResponse.created(
+      timetable,
+      'Exam timetable created successfully.',
+    );
   }
 
   @Get()
@@ -48,7 +53,10 @@ export class ExamTimetableController {
     @Param('id') id: string,
     @Body() updateExamTimetableDto: UpdateExamTimetableDto,
   ) {
-    const timetable = await this.examTimetableService.update(+id, updateExamTimetableDto);
+    const timetable = await this.examTimetableService.update(
+      +id,
+      updateExamTimetableDto,
+    );
     return ApiResponse.ok(timetable, 'Exam timetable updated successfully.');
   }
 

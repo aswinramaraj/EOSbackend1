@@ -55,7 +55,8 @@ export class AnnouncementsController {
   @Roles(ROLES.ADMIN, ROLES.HOD)
   lookupClasses(
     @Query('batch_id', ParseIntPipe) batchId: number,
-    @Query('department_id', new ParseIntPipe({ optional: true })) departmentId: number | undefined,
+    @Query('department_id', new ParseIntPipe({ optional: true }))
+    departmentId: number | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.announcementsService.lookupClasses(batchId, departmentId, user);
@@ -113,7 +114,10 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.announcementsService.findOne(id, user);
   }
 
@@ -166,7 +170,10 @@ export class AnnouncementsController {
    */
   @Delete(':id')
   @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
-  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.announcementsService.remove(id, user);
   }
 }

@@ -6,5 +6,7 @@ export class FinanceReviewDto {
   finance_reviewed_by: number;
 
   @IsIn([proposal_status_enum.finance_approved, proposal_status_enum.rejected])
-  status: typeof proposal_status_enum.finance_approved | typeof proposal_status_enum.rejected;
+  status:
+    | typeof proposal_status_enum.finance_approved
+    | typeof proposal_status_enum.rejected;
 }

@@ -41,7 +41,10 @@ export class ExamTypesController {
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.COE)
-  async update(@Param('id') id: string, @Body() updateExamTypeDto: UpdateExamTypeDto) {
+  async update(
+    @Param('id') id: string,
+    @Body() updateExamTypeDto: UpdateExamTypeDto,
+  ) {
     const examType = await this.examTypesService.update(+id, updateExamTypeDto);
     return ApiResponse.ok(examType, 'Exam Type updated successfully.');
   }

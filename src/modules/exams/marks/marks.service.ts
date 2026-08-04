@@ -17,7 +17,10 @@ export class MarksService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  private assertValidMarks(marksObtained: number | undefined, maxMarks: number) {
+  private assertValidMarks(
+    marksObtained: number | undefined,
+    maxMarks: number,
+  ) {
     if (marksObtained !== undefined && marksObtained > maxMarks) {
       throw new BadRequestException({
         message: 'marks_obtained cannot be greater than max_marks.',
@@ -188,7 +191,9 @@ export class MarksService {
     const maxMarks = updateMarkDto.max_marks ?? Number(existing.max_marks);
     const marksObtained =
       updateMarkDto.marks_obtained ??
-      (existing.marks_obtained !== null ? Number(existing.marks_obtained) : undefined);
+      (existing.marks_obtained !== null
+        ? Number(existing.marks_obtained)
+        : undefined);
 
     this.assertValidMarks(marksObtained, maxMarks);
 

@@ -82,7 +82,10 @@ export class FeePaymentController {
    */
   @Post('student-fee-demand-mappings/:id/payments')
   @HttpCode(HttpStatus.CREATED)
-  create(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateFeePaymentDto) {
+  create(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateFeePaymentDto,
+  ) {
     return this.feePaymentService.create(id, dto);
   }
 
@@ -100,7 +103,10 @@ export class FeePaymentController {
    *  500 INTERNAL_ERROR               – unexpected server failure
    */
   @Put('fee-payments/:id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateFeePaymentDto) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateFeePaymentDto,
+  ) {
     return this.feePaymentService.update(id, dto);
   }
 
@@ -113,7 +119,10 @@ export class FeePaymentController {
    * Error responses: see PUT /api/v1/fee-payments/:id
    */
   @Patch('fee-payments/:id')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateFeePaymentDto) {
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateFeePaymentDto,
+  ) {
     return this.feePaymentService.update(id, dto);
   }
 

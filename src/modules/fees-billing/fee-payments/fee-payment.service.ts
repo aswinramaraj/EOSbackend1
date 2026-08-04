@@ -93,7 +93,11 @@ export class FeePaymentService {
     }
 
     await this.assertReceiptNoAvailable(dto.receipt_no);
-    await this.assertWithinDueAmount(demandMappingId, mapping.total_amount, dto.amount_paid);
+    await this.assertWithinDueAmount(
+      demandMappingId,
+      mapping.total_amount,
+      dto.amount_paid,
+    );
 
     try {
       return await this.prisma.fee_payments.create({
@@ -146,7 +150,9 @@ export class FeePaymentService {
     }
 
     if (dto.amount_paid !== undefined) {
-      const mapping = await this.assertDemandMappingExists(payment.student_fee_demand_mapping_id);
+      const mapping = await this.assertDemandMappingExists(
+        payment.student_fee_demand_mapping_id,
+      );
       await this.assertWithinDueAmount(
         payment.student_fee_demand_mapping_id,
         mapping.total_amount,
@@ -213,7 +219,10 @@ export class FeePaymentService {
         select: { total_amount: true },
       });
     } catch (err) {
-      this.logger.error('DB error during student fee demand mapping lookup', err);
+      this.logger.error(
+        'DB error during student fee demand mapping lookup',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -251,7 +260,10 @@ export class FeePaymentService {
     }
   }
 
-  private async assertReceiptNoAvailable(receiptNo: string, excludeId?: number) {
+  private async assertReceiptNoAvailable(
+    receiptNo: string,
+    excludeId?: number,
+  ) {
     let existing: { id: number } | null;
 
     try {
@@ -260,7 +272,10 @@ export class FeePaymentService {
         select: { id: true },
       });
     } catch (err) {
-      this.logger.error('DB error during fee payment receipt duplicate check', err);
+      this.logger.error(
+        'DB error during fee payment receipt duplicate check',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -310,7 +325,8 @@ export class FeePaymentService {
 
     if (projectedTotal.greaterThan(totalAmount)) {
       throw new UnprocessableEntityException({
-        message: 'Payment amount would exceed the total amount due for this fee demand',
+        message:
+          'Payment amount would exceed the total amount due for this fee demand',
         errorCode: 'PAYMENT_EXCEEDS_DUE_AMOUNT',
       });
     }

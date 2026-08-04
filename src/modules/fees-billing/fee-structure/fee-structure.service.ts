@@ -84,7 +84,11 @@ export class FeeStructureService {
             ),
         );
 
-        return { ...feeStructure, fee_structure_items: items, fee_concessions: concessions };
+        return {
+          ...feeStructure,
+          fee_structure_items: items,
+          fee_concessions: concessions,
+        };
       });
     } catch (err) {
       this.logger.error('DB error while creating fee structure', err);
@@ -110,7 +114,8 @@ export class FeeStructureService {
 
     if (dto.concession_amount > totalAmount) {
       throw new UnprocessableEntityException({
-        message: 'Concession amount cannot exceed the total fee structure amount',
+        message:
+          'Concession amount cannot exceed the total fee structure amount',
         errorCode: 'CONCESSION_EXCEEDS_TOTAL',
       });
     }
@@ -175,7 +180,9 @@ export class FeeStructureService {
     // ── Validate quota only when the resulting applies_to requires it ───────
     const appliesTo = dto.applies_to ?? feeStructure.applies_to;
     if (appliesTo === fee_structure_applies_to_enum.quota) {
-      await this.assertQuotaExists(dto.quota_id ?? feeStructure.quota_id ?? undefined);
+      await this.assertQuotaExists(
+        dto.quota_id ?? feeStructure.quota_id ?? undefined,
+      );
     }
 
     try {
@@ -211,7 +218,9 @@ export class FeeStructureService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
-        await tx.fee_concessions.deleteMany({ where: { fee_structure_id: id } });
+        await tx.fee_concessions.deleteMany({
+          where: { fee_structure_id: id },
+        });
         return tx.fee_structures.delete({ where: { id } });
       });
     } catch (err) {
@@ -224,7 +233,9 @@ export class FeeStructureService {
   }
 
   private async findFeeStructureOrThrow(id: number) {
-    let feeStructure: Awaited<ReturnType<typeof this.prisma.fee_structures.findUnique>>;
+    let feeStructure: Awaited<
+      ReturnType<typeof this.prisma.fee_structures.findUnique>
+    >;
 
     try {
       feeStructure = await this.prisma.fee_structures.findUnique({
@@ -254,9 +265,15 @@ export class FeeStructureService {
 
     try {
       usageCounts = await Promise.all([
-        this.prisma.student_fee_demand_mapping.count({ where: { fee_structure_id: id } }),
-        this.prisma.student_hostel_mapping.count({ where: { fee_structure_id: id } }),
-        this.prisma.student_transport_mapping.count({ where: { fee_structure_id: id } }),
+        this.prisma.student_fee_demand_mapping.count({
+          where: { fee_structure_id: id },
+        }),
+        this.prisma.student_hostel_mapping.count({
+          where: { fee_structure_id: id },
+        }),
+        this.prisma.student_transport_mapping.count({
+          where: { fee_structure_id: id },
+        }),
       ]);
     } catch (err) {
       this.logger.error('DB error while checking fee structure usage', err);
@@ -278,7 +295,9 @@ export class FeeStructureService {
     let feeStructure: unknown;
 
     try {
-      feeStructure = await this.prisma.fee_structures.findUnique({ where: { id } });
+      feeStructure = await this.prisma.fee_structures.findUnique({
+        where: { id },
+      });
     } catch (err) {
       this.logger.error('DB error during fee structure lookup', err);
       throw new InternalServerErrorException({
@@ -295,7 +314,9 @@ export class FeeStructureService {
     }
   }
 
-  private async sumFeeStructureItemsAmount(feeStructureId: number): Promise<number> {
+  private async sumFeeStructureItemsAmount(
+    feeStructureId: number,
+  ): Promise<number> {
     try {
       const result = await this.prisma.fee_structure_items.aggregate({
         where: { fee_structure_id: feeStructureId },

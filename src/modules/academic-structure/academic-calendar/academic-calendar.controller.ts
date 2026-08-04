@@ -1,4 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { AcademicCalendarService } from './academic-calendar.service';
 import { CreateAcademicCalendarDto } from './dto/create-academic-calendar.dto';
 import { UpdateAcademicCalendarDto } from './dto/update-academic-calendar.dto';
@@ -9,11 +18,12 @@ import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
-
 @Controller('academic-calendar')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AcademicCalendarController {
-  constructor(private readonly academicCalendarService: AcademicCalendarService) {}
+  constructor(
+    private readonly academicCalendarService: AcademicCalendarService,
+  ) {}
 
   @Post()
   @Roles(ROLES.ACADEMIC_COORDINATOR)
@@ -21,7 +31,10 @@ export class AcademicCalendarController {
     @Body() createAcademicCalendarDto: CreateAcademicCalendarDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.academicCalendarService.create(createAcademicCalendarDto, user.sub);
+    return this.academicCalendarService.create(
+      createAcademicCalendarDto,
+      user.sub,
+    );
   }
 
   @Get()
@@ -36,7 +49,10 @@ export class AcademicCalendarController {
 
   @Patch(':id')
   @Roles(ROLES.ACADEMIC_COORDINATOR)
-  update(@Param('id') id: string, @Body() updateAcademicCalendarDto: UpdateAcademicCalendarDto) {
+  update(
+    @Param('id') id: string,
+    @Body() updateAcademicCalendarDto: UpdateAcademicCalendarDto,
+  ) {
     return this.academicCalendarService.update(+id, updateAcademicCalendarDto);
   }
 

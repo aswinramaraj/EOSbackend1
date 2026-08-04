@@ -1,5 +1,12 @@
 // subjects/dto/create-subject.dto.ts
-import { IsInt, IsNotEmpty, IsOptional, IsPositive, IsString, MaxLength } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsPositive,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export class CreateSubjectDto {

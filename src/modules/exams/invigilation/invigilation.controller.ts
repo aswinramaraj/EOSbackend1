@@ -50,7 +50,10 @@ export class InvigilationController {
     @Param('id', ParseIntPipe) id: number,
     @Body() updateInvigilationDto: UpdateInvigilationDto,
   ) {
-    const duty = await this.invigilationService.update(id, updateInvigilationDto);
+    const duty = await this.invigilationService.update(
+      id,
+      updateInvigilationDto,
+    );
     return ApiResponse.ok(duty, 'Invigilation duty updated successfully');
   }
 
