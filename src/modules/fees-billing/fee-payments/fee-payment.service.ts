@@ -31,6 +31,19 @@ function computeDueStatus(
   return 'pending';
 }
 
+/**
+ * outstanding = total_amount - SUM(fee_payments.amount_paid), never negative —
+ * a fee structure item edit can shrink total_amount below what was already
+ * paid, and outstanding must clamp to 0 rather than go negative.
+ */
+function computeOutstanding(
+  totalAmount: Prisma.Decimal,
+  paidAmount: Prisma.Decimal,
+): Prisma.Decimal {
+  const outstanding = totalAmount.minus(paidAmount);
+  return outstanding.isNegative() ? new Prisma.Decimal(0) : outstanding;
+}
+
 @Injectable()
 export class FeePaymentService {
   private readonly logger = new Logger(FeePaymentService.name);
@@ -121,6 +134,9 @@ export class FeePaymentService {
     }
 
     return mappings.map((mapping) => {
+      const liveTotalAmount = this.computeLiveTotalAmount(
+        mapping.fee_structures.fee_structure_items,
+      );
       const paidAmount = mapping.fee_payments.reduce(
         (sum, payment) => sum.plus(payment.amount_paid),
         new Prisma.Decimal(0),
@@ -151,10 +167,13 @@ export class FeePaymentService {
         batch: mapping.students.batches.name,
         fee_structure_name: mapping.fee_structures.name,
         academic_year: mapping.academic_year,
-        total_demand: mapping.total_amount.toString(),
+        total_demand: liveTotalAmount.toString(),
         paid_amount: paidAmount.toString(),
-        outstanding_amount: mapping.total_amount.minus(paidAmount).toString(),
-        due_status: computeDueStatus(mapping.total_amount, paidAmount),
+        outstanding_amount: computeOutstanding(
+          liveTotalAmount,
+          paidAmount,
+        ).toString(),
+        due_status: computeDueStatus(liveTotalAmount, paidAmount),
         last_payment_date: lastPaymentDate,
       };
     });
@@ -192,27 +211,47 @@ export class FeePaymentService {
 
     const demandSummary: DemandSummaryItemDto[] = demandMappings.map(
       (mapping) => {
+        const liveTotalAmount = this.computeLiveTotalAmount(
+          mapping.fee_structures.fee_structure_items,
+        );
         const paidAmount = mapping.fee_payments.reduce(
           (sum, payment) => sum.plus(payment.amount_paid),
           new Prisma.Decimal(0),
+        );
+
+        // TRACE — temporary, requested for live debugging of demand_summary.total_amount.
+        this.logger.debug(
+          `[workspace-trace] mapping.id=${mapping.id} ` +
+            `fee_structure_id=${mapping.fee_structure_id} ` +
+            `snapshot_total_amount=${mapping.total_amount.toString()} ` +
+            `fee_structure_items=${JSON.stringify(mapping.fee_structures.fee_structure_items.map((i) => ({ id: i.id, amount: i.amount.toString() })))} ` +
+            `live_sum=${liveTotalAmount.toString()} ` +
+            `assigned_total_amount=${liveTotalAmount.toString()}`,
         );
 
         return {
           student_fee_demand_mapping_id: mapping.id,
           fee_structure_id: mapping.fee_structure_id,
           fee_structure_name: mapping.fee_structures.name,
+          applies_to: mapping.fee_structures.applies_to,
           academic_year: mapping.academic_year,
           semester: mapping.semester,
-          total_amount: mapping.total_amount.toString(),
+          total_amount: liveTotalAmount.toString(),
           paid_amount: paidAmount.toString(),
-          outstanding_amount: mapping.total_amount.minus(paidAmount).toString(),
-          due_status: computeDueStatus(mapping.total_amount, paidAmount),
+          outstanding_amount: computeOutstanding(
+            liveTotalAmount,
+            paidAmount,
+          ).toString(),
+          due_status: computeDueStatus(liveTotalAmount, paidAmount),
         };
       },
     );
 
     const totalDemand = demandMappings.reduce(
-      (sum, mapping) => sum.plus(mapping.total_amount),
+      (sum, mapping) =>
+        sum.plus(
+          this.computeLiveTotalAmount(mapping.fee_structures.fee_structure_items),
+        ),
       new Prisma.Decimal(0),
     );
     const totalPaid = demandMappings.reduce(
@@ -291,19 +330,20 @@ export class FeePaymentService {
         programme: student.courses.name,
         department: student.courses.departments.name,
         batch: student.batches.name,
+        quota: student.quotas.name,
         gender: student.gender,
         status: student.status,
       },
       fee_summary: {
         total_demand: totalDemand.toString(),
         total_paid: totalPaid.toString(),
-        total_outstanding: totalDemand.minus(totalPaid).toString(),
+        total_outstanding: computeOutstanding(totalDemand, totalPaid).toString(),
         due_status: computeDueStatus(totalDemand, totalPaid),
       },
       demand_summary: demandSummary,
       payment_summary: {
-        total_payments_count: paymentHistory.length,
-        total_amount_paid: totalPaid.toString(),
+        payment_count: paymentHistory.length,
+        total_paid: totalPaid.toString(),
         last_payment_date: lastPaymentDate,
       },
       payment_history: paymentHistory,
@@ -316,7 +356,7 @@ export class FeePaymentService {
     return this.prisma.student_fee_demand_mapping.findMany({
       include: {
         fee_payments: true,
-        fee_structures: true,
+        fee_structures: { include: { fee_structure_items: true } },
         students: {
           include: {
             soa_applications: true,
@@ -335,12 +375,15 @@ export class FeePaymentService {
       include: {
         soa_applications: true,
         batches: true,
+        quotas: true,
         courses: { include: { departments: true } },
         student_fee_demand_mapping: {
           include: {
             fee_payments: { orderBy: { payment_date: 'desc' } },
             education_loan_dd: true,
-            fee_structures: { include: { fee_concessions: true } },
+            fee_structures: {
+              include: { fee_concessions: true, fee_structure_items: true },
+            },
           },
         },
       },
@@ -348,20 +391,43 @@ export class FeePaymentService {
   }
 
   /**
+   * Live source-of-truth for a demand's total, read directly from
+   * fee_structure_items on every call — NOT the stored
+   * student_fee_demand_mapping.total_amount snapshot.
+   *
+   * total_amount on student_fee_demand_mapping is kept in sync by
+   * FeeStructureItemService whenever an item is created/updated/deleted, but
+   * that snapshot can only ever be as fresh as that write path — any gap
+   * there (a bypassed write path, a process that hasn't picked up the sync
+   * code, a direct DB edit) would make total_amount stale. Computing it here
+   * from fee_structure_items directly removes that dependency entirely: the
+   * dashboard and workspace endpoints can never show a total that disagrees
+   * with the fee structure's actual items, regardless of the snapshot's state.
+   */
+  private computeLiveTotalAmount(feeStructureItems: { amount: Prisma.Decimal }[]) {
+    return feeStructureItems.reduce(
+      (sum, item) => sum.plus(item.amount),
+      new Prisma.Decimal(0),
+    );
+  }
+
+  /**
    * POST /student-fee-demand-mappings/:id/payments
    *
    * Error cases:
    *  404 STUDENT_FEE_DEMAND_NOT_FOUND  – no demand mapping with the given id
-   *  404 USER_NOT_FOUND                – collected_by_user_id does not exist
    *  409 FEE_PAYMENT_RECEIPT_EXISTS    – receipt_no already used by another payment
    *  422 PAYMENT_EXCEEDS_DUE_AMOUNT    – amount_paid would exceed the demand's total_amount
+   *
+   * collectedByUserId is always the authenticated caller's id (from the JWT) —
+   * the client cannot set who collected a payment.
    */
-  async create(demandMappingId: number, dto: CreateFeePaymentDto) {
+  async create(
+    demandMappingId: number,
+    dto: CreateFeePaymentDto,
+    collectedByUserId: number,
+  ) {
     const mapping = await this.assertDemandMappingExists(demandMappingId);
-
-    if (dto.collected_by_user_id !== undefined) {
-      await this.assertUserExists(dto.collected_by_user_id);
-    }
 
     await this.assertReceiptNoAvailable(dto.receipt_no);
     await this.assertWithinDueAmount(
@@ -378,7 +444,7 @@ export class FeePaymentService {
           receipt_no: dto.receipt_no,
           payment_mode: dto.payment_mode,
           is_partial: dto.is_partial,
-          collected_by_user_id: dto.collected_by_user_id,
+          collected_by_user_id: collectedByUserId,
         },
       });
     } catch (err) {

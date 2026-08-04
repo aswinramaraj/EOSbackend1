@@ -59,6 +59,7 @@ import { DemandModule } from './modules/fees-billing/demand/demand.module';
 import { EducationLoanDdModule } from './modules/fees-billing/education-loan-dd/education-loan-dd.module';
 import { FeeConcessionModule } from './modules/fees-billing/fee-concessions/fee-concession.module';
 import { FeePaymentModule } from './modules/fees-billing/fee-payments/fee-payment.module';
+import { FinanceOverviewModule } from './modules/fees-billing/finance-overview/finance-overview.module';
 import { FeeStructureModule } from './modules/fees-billing/fee-structure/fee-structure.module';
 import { FeeStructureItemModule } from './modules/fees-billing/fee-structure-items/fee-structure-item.module';
 import { GateLedgerModule } from './modules/fees-billing/gate-ledger/gate-ledger.module';
@@ -175,6 +176,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     EducationLoanDdModule,
     FeeConcessionModule,
     FeePaymentModule,
+    FinanceOverviewModule,
     FeeStructureModule,
     FeeStructureItemModule,
     GateLedgerModule,

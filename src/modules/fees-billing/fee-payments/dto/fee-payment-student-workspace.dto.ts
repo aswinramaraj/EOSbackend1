@@ -7,6 +7,7 @@ export class StudentProfileSummaryDto {
   programme: string;
   department: string;
   batch: string;
+  quota: string;
   gender: string | null;
   status: string;
 }
@@ -22,6 +23,7 @@ export class DemandSummaryItemDto {
   student_fee_demand_mapping_id: number;
   fee_structure_id: number;
   fee_structure_name: string;
+  applies_to: string;
   academic_year: string;
   semester: number | null;
   total_amount: string;
@@ -31,8 +33,8 @@ export class DemandSummaryItemDto {
 }
 
 export class PaymentSummaryDto {
-  total_payments_count: number;
-  total_amount_paid: string;
+  payment_count: number;
+  total_paid: string;
   last_payment_date: Date | null;
 }
 
