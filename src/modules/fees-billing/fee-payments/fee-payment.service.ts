@@ -10,6 +10,26 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import { CreateFeePaymentDto } from './dto/create-fee-payment.dto';
 import { UpdateFeePaymentDto } from './dto/update-fee-payment.dto';
+import { FeePaymentDashboardRowDto } from './dto/fee-payment-dashboard-row.dto';
+import {
+  FeePaymentStudentWorkspaceDto,
+  DemandSummaryItemDto,
+} from './dto/fee-payment-student-workspace.dto';
+
+type DueStatus = 'paid' | 'partial' | 'pending';
+
+function computeDueStatus(
+  totalDemand: Prisma.Decimal,
+  paidAmount: Prisma.Decimal,
+): DueStatus {
+  if (paidAmount.greaterThanOrEqualTo(totalDemand) && totalDemand.greaterThan(0)) {
+    return 'paid';
+  }
+  if (paidAmount.greaterThan(0)) {
+    return 'partial';
+  }
+  return 'pending';
+}
 
 @Injectable()
 export class FeePaymentService {
@@ -74,6 +94,257 @@ export class FeePaymentService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  /**
+   * GET /fee-payments/dashboard
+   *
+   * One row per student fee demand mapping, with the demand's payment
+   * status rolled up from fee_payments.
+   */
+  async dashboard(): Promise<FeePaymentDashboardRowDto[]> {
+    let mappings: Awaited<
+      ReturnType<typeof this.findDemandMappingsWithDashboardRelations>
+    >;
+
+    try {
+      mappings = await this.findDemandMappingsWithDashboardRelations();
+    } catch (err) {
+      this.logger.error(
+        'DB error while fetching fee payments dashboard',
+        err,
+      );
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    return mappings.map((mapping) => {
+      const paidAmount = mapping.fee_payments.reduce(
+        (sum, payment) => sum.plus(payment.amount_paid),
+        new Prisma.Decimal(0),
+      );
+      const lastPaymentDate = mapping.fee_payments.reduce<Date | null>(
+        (latest, payment) =>
+          !latest || payment.payment_date > latest
+            ? payment.payment_date
+            : latest,
+        null,
+      );
+      const studentName = mapping.students.soa_applications
+        ? [
+            mapping.students.soa_applications.first_name,
+            mapping.students.soa_applications.last_name,
+          ]
+            .filter(Boolean)
+            .join(' ')
+        : null;
+
+      return {
+        student_fee_demand_mapping_id: mapping.id,
+        student_id: mapping.student_id,
+        student_name: studentName,
+        register_number: mapping.students.register_no,
+        programme: mapping.students.courses.name,
+        department: mapping.students.courses.departments.name,
+        batch: mapping.students.batches.name,
+        fee_structure_name: mapping.fee_structures.name,
+        academic_year: mapping.academic_year,
+        total_demand: mapping.total_amount.toString(),
+        paid_amount: paidAmount.toString(),
+        outstanding_amount: mapping.total_amount.minus(paidAmount).toString(),
+        due_status: computeDueStatus(mapping.total_amount, paidAmount),
+        last_payment_date: lastPaymentDate,
+      };
+    });
+  }
+
+  /**
+   * GET /fee-payments/students/:studentId/workspace
+   *
+   * Error cases:
+   *  404 STUDENT_NOT_FOUND – no student with the given id
+   */
+  async getStudentWorkspace(
+    studentId: number,
+  ): Promise<FeePaymentStudentWorkspaceDto> {
+    let student: Awaited<ReturnType<typeof this.findStudentWithWorkspaceRelations>>;
+
+    try {
+      student = await this.findStudentWithWorkspaceRelations(studentId);
+    } catch (err) {
+      this.logger.error('DB error during student workspace lookup', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const demandMappings = student.student_fee_demand_mapping;
+
+    const demandSummary: DemandSummaryItemDto[] = demandMappings.map(
+      (mapping) => {
+        const paidAmount = mapping.fee_payments.reduce(
+          (sum, payment) => sum.plus(payment.amount_paid),
+          new Prisma.Decimal(0),
+        );
+
+        return {
+          student_fee_demand_mapping_id: mapping.id,
+          fee_structure_id: mapping.fee_structure_id,
+          fee_structure_name: mapping.fee_structures.name,
+          academic_year: mapping.academic_year,
+          semester: mapping.semester,
+          total_amount: mapping.total_amount.toString(),
+          paid_amount: paidAmount.toString(),
+          outstanding_amount: mapping.total_amount.minus(paidAmount).toString(),
+          due_status: computeDueStatus(mapping.total_amount, paidAmount),
+        };
+      },
+    );
+
+    const totalDemand = demandMappings.reduce(
+      (sum, mapping) => sum.plus(mapping.total_amount),
+      new Prisma.Decimal(0),
+    );
+    const totalPaid = demandMappings.reduce(
+      (sum, mapping) =>
+        sum.plus(
+          mapping.fee_payments.reduce(
+            (s, payment) => s.plus(payment.amount_paid),
+            new Prisma.Decimal(0),
+          ),
+        ),
+      new Prisma.Decimal(0),
+    );
+
+    const paymentHistory = demandMappings
+      .flatMap((mapping) =>
+        mapping.fee_payments.map((payment) => ({
+          id: payment.id,
+          student_fee_demand_mapping_id: mapping.id,
+          amount_paid: payment.amount_paid.toString(),
+          payment_date: payment.payment_date,
+          payment_mode: payment.payment_mode,
+          receipt_no: payment.receipt_no,
+          is_partial: payment.is_partial,
+          collected_by_user_id: payment.collected_by_user_id,
+        })),
+      )
+      .sort((a, b) => b.payment_date.getTime() - a.payment_date.getTime());
+
+    const lastPaymentDate = paymentHistory[0]?.payment_date ?? null;
+
+    const feeConcessions = demandMappings
+      .flatMap((mapping) =>
+        mapping.fee_structures.fee_concessions.map((concession) => ({
+          id: concession.id,
+          fee_structure_id: mapping.fee_structure_id,
+          fee_structure_name: mapping.fee_structures.name,
+          concession_amount: concession.concession_amount.toString(),
+          is_settled: concession.is_settled,
+          settled_date: concession.settled_date,
+        })),
+      )
+      .filter(
+        (concession, index, all) =>
+          all.findIndex((c) => c.id === concession.id) === index,
+      );
+
+    const educationLoanDd = demandMappings.flatMap((mapping) =>
+      mapping.education_loan_dd.map((loan) => ({
+        id: loan.id,
+        student_fee_demand_mapping_id: mapping.id,
+        dd_reference_number: loan.dd_reference_number,
+        bank_name: loan.bank_name,
+        amount: loan.amount.toString(),
+        status: loan.status,
+        acknowledgement_receipt_no: loan.acknowledgement_receipt_no,
+        received_by_user_id: loan.received_by_user_id,
+      })),
+    );
+
+    const studentName = student.soa_applications
+      ? [
+          student.soa_applications.first_name,
+          student.soa_applications.last_name,
+        ]
+          .filter(Boolean)
+          .join(' ')
+      : null;
+
+    return {
+      student_profile: {
+        student_id: student.id,
+        student_name: studentName,
+        register_number: student.register_no,
+        admission_no: student.admission_no,
+        student_id_no: student.student_id_no,
+        programme: student.courses.name,
+        department: student.courses.departments.name,
+        batch: student.batches.name,
+        gender: student.gender,
+        status: student.status,
+      },
+      fee_summary: {
+        total_demand: totalDemand.toString(),
+        total_paid: totalPaid.toString(),
+        total_outstanding: totalDemand.minus(totalPaid).toString(),
+        due_status: computeDueStatus(totalDemand, totalPaid),
+      },
+      demand_summary: demandSummary,
+      payment_summary: {
+        total_payments_count: paymentHistory.length,
+        total_amount_paid: totalPaid.toString(),
+        last_payment_date: lastPaymentDate,
+      },
+      payment_history: paymentHistory,
+      fee_concessions: feeConcessions,
+      education_loan_dd: educationLoanDd,
+    };
+  }
+
+  private async findDemandMappingsWithDashboardRelations() {
+    return this.prisma.student_fee_demand_mapping.findMany({
+      include: {
+        fee_payments: true,
+        fee_structures: true,
+        students: {
+          include: {
+            soa_applications: true,
+            batches: true,
+            courses: { include: { departments: true } },
+          },
+        },
+      },
+      orderBy: [{ student_id: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  private async findStudentWithWorkspaceRelations(studentId: number) {
+    return this.prisma.students.findUnique({
+      where: { id: studentId },
+      include: {
+        soa_applications: true,
+        batches: true,
+        courses: { include: { departments: true } },
+        student_fee_demand_mapping: {
+          include: {
+            fee_payments: { orderBy: { payment_date: 'desc' } },
+            education_loan_dd: true,
+            fee_structures: { include: { fee_concessions: true } },
+          },
+        },
+      },
+    });
   }
 
   /**

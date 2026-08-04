@@ -40,6 +40,36 @@ export class FeePaymentController {
   }
 
   /**
+   * GET /api/v1/fee-payments/dashboard
+   *
+   * One row per student fee demand mapping, with the payment status
+   * rolled up for the Fee Payments dashboard.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED   – missing/invalid access token
+   *  403 FORBIDDEN      – authenticated user is not an admin
+   *  500 INTERNAL_ERROR – unexpected server failure
+   */
+  @Get('fee-payments/dashboard')
+  dashboard() {
+    return this.feePaymentService.dashboard();
+  }
+
+  /**
+   * GET /api/v1/fee-payments/students/:studentId/workspace
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED     – missing/invalid access token
+   *  403 FORBIDDEN        – authenticated user is not an admin
+   *  404 STUDENT_NOT_FOUND – no student with the given id
+   *  500 INTERNAL_ERROR   – unexpected server failure
+   */
+  @Get('fee-payments/students/:studentId/workspace')
+  getStudentWorkspace(@Param('studentId', ParseIntPipe) studentId: number) {
+    return this.feePaymentService.getStudentWorkspace(studentId);
+  }
+
+  /**
    * GET /api/v1/fee-payments/:id
    *
    * Error responses:
