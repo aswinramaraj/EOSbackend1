@@ -409,9 +409,10 @@ model courses {
 }
 
 model demand_categories {
-  id                  Int                   @id @default(autoincrement())
-  name                String                @unique @db.VarChar(100)
-  fee_structure_items fee_structure_items[]
+  id                         Int                          @id @default(autoincrement())
+  name                       String                       @unique @db.VarChar(100)
+  fee_structure_items        fee_structure_items[]
+  student_fee_demand_mapping student_fee_demand_mapping[]
 }
 
 model department_achievements {
@@ -670,10 +671,13 @@ model fee_payments {
   is_partial                    Boolean                    @default(false)
   collected_by_user_id          Int?
   created_at                    DateTime                   @default(now()) @db.Timestamptz(6)
+  fee_structure_item_id         Int?
   users                         users?                     @relation(fields: [collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fee_structure_items           fee_structure_items?       @relation(fields: [fee_structure_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_fee_demand_mapping    student_fee_demand_mapping @relation(fields: [student_fee_demand_mapping_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([student_fee_demand_mapping_id], map: "idx_fee_payments_demand")
+  @@index([fee_structure_item_id], map: "idx_fee_payments_fee_structure_item")
 }
 
 model fee_structure_items {
@@ -681,6 +685,7 @@ model fee_structure_items {
   fee_structure_id   Int
   demand_category_id Int
   amount             Decimal           @db.Decimal(12, 2)
+  fee_payments       fee_payments[]
   demand_categories  demand_categories @relation(fields: [demand_category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   fee_structures     fee_structures    @relation(fields: [fee_structure_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -844,20 +849,15 @@ model hostel_room_types {
 
 model hostel_rooms {
   id                     Int                      @id @default(autoincrement())
-  hostel_id              Int
   room_number            String                   @db.VarChar(20)
   room_type_id           Int
   capacity               Int                      @db.SmallInt
+  hostel_id              Int
   hostels                hostels                  @relation(fields: [hostel_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   hostel_room_types      hostel_room_types        @relation(fields: [room_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_hostel_mapping student_hostel_mapping[]
 
   @@unique([hostel_id, room_number])
-}
-
-enum hostel_wing_enum {
-  boys
-  girls
 }
 
 /// The parent hostel/block entity (e.g. "A Block") — did not exist before;
@@ -876,29 +876,6 @@ model hostels {
   hostel_mess_feedback hostel_mess_feedback[]
   hostel_rooms         hostel_rooms[]
   users                users?                 @relation(fields: [warden_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-enum hostel_complaint_category_enum {
-  plumbing
-  electrical
-  carpentry
-  network
-  mess
-  facilities
-  other
-}
-
-enum hostel_complaint_priority_enum {
-  low
-  medium
-  high
-}
-
-enum hostel_complaint_status_enum {
-  open
-  in_progress
-  resolved
-  escalated
 }
 
 /// Hostel-specific complaint/ticket tracking — distinct from feedback_forms
@@ -1518,8 +1495,10 @@ model student_fee_demand_mapping {
   semester          Int?                @db.SmallInt
   total_amount      Decimal             @db.Decimal(12, 2)
   created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  demand_category   Int?
   education_loan_dd education_loan_dd[]
   fee_payments      fee_payments[]
+  demand_categories demand_categories?  @relation(fields: [demand_category], references: [id], onDelete: NoAction, onUpdate: NoAction)
   fee_structures    fee_structures      @relation(fields: [fee_structure_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   students          students            @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -1915,6 +1894,34 @@ model wallet_transactions {
 
   @@index([outlet_id, created_at], map: "idx_wallet_txn_outlet")
   @@index([wallet_id, created_at], map: "idx_wallet_txn_wallet")
+}
+
+enum hostel_wing_enum {
+  boys
+  girls
+}
+
+enum hostel_complaint_category_enum {
+  plumbing
+  electrical
+  carpentry
+  network
+  mess
+  facilities
+  other
+}
+
+enum hostel_complaint_priority_enum {
+  low
+  medium
+  high
+}
+
+enum hostel_complaint_status_enum {
+  open
+  in_progress
+  resolved
+  escalated
 }
 
 enum achievement_media_type_enum {
