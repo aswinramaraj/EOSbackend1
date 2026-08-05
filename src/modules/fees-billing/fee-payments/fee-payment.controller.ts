@@ -100,6 +100,23 @@ export class FeePaymentController {
   }
 
   /**
+   * GET /api/v1/student-fee-demand-mappings/:id/category-breakdown
+   *
+   * One row per demand category for this mapping — Original Amount,
+   * Already Paid, Outstanding Amount, Status. Read-only.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED                 – missing/invalid access token
+   *  403 FORBIDDEN                    – authenticated user is not an admin
+   *  404 STUDENT_FEE_DEMAND_NOT_FOUND – no demand mapping with the given id
+   *  500 INTERNAL_ERROR               – unexpected server failure
+   */
+  @Get('student-fee-demand-mappings/:id/category-breakdown')
+  getCategoryBreakdown(@Param('id', ParseIntPipe) id: number) {
+    return this.feePaymentService.getCategoryBreakdown(id);
+  }
+
+  /**
    * POST /api/v1/student-fee-demand-mappings/:id/payments
    *
    * Error responses:

@@ -15,6 +15,7 @@ import {
   FeePaymentStudentWorkspaceDto,
   DemandSummaryItemDto,
 } from './dto/fee-payment-student-workspace.dto';
+import { CategoryBreakdownItemDto } from './dto/fee-payment-category-breakdown.dto';
 
 type DueStatus = 'paid' | 'partial' | 'pending';
 
@@ -89,6 +90,15 @@ export class FeePaymentService {
   /**
    * GET /student-fee-demand-mappings/:id/payments
    *
+   * Payment History — every field returned exactly as before, with one
+   * additive field: demand_category_name, resolved via the existing
+   * fee_payments.fee_structure_item_id → fee_structure_items →
+   * demand_categories relations (no new column, no duplicated data).
+   *
+   * Historical rows with fee_structure_item_id = NULL simply have no
+   * fee_structure_items relation to join through, so they resolve to
+   * demand_category_name: null — they are not excluded or altered.
+   *
    * Error cases:
    *  404 STUDENT_FEE_DEMAND_NOT_FOUND – no demand mapping with the given id
    */
@@ -96,10 +106,18 @@ export class FeePaymentService {
     await this.assertDemandMappingExists(demandMappingId);
 
     try {
-      return await this.prisma.fee_payments.findMany({
+      const payments = await this.prisma.fee_payments.findMany({
         where: { student_fee_demand_mapping_id: demandMappingId },
+        include: {
+          fee_structure_items: { include: { demand_categories: true } },
+        },
         orderBy: { id: 'asc' },
       });
+
+      return payments.map(({ fee_structure_items, ...payment }) => ({
+        ...payment,
+        demand_category_name: fee_structure_items?.demand_categories.name ?? null,
+      }));
     } catch (err) {
       this.logger.error('DB error while fetching fee payments', err);
       throw new InternalServerErrorException({
@@ -107,6 +125,102 @@ export class FeePaymentService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  /**
+   * GET /student-fee-demand-mappings/:id/category-breakdown
+   *
+   * One row per demand category (fee_structure_item) belonging to this
+   * mapping's fee structure — Original Amount, Already Paid, Outstanding,
+   * Status. Read-only; no data is modified.
+   *
+   * Already Paid / Outstanding are always scoped by BOTH
+   * student_fee_demand_mapping_id AND fee_structure_item_id — never by
+   * fee_structure_item_id alone — because the same fee_structure_items row
+   * (and therefore the same fee_structure_item_id) is shared by every
+   * student mapped to that fee structure. Filtering by item id alone would
+   * sum other students' payments into this student's breakdown. This
+   * method only ever reads fee_payments through this one mapping's own
+   * `fee_payments` relation, which is inherently pre-scoped to
+   * student_fee_demand_mapping_id — so grouping those rows by
+   * fee_structure_item_id below is safe and never crosses mappings.
+   *
+   * Error cases:
+   *  404 STUDENT_FEE_DEMAND_NOT_FOUND – no demand mapping with the given id
+   */
+  async getCategoryBreakdown(
+    demandMappingId: number,
+  ): Promise<CategoryBreakdownItemDto[]> {
+    let mapping: Awaited<
+      ReturnType<typeof this.findMappingWithCategoryBreakdownRelations>
+    >;
+
+    try {
+      mapping = await this.findMappingWithCategoryBreakdownRelations(
+        demandMappingId,
+      );
+    } catch (err) {
+      this.logger.error(
+        'DB error while fetching fee structure category breakdown',
+        err,
+      );
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (!mapping) {
+      throw new NotFoundException({
+        message: 'Student fee demand mapping not found',
+        errorCode: 'STUDENT_FEE_DEMAND_NOT_FOUND',
+      });
+    }
+
+    return mapping.fee_structures.fee_structure_items.map((item) => {
+      // mapping.fee_payments is already scoped to this one
+      // student_fee_demand_mapping_id via the relation it was loaded
+      // through — filtering by item.id here adds the fee_structure_item_id
+      // half of the required two-column scope, never the only one.
+      const alreadyPaid = mapping.fee_payments
+        .filter((payment) => payment.fee_structure_item_id === item.id)
+        .reduce((sum, payment) => sum.plus(payment.amount_paid), new Prisma.Decimal(0));
+
+      const outstanding = computeOutstanding(item.amount, alreadyPaid);
+
+      return {
+        fee_structure_item_id: item.id,
+        demand_category_name: item.demand_categories.name,
+        original_amount: item.amount.toString(),
+        already_paid: alreadyPaid.toString(),
+        outstanding_amount: outstanding.toString(),
+        status: computeDueStatus(item.amount, alreadyPaid),
+      };
+    });
+  }
+
+  private async findMappingWithCategoryBreakdownRelations(
+    demandMappingId: number,
+  ) {
+    return this.prisma.student_fee_demand_mapping.findUnique({
+      where: { id: demandMappingId },
+      select: {
+        fee_payments: {
+          select: { fee_structure_item_id: true, amount_paid: true },
+        },
+        fee_structures: {
+          select: {
+            fee_structure_items: {
+              select: {
+                id: true,
+                amount: true,
+                demand_categories: { select: { name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
   }
 
   /**
@@ -414,10 +528,28 @@ export class FeePaymentService {
   /**
    * POST /student-fee-demand-mappings/:id/payments
    *
+   * Category-wise payment: dto.fee_structure_item_id selects exactly which
+   * demand category (Academic Fee, Exam Fee, ...) this payment is for.
+   * Already Paid / Outstanding for that category are always computed
+   * scoped by BOTH student_fee_demand_mapping_id AND fee_structure_item_id
+   * together — never by fee_structure_item_id alone, since the same
+   * fee_structure_items row is shared by every student on that fee
+   * structure; filtering by item id alone would sum other students'
+   * payments into this one.
+   *
+   * The existence check, the mismatch check, the already-paid aggregate,
+   * and the insert all run inside one $transaction so that two concurrent
+   * requests against the same category cannot both read a stale
+   * "outstanding" value and jointly overpay it.
+   *
    * Error cases:
-   *  404 STUDENT_FEE_DEMAND_NOT_FOUND  – no demand mapping with the given id
-   *  409 FEE_PAYMENT_RECEIPT_EXISTS    – receipt_no already used by another payment
-   *  422 PAYMENT_EXCEEDS_DUE_AMOUNT    – amount_paid would exceed the demand's total_amount
+   *  404 STUDENT_FEE_DEMAND_NOT_FOUND     – no demand mapping with the given id
+   *  404 FEE_STRUCTURE_ITEM_NOT_FOUND     – fee_structure_item_id does not exist
+   *  422 FEE_STRUCTURE_ITEM_MISMATCH      – fee_structure_item_id belongs to a
+   *                                          different fee structure than this mapping
+   *  409 FEE_PAYMENT_RECEIPT_EXISTS       – receipt_no already used by another payment
+   *  422 DEMAND_CATEGORY_ALREADY_SETTLED  – this category's outstanding is already 0
+   *  422 PAYMENT_EXCEEDS_DUE_AMOUNT       – amount_paid would exceed this category's outstanding
    *
    * collectedByUserId is always the authenticated caller's id (from the JWT) —
    * the client cannot set who collected a payment.
@@ -427,33 +559,148 @@ export class FeePaymentService {
     dto: CreateFeePaymentDto,
     collectedByUserId: number,
   ) {
-    const mapping = await this.assertDemandMappingExists(demandMappingId);
+    const MAX_SERIALIZATION_RETRIES = 3;
 
-    await this.assertReceiptNoAvailable(dto.receipt_no);
-    await this.assertWithinDueAmount(
-      demandMappingId,
-      mapping.total_amount,
-      dto.amount_paid,
-    );
+    for (let attempt = 1; attempt <= MAX_SERIALIZATION_RETRIES; attempt++) {
+      try {
+        return await this.createWithinTransaction(
+          demandMappingId,
+          dto,
+          collectedByUserId,
+        );
+      } catch (err) {
+        const isSerializationConflict =
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2034';
 
-    try {
-      return await this.prisma.fee_payments.create({
-        data: {
-          student_fee_demand_mapping_id: demandMappingId,
-          amount_paid: dto.amount_paid,
-          receipt_no: dto.receipt_no,
-          payment_mode: dto.payment_mode,
-          is_partial: dto.is_partial,
-          collected_by_user_id: collectedByUserId,
-        },
-      });
-    } catch (err) {
-      this.logger.error('DB error while creating fee payment', err);
-      throw new InternalServerErrorException({
-        message: 'Something went wrong. Please try again.',
-        errorCode: 'INTERNAL_ERROR',
-      });
+        if (isSerializationConflict && attempt < MAX_SERIALIZATION_RETRIES) {
+          // Two concurrent requests raced for the same demand category under
+          // SERIALIZABLE isolation — Postgres aborted this one to preserve
+          // correctness. Retry: the other request has now committed, so this
+          // retry re-reads the up-to-date Already Paid/Outstanding and is
+          // validated against reality, not a stale snapshot.
+          continue;
+        }
+
+        if (isSerializationConflict) {
+          throw new ConflictException({
+            message:
+              'This payment could not be completed due to a concurrent update to the same demand category. Please try again.',
+            errorCode: 'CONCURRENT_PAYMENT_CONFLICT',
+          });
+        }
+
+        if (
+          err instanceof NotFoundException ||
+          err instanceof ConflictException ||
+          err instanceof UnprocessableEntityException
+        ) {
+          throw err;
+        }
+
+        this.logger.error('DB error while creating fee payment', err);
+        throw new InternalServerErrorException({
+          message: 'Something went wrong. Please try again.',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
     }
+  }
+
+  private async createWithinTransaction(
+    demandMappingId: number,
+    dto: CreateFeePaymentDto,
+    collectedByUserId: number,
+  ) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const mapping = await tx.student_fee_demand_mapping.findUnique({
+          where: { id: demandMappingId },
+          select: { fee_structure_id: true },
+        });
+
+        if (!mapping) {
+          throw new NotFoundException({
+            message: 'Student fee demand mapping not found',
+            errorCode: 'STUDENT_FEE_DEMAND_NOT_FOUND',
+          });
+        }
+
+        const item = await tx.fee_structure_items.findUnique({
+          where: { id: dto.fee_structure_item_id },
+          select: { id: true, fee_structure_id: true, amount: true },
+        });
+
+        if (!item) {
+          throw new NotFoundException({
+            message: 'Fee structure item not found',
+            errorCode: 'FEE_STRUCTURE_ITEM_NOT_FOUND',
+          });
+        }
+
+        if (item.fee_structure_id !== mapping.fee_structure_id) {
+          throw new UnprocessableEntityException({
+            message:
+              'This fee structure item does not belong to the selected student fee demand mapping',
+            errorCode: 'FEE_STRUCTURE_ITEM_MISMATCH',
+          });
+        }
+
+        const existingReceipt = await tx.fee_payments.findUnique({
+          where: { receipt_no: dto.receipt_no },
+          select: { id: true },
+        });
+
+        if (existingReceipt) {
+          throw new ConflictException({
+            message: 'A fee payment with this receipt number already exists',
+            errorCode: 'FEE_PAYMENT_RECEIPT_EXISTS',
+          });
+        }
+
+        // Scoped by BOTH student_fee_demand_mapping_id AND
+        // fee_structure_item_id — never by fee_structure_item_id alone.
+        const paidSoFarResult = await tx.fee_payments.aggregate({
+          where: {
+            student_fee_demand_mapping_id: demandMappingId,
+            fee_structure_item_id: item.id,
+          },
+          _sum: { amount_paid: true },
+        });
+        const alreadyPaid =
+          paidSoFarResult._sum.amount_paid ?? new Prisma.Decimal(0);
+
+        const outstanding = computeOutstanding(item.amount, alreadyPaid);
+
+        if (outstanding.lessThanOrEqualTo(0)) {
+          throw new UnprocessableEntityException({
+            message: 'This demand category has already been fully paid',
+            errorCode: 'DEMAND_CATEGORY_ALREADY_SETTLED',
+          });
+        }
+
+        if (new Prisma.Decimal(dto.amount_paid).greaterThan(outstanding)) {
+          throw new UnprocessableEntityException({
+            message:
+              'Payment amount would exceed the outstanding amount for this demand category',
+            errorCode: 'PAYMENT_EXCEEDS_DUE_AMOUNT',
+          });
+        }
+
+        return tx.fee_payments.create({
+          data: {
+            student_fee_demand_mapping_id: demandMappingId,
+            fee_structure_item_id: item.id,
+            amount_paid: dto.amount_paid,
+            receipt_no: dto.receipt_no,
+            payment_mode: dto.payment_mode,
+            is_partial: dto.is_partial,
+            collected_by_user_id: collectedByUserId,
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   /**
@@ -478,7 +725,7 @@ export class FeePaymentService {
       });
     }
 
-    if (dto.collected_by_user_id !== undefined) {
+    if (dto.collected_by_user_id !== undefined && dto.collected_by_user_id !== null) {
       await this.assertUserExists(dto.collected_by_user_id);
     }
 

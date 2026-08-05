@@ -5,15 +5,22 @@ import {
   IsNotEmpty,
   IsNumber,
   IsOptional,
+  IsPositive,
   IsString,
   MaxLength,
-  Min,
 } from 'class-validator';
 import { payment_mode_enum } from '../../../../../generated/prisma/client';
 
 export class CreateFeePaymentDto {
+  /**
+   * Which demand category (fee_structure_item) this payment is for. Must
+   * belong to the same fee_structure as the target student_fee_demand_mapping.
+   */
+  @IsInt()
+  fee_structure_item_id: number;
+
   @IsNumber()
-  @Min(0)
+  @IsPositive()
   amount_paid: number;
 
   @IsString()
