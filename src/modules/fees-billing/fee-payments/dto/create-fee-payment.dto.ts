@@ -29,7 +29,12 @@ export class CreateFeePaymentDto {
   @IsBoolean()
   is_partial?: boolean;
 
+  /**
+   * Accepted for backward compatibility with the existing frontend payload,
+   * but never trusted — the server always uses the authenticated caller's
+   * id as the collector. See FeePaymentController.create().
+   */
   @IsOptional()
   @IsInt()
-  collected_by_user_id?: number;
+  collected_by_user_id?: number | null;
 }

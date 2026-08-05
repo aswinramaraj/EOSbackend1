@@ -104,9 +104,9 @@ export class FeeConcessionService {
   /**
    * PUT/PATCH /fee-concessions/:id
    *
-   * Only concession_amount may be updated.
-   * fee_structure_id, is_settled and settled_date belong to the settlement
-   * workflow and are not editable here.
+   * concession_amount, is_settled and settled_date may be updated.
+   * fee_structure_id is immutable — the concession remains attached to its
+   * original fee structure.
    *
    * Error cases:
    *  404 FEE_CONCESSION_NOT_FOUND  – no concession with the given id
@@ -130,7 +130,14 @@ export class FeeConcessionService {
     try {
       return await this.prisma.fee_concessions.update({
         where: { id },
-        data: { concession_amount: dto.concession_amount },
+        data: {
+          concession_amount: dto.concession_amount,
+          is_settled: dto.is_settled,
+          settled_date:
+            dto.settled_date !== undefined
+              ? new Date(dto.settled_date)
+              : undefined,
+        },
       });
     } catch (err) {
       this.logger.error('DB error while updating fee concession', err);

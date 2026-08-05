@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
 import { CreateFeeStructureItemDto } from './dto/create-fee-structure-item.dto';
 import { UpdateFeeStructureItemDto } from './dto/update-fee-structure-item.dto';
 
@@ -88,12 +89,18 @@ export class FeeStructureItemService {
     await this.assertNoDuplicate(feeStructureId, dto.demand_category_id);
 
     try {
-      return await this.prisma.fee_structure_items.create({
-        data: {
-          fee_structure_id: feeStructureId,
-          demand_category_id: dto.demand_category_id,
-          amount: dto.amount,
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        const item = await tx.fee_structure_items.create({
+          data: {
+            fee_structure_id: feeStructureId,
+            demand_category_id: dto.demand_category_id,
+            amount: dto.amount,
+          },
+        });
+
+        await this.recalculateFeeStructureDemand(tx, feeStructureId);
+
+        return item;
       });
     } catch (err) {
       this.logger.error('DB error while creating fee structure item', err);
@@ -138,12 +145,18 @@ export class FeeStructureItemService {
     }
 
     try {
-      return await this.prisma.fee_structure_items.update({
-        where: { id },
-        data: {
-          demand_category_id: dto.demand_category_id,
-          amount: dto.amount,
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.fee_structure_items.update({
+          where: { id },
+          data: {
+            demand_category_id: dto.demand_category_id,
+            amount: dto.amount,
+          },
+        });
+
+        await this.recalculateFeeStructureDemand(tx, item.fee_structure_id);
+
+        return updated;
       });
     } catch (err) {
       this.logger.error('DB error while updating fee structure item', err);
@@ -171,8 +184,14 @@ export class FeeStructureItemService {
     }
 
     try {
-      return await this.prisma.fee_structure_items.delete({
-        where: { id },
+      return await this.prisma.$transaction(async (tx) => {
+        const deleted = await tx.fee_structure_items.delete({
+          where: { id },
+        });
+
+        await this.recalculateFeeStructureDemand(tx, item.fee_structure_id);
+
+        return deleted;
       });
     } catch (err) {
       this.logger.error('DB error while deleting fee structure item', err);
@@ -264,6 +283,34 @@ export class FeeStructureItemService {
         errorCode: 'FEE_STRUCTURE_ITEM_EXISTS',
       });
     }
+  }
+
+  /**
+   * Source-of-truth sync: Fee Structure Items → Student Fee Demand Mapping.
+   *
+   * Called from create()/update()/remove() (always inside the same
+   * transaction as the item write) so that every student_fee_demand_mapping
+   * row for this fee structure is kept equal to the current sum of its
+   * fee_structure_items. fee_payments are never touched here — outstanding
+   * amount is always derived at read time as
+   * max(0, total_amount - SUM(fee_payments.amount_paid)), so it updates
+   * automatically once total_amount changes.
+   */
+  private async recalculateFeeStructureDemand(
+    tx: Prisma.TransactionClient,
+    feeStructureId: number,
+  ) {
+    const result = await tx.fee_structure_items.aggregate({
+      where: { fee_structure_id: feeStructureId },
+      _sum: { amount: true },
+    });
+
+    const newTotal = result._sum.amount ?? new Prisma.Decimal(0);
+
+    await tx.student_fee_demand_mapping.updateMany({
+      where: { fee_structure_id: feeStructureId },
+      data: { total_amount: newTotal },
+    });
   }
 
   private async findById(id: number) {

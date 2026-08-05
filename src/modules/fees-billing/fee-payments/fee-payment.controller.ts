@@ -16,6 +16,8 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { FeePaymentService } from './fee-payment.service';
 import { CreateFeePaymentDto } from './dto/create-fee-payment.dto';
 import { UpdateFeePaymentDto } from './dto/update-fee-payment.dto';
@@ -37,6 +39,36 @@ export class FeePaymentController {
   @Get('fee-payments')
   findAll() {
     return this.feePaymentService.findAll();
+  }
+
+  /**
+   * GET /api/v1/fee-payments/dashboard
+   *
+   * One row per student fee demand mapping, with the payment status
+   * rolled up for the Fee Payments dashboard.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED   – missing/invalid access token
+   *  403 FORBIDDEN      – authenticated user is not an admin
+   *  500 INTERNAL_ERROR – unexpected server failure
+   */
+  @Get('fee-payments/dashboard')
+  dashboard() {
+    return this.feePaymentService.dashboard();
+  }
+
+  /**
+   * GET /api/v1/fee-payments/students/:studentId/workspace
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED     – missing/invalid access token
+   *  403 FORBIDDEN        – authenticated user is not an admin
+   *  404 STUDENT_NOT_FOUND – no student with the given id
+   *  500 INTERNAL_ERROR   – unexpected server failure
+   */
+  @Get('fee-payments/students/:studentId/workspace')
+  getStudentWorkspace(@Param('studentId', ParseIntPipe) studentId: number) {
+    return this.feePaymentService.getStudentWorkspace(studentId);
   }
 
   /**
@@ -75,18 +107,21 @@ export class FeePaymentController {
    *  401 UNAUTHORIZED                  – missing/invalid access token
    *  403 FORBIDDEN                     – authenticated user is not an admin
    *  404 STUDENT_FEE_DEMAND_NOT_FOUND  – no demand mapping with the given id
-   *  404 USER_NOT_FOUND                – collected_by_user_id does not exist
    *  409 FEE_PAYMENT_RECEIPT_EXISTS    – receipt_no already used by another payment
    *  422 PAYMENT_EXCEEDS_DUE_AMOUNT    – amount_paid would exceed the demand's total_amount
    *  500 INTERNAL_ERROR                – unexpected server failure
+   *
+   * collected_by_user_id is never accepted from the request body — the
+   * authenticated caller (from the JWT) is always the collector of record.
    */
   @Post('student-fee-demand-mappings/:id/payments')
   @HttpCode(HttpStatus.CREATED)
   create(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateFeePaymentDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.feePaymentService.create(id, dto);
+    return this.feePaymentService.create(id, dto, user.sub);
   }
 
   /**

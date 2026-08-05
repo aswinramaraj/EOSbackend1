@@ -48,7 +48,7 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, swaggerDocument);
 
   // ── Start ────────────────────────────────────────────────────────────────────
-  const port = parseInt(process.env.PORT || '6000', 10);
+  const port = parseInt(process.env.PORT || '3001', 10);
   await app.listen(port);
   logger.log(`🚀 EOS Backend running on http://localhost:${port}/api/v1`);
   logger.log(`📘 Swagger docs available at http://localhost:${port}/api/docs`);
