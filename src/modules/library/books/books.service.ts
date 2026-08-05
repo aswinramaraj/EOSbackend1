@@ -10,15 +10,6 @@ import type { Prisma } from 'generated/prisma/client';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
 
-function isForeignKeyViolation(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === 'P2003'
-  );
-}
-
 // Minimum trigram/word similarity score for a row to count as a fuzzy match.
 const FUZZY_SIMILARITY_THRESHOLD = 0.2;
 
@@ -117,6 +108,7 @@ export class BooksService {
         edition: dto.edition
           ? { equals: dto.edition, mode: 'insensitive' }
           : null,
+        deleted_at: null,
       },
       include: BOOK_INCLUDE,
     });
@@ -218,7 +210,7 @@ export class BooksService {
       page_size = 20,
     } = searchDto;
 
-    const where: Prisma.booksWhereInput = {};
+    const where: Prisma.booksWhereInput = { deleted_at: null };
 
     if (q) {
       where.OR = [
@@ -324,9 +316,12 @@ export class BooksService {
       LEFT JOIN departments d ON d.id = b.department_id
       LEFT JOIN library_racks r ON r.id = b.rack_id
       WHERE
-        similarity(b.title, ${q}) > ${FUZZY_SIMILARITY_THRESHOLD}
-        OR word_similarity(${q}, b.title) > ${FUZZY_SIMILARITY_THRESHOLD}
-        OR (b.author IS NOT NULL AND word_similarity(${q}, b.author) > ${FUZZY_SIMILARITY_THRESHOLD})
+        b.deleted_at IS NULL
+        AND (
+          similarity(b.title, ${q}) > ${FUZZY_SIMILARITY_THRESHOLD}
+          OR word_similarity(${q}, b.title) > ${FUZZY_SIMILARITY_THRESHOLD}
+          OR (b.author IS NOT NULL AND word_similarity(${q}, b.author) > ${FUZZY_SIMILARITY_THRESHOLD})
+        )
       ORDER BY similarity DESC
       LIMIT ${cappedLimit}
     `;
@@ -366,7 +361,7 @@ export class BooksService {
       include: BOOK_INCLUDE,
     });
 
-    if (!book) {
+    if (!book || book.deleted_at) {
       throw new NotFoundException('Book not found.');
     }
 
@@ -378,7 +373,7 @@ export class BooksService {
       where: { id },
     });
 
-    if (!book) {
+    if (!book || book.deleted_at) {
       throw new NotFoundException('Book not found.');
     }
 
@@ -460,7 +455,7 @@ export class BooksService {
       },
     });
 
-    if (!book) {
+    if (!book || book.deleted_at) {
       throw new NotFoundException('Book not found.');
     }
 
@@ -478,21 +473,22 @@ export class BooksService {
       );
     }
 
-    // Delete book
-    try {
-      await this.prisma.books.delete({
-        where: {
-          id,
-        },
-      });
-    } catch (err) {
-      if (isForeignKeyViolation(err)) {
-        throw new ConflictException(
-          'Cannot delete a book with existing borrow history.',
-        );
-      }
-      throw err;
-    }
+    // Soft delete: book_borrow_records.book_id -> books.id has no cascade
+    // (onDelete: NoAction), so a hard delete would fail on FK constraint for
+    // any book with return history — and that history (fines, damage
+    // charges) feeds real reports (see reports.service.ts), so it can't just
+    // be deleted alongside the book. Marking the book deleted_at + zeroing
+    // available_copies removes it from listings/search (see findAll/
+    // searchFuzzy) and blocks new borrows via the existing atomic
+    // available_copies > 0 check in borrow-records.service.ts, without
+    // touching borrow/return logic or any other module.
+    await this.prisma.books.update({
+      where: { id },
+      data: {
+        deleted_at: new Date(),
+        available_copies: 0,
+      },
+    });
 
     return {
       message: 'Book deleted successfully.',

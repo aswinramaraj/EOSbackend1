@@ -110,6 +110,7 @@ describe('BooksService', () => {
           title: { equals: createDto.title, mode: 'insensitive' },
           author: { equals: createDto.author, mode: 'insensitive' },
           edition: null,
+          deleted_at: null,
         },
         include: BOOK_INCLUDE,
       });
@@ -337,7 +338,7 @@ describe('BooksService', () => {
       expect(mockPrismaService.$transaction).toHaveBeenCalled();
       expect(mockPrismaService.books.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {},
+          where: { deleted_at: null },
           skip: 0,
           take: 20,
           orderBy: { title: 'asc' },
@@ -390,6 +391,7 @@ describe('BooksService', () => {
             ],
             category_id: 3,
             available_copies: { gt: 0 },
+            deleted_at: null,
           },
           skip: 10,
           take: 10,
@@ -405,7 +407,7 @@ describe('BooksService', () => {
 
       expect(mockPrismaService.books.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { department_id: 4, rack_id: 9 },
+          where: { department_id: 4, rack_id: 9, deleted_at: null },
         }),
       );
     });
@@ -573,48 +575,75 @@ describe('BooksService', () => {
       mockPrismaService.books.findUnique.mockResolvedValue(null);
 
       await expect(service.remove(1)).rejects.toThrow(NotFoundException);
-      expect(mockPrismaService.books.delete).not.toHaveBeenCalled();
+      expect(mockPrismaService.books.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw NotFoundException when the book is already deleted', async () => {
+      mockPrismaService.books.findUnique.mockResolvedValue({
+        id: 1,
+        deleted_at: new Date('2026-01-01'),
+      });
+
+      await expect(service.remove(1)).rejects.toThrow(NotFoundException);
+      expect(mockPrismaService.books.update).not.toHaveBeenCalled();
     });
 
     it('should throw ConflictException when book is currently borrowed', async () => {
-      mockPrismaService.books.findUnique.mockResolvedValue({ id: 1 });
+      mockPrismaService.books.findUnique.mockResolvedValue({
+        id: 1,
+        deleted_at: null,
+      });
       mockPrismaService.book_borrow_records.findFirst.mockResolvedValue({
         id: 5,
         status: 'borrowed',
       });
 
       await expect(service.remove(1)).rejects.toThrow(ConflictException);
-      expect(mockPrismaService.books.delete).not.toHaveBeenCalled();
+      expect(mockPrismaService.books.update).not.toHaveBeenCalled();
     });
 
-    it('should delete the book successfully when not borrowed', async () => {
-      mockPrismaService.books.findUnique.mockResolvedValue({ id: 1 });
+    it('should soft-delete the book when it has never been borrowed', async () => {
+      mockPrismaService.books.findUnique.mockResolvedValue({
+        id: 1,
+        deleted_at: null,
+      });
       mockPrismaService.book_borrow_records.findFirst.mockResolvedValue(null);
-      mockPrismaService.books.delete.mockResolvedValue({ id: 1 });
+      mockPrismaService.books.update.mockResolvedValue({ id: 1 });
 
       const result = await service.remove(1);
 
-      expect(mockPrismaService.books.delete).toHaveBeenCalledWith({
+      expect(mockPrismaService.books.update).toHaveBeenCalledWith({
         where: { id: 1 },
+        data: { deleted_at: expect.any(Date), available_copies: 0 },
       });
       expect(result).toEqual({ message: 'Book deleted successfully.' });
     });
 
-    it('should throw ConflictException when the book has existing borrow history (FK violation)', async () => {
-      mockPrismaService.books.findUnique.mockResolvedValue({ id: 1 });
+    // Regression test for the original bug: a book with only *returned*
+    // borrow history (no active 'borrowed' record) must still be
+    // deletable — book_borrow_records rows are never touched, so the
+    // book_id -> books FK (onDelete: NoAction) never comes into play.
+    it('should soft-delete the book when all its borrow records are returned', async () => {
+      mockPrismaService.books.findUnique.mockResolvedValue({
+        id: 1,
+        deleted_at: null,
+      });
+      // No 'borrowed' record found even though returned history exists —
+      // the service never queries returned records directly.
       mockPrismaService.book_borrow_records.findFirst.mockResolvedValue(null);
-      mockPrismaService.books.delete.mockRejectedValue({ code: 'P2003' });
+      mockPrismaService.books.update.mockResolvedValue({ id: 1 });
 
-      await expect(service.remove(1)).rejects.toThrow(ConflictException);
-    });
+      const result = await service.remove(1);
 
-    it('should rethrow unrelated errors from delete', async () => {
-      mockPrismaService.books.findUnique.mockResolvedValue({ id: 1 });
-      mockPrismaService.book_borrow_records.findFirst.mockResolvedValue(null);
-      const unrelatedError = new Error('connection lost');
-      mockPrismaService.books.delete.mockRejectedValue(unrelatedError);
-
-      await expect(service.remove(1)).rejects.toThrow(unrelatedError);
+      expect(mockPrismaService.book_borrow_records.findFirst).toHaveBeenCalledWith({
+        where: { book_id: 1, status: 'borrowed' },
+      });
+      expect(mockPrismaService.books.delete).not.toHaveBeenCalled();
+      expect(mockPrismaService.books.update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: { deleted_at: expect.any(Date), available_copies: 0 },
+      });
+      expect(result).toEqual({ message: 'Book deleted successfully.' });
     });
   });
 

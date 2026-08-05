@@ -289,6 +289,7 @@ model books {
   publisher           String?               @db.VarChar(255)
   vendor_fund         String?               @db.VarChar(255)
   rack_id             Int?
+  deleted_at          DateTime?             @db.Timestamptz(6)
   book_borrow_records book_borrow_records[]
   book_categories     book_categories       @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   departments         departments?          @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
