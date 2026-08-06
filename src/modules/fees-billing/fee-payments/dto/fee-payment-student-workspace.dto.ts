@@ -2,6 +2,7 @@ export class StudentProfileSummaryDto {
   student_id: number;
   student_name: string | null;
   register_number: string | null;
+  roll_no: string | null;
   admission_no: string | null;
   student_id_no: string;
   programme: string;
