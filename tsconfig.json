@@ -2,7 +2,7 @@
   "compilerOptions": {
     "module": "commonjs",
     "moduleResolution": "node",
-    "types": ["node", "jest"],
+    "types": ["node", "jest", "multer"],
     "esModuleInterop": true,
     "isolatedModules": true,
     "declaration": true,

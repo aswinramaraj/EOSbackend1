@@ -21,6 +21,7 @@ const PAYSLIP_SELECT = {
   status: true,
   file_url: true,
   requested_at: true,
+  purpose: true,
   faculty: {
     select: { id: true, first_name: true, last_name: true, designation: true },
   },
@@ -33,6 +34,7 @@ interface PayslipRequestRow {
   status: string;
   file_url: string | null;
   requested_at: Date;
+  purpose: string | null;
   faculty: {
     id: number;
     first_name: string;
@@ -57,6 +59,7 @@ function toResponse(row: PayslipRequestRow) {
     status: row.status,
     file_url: row.file_url,
     requested_at: row.requested_at,
+    purpose: row.purpose,
     faculty: row.faculty,
   };
 }
@@ -93,7 +96,7 @@ export class PayslipRequestsService {
     }
 
     const request = await this.prisma.payslip_requests.create({
-      data: { faculty_id: faculty.id, year, month },
+      data: { faculty_id: faculty.id, year, month, purpose: dto.purpose },
       select: PAYSLIP_SELECT,
     });
 

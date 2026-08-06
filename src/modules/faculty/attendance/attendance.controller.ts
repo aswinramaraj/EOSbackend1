@@ -21,11 +21,16 @@ import { AttendanceService } from './attendance.service';
 import { CreateAttendanceDto } from './dto/create-attendance.dto';
 import { UpdateAttendanceDto } from './dto/update-attendance.dto';
 import { ListAttendanceQueryDto } from './dto/list-attendance-query.dto';
+import { MeStaffAttendanceService } from './me-staff-attendance.service';
+import { GetStaffAttendanceDto } from './dto/get-staff-attendance.dto';
 
 @Controller('me')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AttendanceController {
-  constructor(private readonly attendanceService: AttendanceService) {}
+  constructor(
+    private readonly attendanceService: AttendanceService,
+    private readonly meStaffAttendanceService: MeStaffAttendanceService,
+  ) {}
 
   /** POST /api/v1/attendance — Faculty only. */
   @Post('attendance')
@@ -64,5 +69,22 @@ export class AttendanceController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.attendanceService.update(id, dto, user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/staff-attendance?year=&month= — Faculty only.
+   * Self-scoped, best-effort staff attendance derived from approved leaves
+   * and holiday-slot opt-ins (see MeStaffAttendanceService for details).
+   */
+  @Get('staff-attendance')
+  @Roles(ROLES.FACULTY)
+  getStaffAttendance(
+    @Query() query: GetStaffAttendanceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.meStaffAttendanceService.getMyStaffAttendance(
+      user.sub,
+      query,
+    );
   }
 }

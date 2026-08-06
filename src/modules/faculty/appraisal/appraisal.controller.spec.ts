@@ -5,6 +5,7 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/modules/storage/storage.service';
 import { AppraisalController } from './appraisal.controller';
 import { AppraisalService } from './appraisal.service';
 
@@ -21,6 +22,7 @@ describe('AppraisalController', () => {
           useValue: {
             faculty: { findUnique: jest.fn() },
             appraisal_criteria: { findMany: jest.fn() },
+            appraisal_divisions: { findUnique: jest.fn() },
             appraisal_requests: {
               create: jest.fn(),
               findMany: jest.fn(),
@@ -36,8 +38,17 @@ describe('AppraisalController', () => {
               findMany: jest.fn(),
               update: jest.fn(),
             },
+            appraisal_attachments: {
+              createMany: jest.fn(),
+              findUnique: jest.fn(),
+              delete: jest.fn(),
+            },
             $transaction: jest.fn(),
           },
+        },
+        {
+          provide: StorageService,
+          useValue: { upload: jest.fn(), remove: jest.fn() },
         },
       ],
     }).compile();
