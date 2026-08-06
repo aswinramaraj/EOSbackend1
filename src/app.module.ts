@@ -20,6 +20,7 @@ import { CertificatesModule } from './modules/admissions/certificates/certificat
 import { OdModule } from './modules/admissions/od/od.module';
 import { SoaApplicationsModule } from './modules/admissions/soa-applications/soa-applications.module';
 import { StudentLeavesModule } from './modules/admissions/student-leaves/student-leaves.module';
+import { StudentOdsModule } from './modules/admissions/student-ods/student-ods.module';
 import { StudentsModule } from './modules/admissions/students/students.module';
 import { MeProfileModule } from './modules/admissions/students/me-profile/me-profile.module';
 
@@ -139,6 +140,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     OdModule,
     SoaApplicationsModule,
     StudentLeavesModule,
+    StudentOdsModule,
     StudentsModule,
     MeProfileModule,
 

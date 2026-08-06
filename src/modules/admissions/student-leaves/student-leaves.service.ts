@@ -30,6 +30,12 @@ const STUDENT_LEAVE_SELECT = {
       class_id: true,
       soa_applications: { select: { first_name: true, last_name: true } },
       users: { select: { id: true, email: true } },
+      classes: {
+        select: {
+          section: true,
+          departments: { select: { name: true } },
+        },
+      },
     },
   },
 } as const;
@@ -50,6 +56,7 @@ interface StudentLeaveRow {
     class_id: number | null;
     soa_applications: { first_name: string; last_name: string | null } | null;
     users: { id: number; email: string };
+    classes: { section: string; departments: { name: string } } | null;
   };
 }
 
@@ -75,6 +82,8 @@ function toResponse(leave: StudentLeaveRow) {
       id: leave.students.id,
       student_id_no: leave.students.student_id_no,
       name: resolveStudentName(leave.students),
+      section: leave.students.classes?.section ?? null,
+      department_name: leave.students.classes?.departments.name ?? null,
     },
     from_date: leave.from_date,
     to_date: leave.to_date,
@@ -98,10 +107,16 @@ export class StudentLeavesService {
   }
 
   /**
-   * GET /student-leaves (Faculty only, for now) — the calling faculty's
+   * GET /me/student-leaves (Faculty only, for now) — the calling faculty's
    * mentor-review queue: every leave request from a student in a class this
    * faculty mentors, via class_mentors. A faculty who mentors no class gets
    * an empty page rather than an error.
+   *
+   * student.section/department_name are included because a Class Mentor
+   * can mentor more than one class (class_mentors is one row per
+   * class_id, not capped at one) - without this, the mobile review queue
+   * would have no way to tell which section a given request belongs to
+   * when the mentor covers more than one.
    */
   async findAll(query: ListStudentLeaveQueryDto, userId: number) {
     const faculty = await this.resolveFacultyByUserId(userId);
