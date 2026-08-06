@@ -439,6 +439,7 @@ export class FeePaymentService {
         student_id: student.id,
         student_name: studentName,
         register_number: student.register_no,
+        roll_no: student.roll_no,
         admission_no: student.admission_no,
         student_id_no: student.student_id_no,
         programme: student.courses.name,
@@ -573,19 +574,32 @@ export class FeePaymentService {
           err instanceof Prisma.PrismaClientKnownRequestError &&
           err.code === 'P2034';
 
-        if (isSerializationConflict && attempt < MAX_SERIALIZATION_RETRIES) {
-          // Two concurrent requests raced for the same demand category under
-          // SERIALIZABLE isolation — Postgres aborted this one to preserve
-          // correctness. Retry: the other request has now committed, so this
-          // retry re-reads the up-to-date Already Paid/Outstanding and is
-          // validated against reality, not a stale snapshot.
+        // P2002 on receipt_no: two concurrent requests both computed the
+        // same "next" auto-generated receipt number before either had
+        // committed. The unique constraint on receipt_no is the safety net
+        // behind the SERIALIZABLE isolation above — retry re-reads the
+        // now-committed max and generates the true next number.
+        const isReceiptNumberRace =
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002' &&
+          (err.meta?.target as string[] | undefined)?.includes('receipt_no');
+
+        const isRetryableConflict = isSerializationConflict || isReceiptNumberRace;
+
+        if (isRetryableConflict && attempt < MAX_SERIALIZATION_RETRIES) {
+          // Two concurrent requests raced for the same demand category (or
+          // the same next receipt number) under SERIALIZABLE isolation —
+          // Postgres aborted this one to preserve correctness. Retry: the
+          // other request has now committed, so this retry re-reads
+          // up-to-date state and is validated against reality, not a stale
+          // snapshot.
           continue;
         }
 
-        if (isSerializationConflict) {
+        if (isRetryableConflict) {
           throw new ConflictException({
             message:
-              'This payment could not be completed due to a concurrent update to the same demand category. Please try again.',
+              'This payment could not be completed due to a concurrent update. Please try again.',
             errorCode: 'CONCURRENT_PAYMENT_CONFLICT',
           });
         }
@@ -646,17 +660,7 @@ export class FeePaymentService {
           });
         }
 
-        const existingReceipt = await tx.fee_payments.findUnique({
-          where: { receipt_no: dto.receipt_no },
-          select: { id: true },
-        });
-
-        if (existingReceipt) {
-          throw new ConflictException({
-            message: 'A fee payment with this receipt number already exists',
-            errorCode: 'FEE_PAYMENT_RECEIPT_EXISTS',
-          });
-        }
+        const receiptNo = await this.generateNextReceiptNo(tx);
 
         // Scoped by BOTH student_fee_demand_mapping_id AND
         // fee_structure_item_id — never by fee_structure_item_id alone.
@@ -687,20 +691,53 @@ export class FeePaymentService {
           });
         }
 
+        // is_partial is derived, never client-supplied. Reuses alreadyPaid
+        // and item.amount already computed above for the outstanding
+        // check — no extra query.
+        const newTotalPaid = alreadyPaid.plus(dto.amount_paid);
+        const isPartial = newTotalPaid.lessThan(item.amount);
+
         return tx.fee_payments.create({
           data: {
             student_fee_demand_mapping_id: demandMappingId,
             fee_structure_item_id: item.id,
             amount_paid: dto.amount_paid,
-            receipt_no: dto.receipt_no,
+            receipt_no: receiptNo,
             payment_mode: dto.payment_mode,
-            is_partial: dto.is_partial,
+            is_partial: isPartial,
             collected_by_user_id: collectedByUserId,
           },
         });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+  }
+
+  /**
+   * Generates the next sequential receipt number: RCP001, RCP002, RCP003, ...
+   *
+   * No UUID, no timestamp — the numeric suffix is derived from the highest
+   * existing RCP-formatted receipt_no in fee_payments, read inside the same
+   * SERIALIZABLE transaction as the rest of create(). That isolation level
+   * (plus the pre-existing UNIQUE constraint on receipt_no as a hard
+   * safety net, backed by the retry-on-conflict logic in create()) is what
+   * makes this safe under concurrent requests — two simultaneous payments
+   * cannot both compute and persist the same "next" number.
+   *
+   * Legacy receipt_no values that don't match the RCP### pattern (e.g.
+   * pre-existing manually-entered receipts) are ignored by the regexp and
+   * never influence the next generated number.
+   */
+  private async generateNextReceiptNo(
+    tx: Prisma.TransactionClient,
+  ): Promise<string> {
+    const result = await tx.$queryRaw<{ max_num: number | null }[]>`
+      SELECT MAX((regexp_match(receipt_no, '^RCP(\\d+)$'))[1]::int) AS max_num
+      FROM fee_payments
+    `;
+
+    const nextNumber = (result[0]?.max_num ?? 0) + 1;
+    return `RCP${String(nextNumber).padStart(3, '0')}`;
   }
 
   /**
