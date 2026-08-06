@@ -10,7 +10,10 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { paginate } from '../../../common/dto/pagination.dto';
 import { CompaniesService } from '../companies/companies.service';
 import type { JwtPayload } from '../../../auth/interfaces/jwt-payload.interface';
-import { target_audience_enum } from '../../../../generated/prisma/enums';
+import {
+  target_audience_enum,
+  drive_application_status_enum,
+} from '../../../../generated/prisma/enums';
 import { CreateDriveDto } from './dto/create-drive.dto';
 import { UpdateDriveDto } from './dto/update-drive.dto';
 import { ListDrivesQueryDto } from './dto/list-drives-query.dto';
@@ -174,6 +177,24 @@ export class DrivesService {
     });
   }
 
+  /**
+   * last_cleared_round tracks the highest round ever reached, independent
+   * of `status` - so it survives a later transition to 'rejected' (which
+   * overwrites `status` itself) and can still answer "cleared how far
+   * before being rejected?" for the student-facing history view. Only
+   * set when the new status actually implies a round was cleared;
+   * left untouched (not reset) for every other transition, including
+   * 'rejected' itself - that's the whole point.
+   */
+  private static readonly ROUND_REACHED_BY_STATUS: Partial<
+    Record<drive_application_status_enum, number>
+  > = {
+    r1_cleared: 1,
+    r2_cleared: 2,
+    r3_cleared: 3,
+    placed: 3, // being placed necessarily means every round was cleared
+  };
+
   async updateApplicationStatus(
     user: JwtPayload,
     driveId: number,
@@ -181,11 +202,13 @@ export class DrivesService {
     dto: UpdateDriveApplicationStatusDto,
   ) {
     const application = await this.findApplicationOrThrow(driveId, studentId);
+    const roundReached = DrivesService.ROUND_REACHED_BY_STATUS[dto.status];
 
     return this.prisma.student_drive_applications.update({
       where: { id: application.id },
       data: {
         status: dto.status,
+        ...(roundReached !== undefined ? { last_cleared_round: roundReached } : {}),
         updated_by_user_id: user.sub,
         updated_at: new Date(),
       },
@@ -200,34 +223,106 @@ export class DrivesService {
     return { driveId, studentId };
   }
 
-  // ───────────────────────────── Student-facing history ─────────────────────────────
+  // ───────────────────────────── Student-facing upcoming/history ─────────────────────────────
 
+  /**
+   * A student's own outcome (student_drive_applications.status) — not the
+   * institution-wide placement_drives.status, which stays 'scheduled' for
+   * every drive currently seeded even once individual students have been
+   * marked placed/rejected on it — is what separates "still waiting on a
+   * result" from "done" for that student: placed/rejected -> history,
+   * anything else (applied/r1_cleared/r2_cleared/r3_cleared) -> upcoming.
+   */
+  private static readonly CONCLUDED_APPLICATION_STATUSES = [
+    'rejected',
+    'placed',
+  ] as const;
+
+  /** GET /drives/student/upcoming — drives still in progress (not yet placed/rejected) for this student. */
+  async getUpcomingForStudent(user: JwtPayload) {
+    const student = await this.findStudentOrThrow(user.sub);
+
+    const applications = await this.prisma.student_drive_applications.findMany(
+      {
+        where: {
+          student_id: student.id,
+          status: { notIn: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        },
+        include: { placement_drives: { include: { companies: true } } },
+        orderBy: { placement_drives: { scheduled_date: 'asc' } },
+      },
+    );
+
+    return applications.map((app) => this.toUpcomingDrive(app));
+  }
+
+  /** GET /drives/student/history — drives where this student has a final outcome (placed/rejected). */
   async getHistoryForStudent(user: JwtPayload) {
+    const student = await this.findStudentOrThrow(user.sub);
+
+    const applications = await this.prisma.student_drive_applications.findMany(
+      {
+        where: {
+          student_id: student.id,
+          status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        },
+        include: { placement_drives: { include: { companies: true } } },
+        orderBy: { updated_at: 'desc' },
+      },
+    );
+
+    return applications.map((app) => {
+      const drive = app.placement_drives;
+      return {
+        drive_id: drive.id,
+        company_name: this.resolveCompanyName(drive),
+        scheduled_date: drive.scheduled_date,
+        drive_status: drive.status,
+        application_status: app.status,
+        last_cleared_round: app.last_cleared_round,
+      };
+    });
+  }
+
+  private toUpcomingDrive(app: {
+    status: string;
+    placement_drives: {
+      id: number;
+      scheduled_date: Date;
+      is_disclosed: boolean;
+      disclosed_reveal_date: Date | null;
+      companies: { name: string; profile_info: string | null };
+    };
+  }) {
+    const drive = app.placement_drives;
+    return {
+      drive_id: drive.id,
+      company_name: this.resolveCompanyName(drive),
+      company_profile_info: drive.is_disclosed ? drive.companies.profile_info : null,
+      scheduled_date: drive.scheduled_date,
+      is_disclosed: drive.is_disclosed,
+      disclosed_reveal_date: drive.is_disclosed ? null : drive.disclosed_reveal_date,
+      application_status: app.status,
+    };
+  }
+
+  private resolveCompanyName(drive: {
+    is_disclosed: boolean;
+    companies: { name: string };
+  }): string {
+    return drive.is_disclosed ? drive.companies.name : 'Undisclosed';
+  }
+
+  private async findStudentOrThrow(userId: number) {
     const student = await this.prisma.students.findUnique({
-      where: { user_id: user.sub },
+      where: { user_id: userId },
     });
     if (!student) {
       throw new NotFoundException(
         'Student profile not found for the current user',
       );
     }
-
-    const applications = await this.prisma.student_drive_applications.findMany({
-      where: { student_id: student.id },
-      include: { placement_drives: { include: { companies: true } } },
-      orderBy: { updated_at: 'desc' },
-    });
-
-    return applications.map((app) => {
-      const drive = app.placement_drives;
-      return {
-        drive_id: drive.id,
-        company_name: drive.is_disclosed ? drive.companies.name : 'Undisclosed',
-        scheduled_date: drive.scheduled_date,
-        drive_status: drive.status,
-        application_status: app.status,
-      };
-    });
+    return student;
   }
 
   // ───────────────────────────── Automation ─────────────────────────────

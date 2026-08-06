@@ -21,6 +21,7 @@ describe('MeOdTeamsService', () => {
       create: jest.Mock;
       delete: jest.Mock;
     };
+    faculty: { findUnique: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -43,6 +44,7 @@ describe('MeOdTeamsService', () => {
         create: jest.fn(),
         delete: jest.fn(),
       },
+      faculty: { findUnique: jest.fn() },
       $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(tx)),
     };
 
@@ -575,6 +577,182 @@ describe('MeOdTeamsService', () => {
           },
         ],
       });
+    });
+
+    it('resolves and persists faculty_guide_id, returning the guide name', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 7 });
+      prisma.od_teams.findUnique.mockResolvedValue({
+        id: 61,
+        created_by_student_id: 7,
+        is_locked: false,
+      });
+      prisma.od_team_members.findMany.mockResolvedValue([{ student_id: 7 }]);
+      prisma.students.findMany.mockResolvedValue([
+        { id: 7, classes: { department_id: 1, departments: { name: 'CSE' } } },
+      ]);
+      prisma.faculty.findUnique.mockResolvedValue({
+        first_name: 'Kavitha',
+        last_name: 'R',
+      });
+      tx.od_requests.create.mockResolvedValue({
+        id: 61,
+        team_id: 61,
+        from_date: new Date('2099-08-12T00:00:00.000Z'),
+        to_date: new Date('2099-08-13T00:00:00.000Z'),
+        reason: 'Inter-college hackathon',
+        faculty_guide_id: 12,
+        mentor_approval_status: 'pending',
+      });
+      tx.od_request_hod_approvals.createMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.submitOdRequest(103, 61, {
+        ...validDto,
+        faculty_guide_id: 12,
+      });
+
+      expect(prisma.faculty.findUnique).toHaveBeenCalledWith({
+        where: { id: 12 },
+        select: { first_name: true, last_name: true },
+      });
+      const [createArgs] = tx.od_requests.create.mock.calls[0] as [
+        { data: Record<string, unknown> },
+      ];
+      expect(createArgs.data).toMatchObject({ faculty_guide_id: 12 });
+      expect(result).toMatchObject({
+        faculty_guide_id: 12,
+        faculty_guide_name: 'Kavitha R',
+      });
+    });
+
+    it('throws 404 FACULTY_NOT_FOUND when faculty_guide_id does not match any faculty row', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 7 });
+      prisma.od_teams.findUnique.mockResolvedValue({
+        id: 61,
+        created_by_student_id: 7,
+        is_locked: false,
+      });
+      prisma.od_team_members.findMany.mockResolvedValue([{ student_id: 7 }]);
+      prisma.students.findMany.mockResolvedValue([
+        { id: 7, classes: { department_id: 1, departments: { name: 'CSE' } } },
+      ]);
+      prisma.faculty.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.submitOdRequest(103, 61, { ...validDto, faculty_guide_id: 999 }),
+      ).rejects.toMatchObject({
+        status: 404,
+        response: { errorCode: 'FACULTY_NOT_FOUND' },
+      });
+      expect(tx.od_requests.create).not.toHaveBeenCalled();
+    });
+
+    it('leaves faculty_guide_id/name null when omitted from the request', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 7 });
+      prisma.od_teams.findUnique.mockResolvedValue({
+        id: 61,
+        created_by_student_id: 7,
+        is_locked: false,
+      });
+      prisma.od_team_members.findMany.mockResolvedValue([{ student_id: 7 }]);
+      prisma.students.findMany.mockResolvedValue([
+        { id: 7, classes: { department_id: 1, departments: { name: 'CSE' } } },
+      ]);
+      tx.od_requests.create.mockResolvedValue({
+        id: 61,
+        team_id: 61,
+        from_date: new Date('2099-08-12T00:00:00.000Z'),
+        to_date: new Date('2099-08-13T00:00:00.000Z'),
+        reason: 'Inter-college hackathon',
+        faculty_guide_id: null,
+        mentor_approval_status: 'pending',
+      });
+      tx.od_request_hod_approvals.createMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.submitOdRequest(103, 61, validDto);
+
+      expect(prisma.faculty.findUnique).not.toHaveBeenCalled();
+      const [createArgs] = tx.od_requests.create.mock.calls[0] as [
+        { data: Record<string, unknown> },
+      ];
+      expect(createArgs.data).toMatchObject({ faculty_guide_id: null });
+      expect(result).toMatchObject({
+        faculty_guide_id: null,
+        faculty_guide_name: null,
+      });
+    });
+
+    it('parses from_time/to_time (HH:mm) into fixed-epoch-date Dates and formats them back as HH:mm', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 7 });
+      prisma.od_teams.findUnique.mockResolvedValue({
+        id: 61,
+        created_by_student_id: 7,
+        is_locked: false,
+      });
+      prisma.od_team_members.findMany.mockResolvedValue([{ student_id: 7 }]);
+      prisma.students.findMany.mockResolvedValue([
+        { id: 7, classes: { department_id: 1, departments: { name: 'CSE' } } },
+      ]);
+      tx.od_requests.create.mockResolvedValue({
+        id: 61,
+        team_id: 61,
+        from_date: new Date('2099-08-12T00:00:00.000Z'),
+        to_date: new Date('2099-08-13T00:00:00.000Z'),
+        from_time: new Date('1970-01-01T09:30:00.000Z'),
+        to_time: new Date('1970-01-01T17:00:00.000Z'),
+        reason: null,
+        mentor_approval_status: 'pending',
+      });
+      tx.od_request_hod_approvals.createMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.submitOdRequest(103, 61, {
+        from_date: '2099-08-12',
+        to_date: '2099-08-13',
+        from_time: '09:30',
+        to_time: '17:00',
+      });
+
+      const [createArgs] = tx.od_requests.create.mock.calls[0] as [
+        { data: Record<string, unknown> },
+      ];
+      expect(createArgs.data).toMatchObject({
+        from_time: new Date('1970-01-01T09:30:00.000Z'),
+        to_time: new Date('1970-01-01T17:00:00.000Z'),
+      });
+      expect(result).toMatchObject({ from_time: '09:30', to_time: '17:00' });
+    });
+
+    it('leaves from_time/to_time null when omitted from the request', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 7 });
+      prisma.od_teams.findUnique.mockResolvedValue({
+        id: 61,
+        created_by_student_id: 7,
+        is_locked: false,
+      });
+      prisma.od_team_members.findMany.mockResolvedValue([{ student_id: 7 }]);
+      prisma.students.findMany.mockResolvedValue([
+        { id: 7, classes: { department_id: 1, departments: { name: 'CSE' } } },
+      ]);
+      tx.od_requests.create.mockResolvedValue({
+        id: 61,
+        team_id: 61,
+        from_date: new Date('2099-08-12T00:00:00.000Z'),
+        to_date: new Date('2099-08-13T00:00:00.000Z'),
+        from_time: null,
+        to_time: null,
+        reason: null,
+        mentor_approval_status: 'pending',
+      });
+      tx.od_request_hod_approvals.createMany.mockResolvedValue({ count: 1 });
+
+      await service.submitOdRequest(103, 61, {
+        from_date: '2099-08-12',
+        to_date: '2099-08-13',
+      });
+
+      const [createArgs] = tx.od_requests.create.mock.calls[0] as [
+        { data: Record<string, unknown> },
+      ];
+      expect(createArgs.data).toMatchObject({ from_time: null, to_time: null });
     });
 
     it('gives two same-department members independent approval rows (schema-resolved dedup rule)', async () => {

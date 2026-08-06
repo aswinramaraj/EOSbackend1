@@ -578,6 +578,7 @@ model faculty {
   date_of_joining               DateTime?                       @db.Date
   status                        user_status_enum                @default(active)
   created_at                    DateTime                        @default(now()) @db.Timestamptz(6)
+  profile_url                   String?
   appraisal_requests            appraisal_requests[]
   assignments                   assignments[]
   attendance_records            attendance_records[]
@@ -594,6 +595,7 @@ model faculty {
   lesson_plans                  lesson_plans[]
   lms_notes                     lms_notes[]
   media_requests                media_requests[]
+  od_requests                   od_requests[]
   payslip_requests              payslip_requests[]
   salary_divisions              salary_divisions[]
   salary_payments               salary_payments[]
@@ -1080,7 +1082,11 @@ model od_requests {
   reason                   String?                    @db.VarChar(255)
   mentor_approval_status   approval_status_enum       @default(pending)
   created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  from_time                DateTime?                  @db.Timetz(6)
+  to_time                  DateTime?                  @db.Timetz(6)
+  faculty_guide_id         Int?
   od_request_hod_approvals od_request_hod_approvals[]
+  faculty                  faculty?                   @relation(fields: [faculty_guide_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   od_teams                 od_teams                   @relation(fields: [team_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
@@ -1462,6 +1468,7 @@ model student_drive_applications {
   status             drive_application_status_enum @default(applied)
   updated_by_user_id Int?
   updated_at         DateTime                      @default(now()) @db.Timestamptz(6)
+  last_cleared_round Int?                          @db.SmallInt
   placement_drives   placement_drives              @relation(fields: [drive_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   students           students                      @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users              users?                        @relation(fields: [updated_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
