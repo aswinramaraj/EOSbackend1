@@ -10,6 +10,12 @@ import { MeOdRequestsService } from './me-od-requests.service';
 import { MeHostelOutingsService } from './me-hostel-outings.service';
 import { MeBonafideRequestsService } from './me-bonafide-requests.service';
 import { MeProjectsService } from './me-projects.service';
+import { MeFeesService } from './me-fees.service';
+import { MeExamScheduleService } from './me-exam-schedule.service';
+import { MeHostelRoomService } from './me-hostel-room.service';
+import { MeHostelComplaintsService } from './me-hostel-complaints.service';
+import { MeMessFeedbackService } from './me-mess-feedback.service';
+import { MeAcademicCalendarService } from './me-academic-calendar.service';
 
 @Module({
   imports: [PrismaModule],
@@ -24,6 +30,12 @@ import { MeProjectsService } from './me-projects.service';
     MeHostelOutingsService,
     MeBonafideRequestsService,
     MeProjectsService,
+    MeFeesService,
+    MeExamScheduleService,
+    MeHostelRoomService,
+    MeHostelComplaintsService,
+    MeMessFeedbackService,
+    MeAcademicCalendarService,
   ],
 })
 export class MeProfileModule {}
