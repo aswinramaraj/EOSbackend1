@@ -1,14 +1,31 @@
 import {
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsPositive,
+  IsString,
+  IsISO8601,
   Matches,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateExamDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(200, { message: 'title must not exceed 200 characters' })
+  title?: string;
+
+  @IsOptional()
+  @IsISO8601({}, { message: 'start_date must be a valid date (YYYY-MM-DD)' })
+  start_date?: string;
+
+  @IsOptional()
+  @IsISO8601({}, { message: 'end_date must be a valid date (YYYY-MM-DD)' })
+  end_date?: string;
+
   @Type(() => Number)
   @IsInt({ message: 'exam_type_id must be an integer' })
   @IsPositive({ message: 'exam_type_id must be a positive integer' })

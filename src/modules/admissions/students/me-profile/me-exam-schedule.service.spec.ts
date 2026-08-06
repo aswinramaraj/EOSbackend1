@@ -57,7 +57,7 @@ describe('MeExamScheduleService', () => {
       { where: Record<string, unknown> },
     ];
     expect(findManyArgs.where).toMatchObject({
-      is_published: true,
+      exam_timetable_versions: { status: 'published' },
       exam_subject_mapping: { class_id: 7 },
     });
   });

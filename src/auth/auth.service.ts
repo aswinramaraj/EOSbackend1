@@ -66,6 +66,23 @@ export class AuthService {
       });
     }
 
+    // ── Senior COE tier ──────────────────────────────────────────────────────
+    let isSeniorCoe: boolean | undefined;
+    if (user.roles.name === 'coe') {
+      try {
+        const coeProfile = await (this.prisma as any).coe_profiles.findUnique({
+          where: { user_id: user.id },
+        });
+        isSeniorCoe = coeProfile?.is_senior ?? false;
+      } catch (err) {
+        this.logger.error('DB error while loading coe profile', err);
+        throw new InternalServerErrorException({
+          message: 'Something went wrong. Please try again.',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
+    }
+
     // ── Sign JWT ─────────────────────────────────────────────────────────────
     let accessToken: string;
     try {
@@ -74,6 +91,7 @@ export class AuthService {
         email: user.email,
         role: user.roles.name,
         roleId: user.roles.id,
+        ...(isSeniorCoe !== undefined ? { isSeniorCoe } : {}),
       };
 
       const secret = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
@@ -96,6 +114,7 @@ export class AuthService {
         email: user.email,
         role: user.roles.name,
         roleId: user.roles.id,
+        ...(isSeniorCoe !== undefined ? { isSeniorCoe } : {}),
       },
     };
   }
@@ -132,6 +151,9 @@ export class AuthService {
             student_type: true,
             status: true,
           },
+        },
+        coe_profiles: {
+          select: { is_senior: true },
         },
       },
     });

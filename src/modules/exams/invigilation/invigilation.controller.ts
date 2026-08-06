@@ -40,6 +40,15 @@ export class InvigilationController {
     return this.invigilationService.findAll(query);
   }
 
+  @Get('faculty/:facultyId/workload')
+  async getFacultyWorkload(
+    @Param('facultyId', ParseIntPipe) facultyId: number,
+  ) {
+    const workload =
+      await this.invigilationService.getFacultyWorkload(facultyId);
+    return ApiResponse.ok(workload, 'Faculty workload fetched successfully');
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.invigilationService.findOne(id);

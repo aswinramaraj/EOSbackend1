@@ -9,10 +9,18 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { getOpenRevaluationWindow } from 'src/common/utils/get-open-revaluation-window.util';
 import { CreateRevaluationDto } from './dto/create-revaluation.dto';
 import { UpdateRevaluationDto } from './dto/update-revaluation.dto';
 
-const VALID_STATUSES = ['requested', 'under_review', 'revised', 'no_change'];
+const VALID_STATUSES = [
+  'requested',
+  'under_review',
+  'revised',
+  'no_change',
+  'approved',
+  'rejected',
+];
 
 @Injectable()
 export class RevaluationService {
@@ -25,6 +33,7 @@ export class RevaluationService {
 
     const examMark = await this.prisma.exam_marks.findUnique({
       where: { id: exam_marks_id },
+      include: { exam_subject_mapping: true },
     });
 
     if (!examMark) {
@@ -56,9 +65,30 @@ export class RevaluationService {
       });
     }
 
+    const examId = examMark.exam_subject_mapping.exam_id;
+    const window = await getOpenRevaluationWindow(this.prisma, examId, 'reval');
+
+    if (window.max_papers_per_student !== null) {
+      const existingCount = await this.prisma.revaluation_requests.count({
+        where: { student_id, exam_id: examId },
+      });
+      if (existingCount >= window.max_papers_per_student) {
+        throw new UnprocessableEntityException({
+          message: `You may only request revaluation for up to ${window.max_papers_per_student} paper(s) for this exam.`,
+          errorCode: 'MAX_PAPERS_EXCEEDED',
+        });
+      }
+    }
+
     try {
       return await this.prisma.revaluation_requests.create({
-        data: { exam_marks_id, student_id },
+        data: {
+          exam_marks_id,
+          student_id,
+          exam_id: examId,
+          subject_id: examMark.exam_subject_mapping.subject_id,
+          fee_amount: window.fee_per_paper,
+        },
       });
     } catch (err: any) {
       this.logger.error('DB error while creating revaluation request', err);
@@ -154,14 +184,30 @@ export class RevaluationService {
       });
     }
 
-    if (existing.status !== 'requested') {
+    // 'requested' -> 'under_review' -> a terminal status (revised/no_change/
+    // approved/rejected) is a two-step flow — only block updates once a
+    // terminal status has already been reached.
+    if (!['requested', 'under_review'].includes(existing.status)) {
       throw new ConflictException({
         message: 'This revaluation request has already been processed.',
         errorCode: 'REVALUATION_ALREADY_PROCESSED',
       });
     }
 
-    const { status, revised_marks } = updateRevaluationDto;
+    const { status, revised_marks, remarks, evaluator_faculty_id } =
+      updateRevaluationDto;
+
+    if (evaluator_faculty_id !== undefined) {
+      const evaluator = await this.prisma.faculty.findUnique({
+        where: { id: evaluator_faculty_id },
+      });
+      if (!evaluator) {
+        throw new NotFoundException({
+          message: 'Evaluator faculty not found.',
+          errorCode: 'FACULTY_NOT_FOUND',
+        });
+      }
+    }
 
     if (revised_marks !== undefined) {
       if (revised_marks < 0) {
@@ -179,13 +225,17 @@ export class RevaluationService {
       }
     }
 
+    const isTerminal = status !== 'under_review';
+
     try {
       return await this.prisma.revaluation_requests.update({
         where: { id },
         data: {
           status,
           revised_marks,
-          resolved_at: new Date(),
+          remarks,
+          evaluator_faculty_id,
+          resolved_at: isTerminal ? new Date() : undefined,
         },
       });
     } catch (err: any) {

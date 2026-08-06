@@ -43,12 +43,24 @@ export class ExamsController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
   update(@Param('id') id: string, @Body() updateExamDto: UpdateExamDto) {
     return this.examsService.update(+id, updateExamDto);
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
   remove(@Param('id') id: string) {
     return this.examsService.remove(+id);
+  }
+
+  @Post(':id/complete')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
+  async complete(@Param('id') id: string) {
+    const result = await this.examsService.complete(+id);
+    return ApiResponse.ok(result, 'Exam marked as completed.');
   }
 }

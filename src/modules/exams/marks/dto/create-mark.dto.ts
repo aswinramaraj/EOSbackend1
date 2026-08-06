@@ -1,5 +1,12 @@
 // dto/create-mark.dto.ts
-import { IsInt, IsNumber, IsOptional, IsPositive, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsPositive,
+  Min,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateMarkDto {
@@ -29,4 +36,8 @@ export class CreateMarkDto {
   @IsInt({ message: 'entered_by_faculty_id must be an integer' })
   @IsPositive({ message: 'entered_by_faculty_id must be a positive integer' })
   entered_by_faculty_id?: number;
+
+  @IsOptional()
+  @IsBoolean({ message: 'is_absent must be a boolean' })
+  is_absent?: boolean;
 }

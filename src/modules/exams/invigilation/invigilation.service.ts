@@ -69,43 +69,55 @@ export class InvigilationService {
 
     const dutyDate = new Date(dto.duty_date);
 
+    if (dto.allocation_batch_id !== undefined) {
+      await this.assertBatchMatchesScope(
+        dto.allocation_batch_id,
+        dto.exam_id,
+        dutyDate,
+        dto.session,
+      );
+    }
+
     return this.prisma.$transaction(async (tx) => {
       const existingDuty = await tx.invigilation_duties.findFirst({
         where: {
           faculty_id: dto.faculty_id,
           duty_date: dutyDate,
-          shift: dto.shift,
+          session: dto.session,
         },
       });
 
-      if (existingDuty) {
-        if (existingDuty.hall_plan_id === dto.hall_plan_id) {
-          throw new ConflictException({
-            message:
-              'This faculty member is already assigned invigilation duty for this hall plan, date, and session',
-            errorCode: 'DUPLICATE_INVIGILATION_ASSIGNMENT',
-          });
-        }
+      // Same hall+date+session is a genuine duplicate — always blocked.
+      // A different hall is a "double duty" — allowed through, surfaced as
+      // a non-blocking warning (the mockup shows this as a badge, not a
+      // rejection: a relief invigilator might legitimately cover two halls).
+      if (existingDuty && existingDuty.hall_plan_id === dto.hall_plan_id) {
         throw new ConflictException({
           message:
-            'This faculty member is already assigned invigilation duty in another hall for this date and session',
-          errorCode: 'FACULTY_ALREADY_ASSIGNED',
+            'This faculty member is already assigned invigilation duty for this hall plan, date, and session',
+          errorCode: 'DUPLICATE_INVIGILATION_ASSIGNMENT',
         });
       }
 
-      return tx.invigilation_duties.create({
+      const created = await tx.invigilation_duties.create({
         data: {
           exam_id: dto.exam_id,
           faculty_id: dto.faculty_id,
           hall_plan_id: dto.hall_plan_id,
           duty_date: dutyDate,
-          shift: dto.shift,
+          session: dto.session,
+          role: dto.role,
+          allocation_batch_id: dto.allocation_batch_id,
         },
         include: {
           faculty: { select: FACULTY_SELECT },
           hall_plans: { select: HALL_PLAN_SELECT },
         },
       });
+
+      return existingDuty
+        ? { ...created, warning: 'DOUBLE_DUTY' as const }
+        : created;
     });
   }
 
@@ -117,6 +129,8 @@ export class InvigilationService {
     if (query.faculty_id !== undefined) where.faculty_id = query.faculty_id;
     if (query.duty_date !== undefined)
       where.duty_date = new Date(query.duty_date);
+    if (query.session !== undefined) where.session = query.session;
+    if (query.role !== undefined) where.role = query.role;
 
     const [data, total] = await this.prisma.$transaction([
       this.prisma.invigilation_duties.findMany({
@@ -229,30 +243,32 @@ export class InvigilationService {
       dto.duty_date !== undefined
         ? new Date(dto.duty_date)
         : existing.duty_date;
-    const shift = dto.shift !== undefined ? dto.shift : existing.shift;
+    const session = dto.session !== undefined ? dto.session : existing.session;
+
+    if (dto.allocation_batch_id !== undefined) {
+      await this.assertBatchMatchesScope(
+        dto.allocation_batch_id,
+        examId,
+        dutyDate,
+        session,
+      );
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const conflictRow = await tx.invigilation_duties.findFirst({
         where: {
           faculty_id: facultyId,
           duty_date: dutyDate,
-          shift,
+          session,
           NOT: { id },
         },
       });
 
-      if (conflictRow) {
-        if (conflictRow.hall_plan_id === hallPlanId) {
-          throw new ConflictException({
-            message:
-              'This faculty member is already assigned invigilation duty for this hall plan, date, and session',
-            errorCode: 'DUPLICATE_INVIGILATION_ASSIGNMENT',
-          });
-        }
+      if (conflictRow && conflictRow.hall_plan_id === hallPlanId) {
         throw new ConflictException({
           message:
-            'This faculty member is already assigned invigilation duty in another hall for this date and session',
-          errorCode: 'FACULTY_ALREADY_ASSIGNED',
+            'This faculty member is already assigned invigilation duty for this hall plan, date, and session',
+          errorCode: 'DUPLICATE_INVIGILATION_ASSIGNMENT',
         });
       }
 
@@ -261,9 +277,12 @@ export class InvigilationService {
       if (dto.hall_plan_id !== undefined) data.hall_plan_id = dto.hall_plan_id;
       if (dto.faculty_id !== undefined) data.faculty_id = dto.faculty_id;
       if (dto.duty_date !== undefined) data.duty_date = dutyDate;
-      if (dto.shift !== undefined) data.shift = dto.shift;
+      if (dto.session !== undefined) data.session = dto.session;
+      if (dto.role !== undefined) data.role = dto.role;
+      if (dto.allocation_batch_id !== undefined)
+        data.allocation_batch_id = dto.allocation_batch_id;
 
-      return tx.invigilation_duties.update({
+      const updated = await tx.invigilation_duties.update({
         where: { id },
         data,
         include: {
@@ -271,6 +290,10 @@ export class InvigilationService {
           hall_plans: { select: HALL_PLAN_SELECT },
         },
       });
+
+      return conflictRow
+        ? { ...updated, warning: 'DOUBLE_DUTY' as const }
+        : updated;
     });
   }
 
@@ -288,5 +311,59 @@ export class InvigilationService {
     await this.prisma.invigilation_duties.delete({ where: { id } });
 
     return { id };
+  }
+
+  /** GET /faculty/:id/workload — backs the "Faculty workload" panel. */
+  async getFacultyWorkload(facultyId: number) {
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { id: facultyId },
+      select: FACULTY_SELECT,
+    });
+    if (!faculty) {
+      throw new NotFoundException({
+        message: 'Faculty not found',
+        errorCode: 'FACULTY_NOT_FOUND',
+      });
+    }
+
+    const duties = await this.prisma.invigilation_duties.findMany({
+      where: { faculty_id: facultyId },
+      select: { role: true },
+    });
+
+    return {
+      faculty,
+      total_duties: duties.length,
+      chief_duties: duties.filter((d) => d.role === 'chief').length,
+      relief_duties: duties.filter((d) => d.role === 'relief').length,
+    };
+  }
+
+  private async assertBatchMatchesScope(
+    batchId: number,
+    examId: number,
+    dutyDate: Date,
+    session: string,
+  ) {
+    const batch = await this.prisma.invigilation_allocation_batches.findUnique({
+      where: { id: batchId },
+    });
+    if (!batch) {
+      throw new NotFoundException({
+        message: 'Allocation batch not found.',
+        errorCode: 'ALLOCATION_BATCH_NOT_FOUND',
+      });
+    }
+    if (
+      batch.exam_id !== examId ||
+      batch.exam_date.getTime() !== dutyDate.getTime() ||
+      batch.session !== session
+    ) {
+      throw new UnprocessableEntityException({
+        message:
+          "This allocation batch does not match the duty's exam, date and session.",
+        errorCode: 'ALLOCATION_BATCH_SCOPE_MISMATCH',
+      });
+    }
   }
 }

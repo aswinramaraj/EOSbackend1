@@ -13,6 +13,30 @@ export interface ReportTable {
   rows: Record<string, unknown>[];
 }
 
+/** No CSV export existed anywhere yet — added here, shared, rather than duplicated per module. */
+function toDisplayString(value: unknown): string {
+  return value === null || value === undefined
+    ? ''
+    : typeof value === 'string'
+      ? value
+      : typeof value === 'number' || typeof value === 'boolean'
+        ? String(value)
+        : JSON.stringify(value);
+}
+
+export function renderCsv(table: ReportTable): string {
+  const escape = (value: unknown) => {
+    const str = toDisplayString(value);
+    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+  };
+
+  const header = table.columns.map((c) => escape(c.header)).join(',');
+  const rows = table.rows.map((row) =>
+    table.columns.map((c) => escape(row[c.key])).join(','),
+  );
+  return [header, ...rows].join('\n');
+}
+
 export async function renderExcel(table: ReportTable): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet(table.title.slice(0, 31)); // Excel sheet-name limit
@@ -86,7 +110,7 @@ export function renderPdf(table: ReportTable): Promise<Buffer> {
         doc.addPage();
         y = doc.page.margins.top;
       }
-      const values = table.columns.map((c) => String(row[c.key] ?? ''));
+      const values = table.columns.map((c) => toDisplayString(row[c.key]));
       drawRow(values, y, false);
       y += rowHeight;
     }

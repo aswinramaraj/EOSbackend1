@@ -1,7 +1,7 @@
 // dto/create-exam-timetable.dto.ts
 import {
-  IsBoolean,
   IsDateString,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -12,7 +12,17 @@ import { Type } from 'class-transformer';
 
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/;
 
+export enum ExamSessionValue {
+  FN = 'FN',
+  AN = 'AN',
+}
+
 export class CreateExamTimetableDto {
+  @Type(() => Number)
+  @IsInt({ message: 'version_id must be an integer' })
+  @IsPositive({ message: 'version_id must be a positive integer' })
+  version_id!: number;
+
   @Type(() => Number)
   @IsInt({ message: 'exam_subject_mapping_id must be an integer' })
   @IsPositive({ message: 'exam_subject_mapping_id must be a positive integer' })
@@ -21,6 +31,9 @@ export class CreateExamTimetableDto {
   @IsNotEmpty({ message: 'exam_date is required' })
   @IsDateString({}, { message: 'exam_date must be a valid date (YYYY-MM-DD)' })
   exam_date!: string;
+
+  @IsEnum(ExamSessionValue, { message: 'session must be FN or AN' })
+  session!: ExamSessionValue;
 
   @IsNotEmpty({ message: 'start_time is required' })
   @Matches(TIME_REGEX, {
@@ -35,6 +48,8 @@ export class CreateExamTimetableDto {
   end_time!: string;
 
   @IsOptional()
-  @IsBoolean({ message: 'is_published must be a boolean' })
-  is_published?: boolean;
+  @Type(() => Number)
+  @IsInt({ message: 'venue_id must be an integer' })
+  @IsPositive({ message: 'venue_id must be a positive integer' })
+  venue_id?: number;
 }

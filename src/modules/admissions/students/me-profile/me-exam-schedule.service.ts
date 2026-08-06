@@ -73,7 +73,7 @@ export class MeExamScheduleService {
     try {
       return await this.prisma.exam_timetable.findMany({
         where: {
-          is_published: true,
+          exam_timetable_versions: { status: 'published' },
           exam_subject_mapping: { class_id: classId },
         },
         select: {
@@ -97,7 +97,10 @@ export class MeExamScheduleService {
         orderBy: [{ exam_date: 'asc' }, { start_time: 'asc' }],
       });
     } catch (err) {
-      this.logger.error(`Failed to fetch exam schedule for user ${userId}`, err);
+      this.logger.error(
+        `Failed to fetch exam schedule for user ${userId}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

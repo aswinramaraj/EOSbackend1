@@ -18,6 +18,7 @@ const EXAM_MARK_SELECT = {
   id: true,
   marks_obtained: true,
   max_marks: true,
+  is_absent: true,
   entered_at: true,
   students: {
     select: {
@@ -48,6 +49,7 @@ interface ExamMarkRow {
   id: number;
   marks_obtained: unknown;
   max_marks: unknown;
+  is_absent: boolean;
   entered_at: Date;
   students: {
     id: number;
@@ -81,6 +83,7 @@ function toResponse(row: ExamMarkRow) {
     id: row.id,
     marks_obtained: row.marks_obtained,
     max_marks: row.max_marks,
+    is_absent: row.is_absent,
     entered_at: row.entered_at,
     student: {
       id: row.students.id,
@@ -138,17 +141,24 @@ export class ExamMarksService {
       mapping.class_id,
     );
 
+    await this.assertMarksEntryNotLocked(mapping.exam_id, mapping.class_id);
+
     const studentIds = dto.entries.map((e) => e.student_id);
     if (new Set(studentIds).size !== studentIds.length) {
       throw new BadRequestException('Duplicate student_id values in entries');
     }
 
-    const outOfRange = dto.entries.filter(
-      (e) => e.marks_obtained < 0 || e.marks_obtained > dto.max_marks,
+    const invalid = dto.entries.filter(
+      (e) =>
+        !e.is_absent &&
+        (e.marks_obtained === undefined ||
+          e.marks_obtained < 0 ||
+          e.marks_obtained > dto.max_marks),
     );
-    if (outOfRange.length > 0) {
+    if (invalid.length > 0) {
       throw new UnprocessableEntityException({
-        message: 'marks_obtained must be between 0 and max_marks',
+        message:
+          'marks_obtained is required and must be between 0 and max_marks for every present student',
         errorCode: 'MARKS_OUT_OF_RANGE',
       });
     }
@@ -184,7 +194,8 @@ export class ExamMarksService {
           data: {
             exam_subject_mapping_id: examSubjectMappingId,
             student_id: e.student_id,
-            marks_obtained: e.marks_obtained,
+            marks_obtained: e.is_absent ? null : e.marks_obtained,
+            is_absent: e.is_absent ?? false,
             max_marks: dto.max_marks,
             entered_by_faculty_id: faculty.id,
           },
@@ -255,6 +266,7 @@ export class ExamMarksService {
 
     const existing = await this.prisma.exam_marks.findUnique({
       where: { id },
+      include: { exam_subject_mapping: true },
     });
     if (!existing) {
       throw new NotFoundException('Exam mark not found');
@@ -263,16 +275,40 @@ export class ExamMarksService {
       throw new ForbiddenException('You may only correct marks you entered');
     }
 
-    if (dto.marks_obtained > Number(existing.max_marks)) {
-      throw new UnprocessableEntityException({
-        message: 'marks_obtained must be between 0 and max_marks',
-        errorCode: 'MARKS_OUT_OF_RANGE',
-      });
+    if (dto.marks_obtained === undefined && dto.is_absent === undefined) {
+      throw new BadRequestException(
+        'At least one of marks_obtained or is_absent must be provided',
+      );
+    }
+
+    await this.assertMarksEntryNotLocked(
+      existing.exam_subject_mapping.exam_id,
+      existing.exam_subject_mapping.class_id,
+    );
+
+    const isAbsent = dto.is_absent ?? existing.is_absent;
+
+    if (!isAbsent) {
+      const marksObtained =
+        dto.marks_obtained ??
+        (existing.marks_obtained !== null
+          ? Number(existing.marks_obtained)
+          : undefined);
+
+      if (marksObtained === undefined || marksObtained > Number(existing.max_marks)) {
+        throw new UnprocessableEntityException({
+          message: 'marks_obtained must be between 0 and max_marks',
+          errorCode: 'MARKS_OUT_OF_RANGE',
+        });
+      }
     }
 
     const mark = await this.prisma.exam_marks.update({
       where: { id },
-      data: { marks_obtained: dto.marks_obtained },
+      data: {
+        is_absent: isAbsent,
+        marks_obtained: isAbsent ? null : dto.marks_obtained,
+      },
       select: EXAM_MARK_SELECT,
     });
 
@@ -329,6 +365,36 @@ export class ExamMarksService {
       validated: missingStudentIds.length === 0,
       missing_student_ids: missingStudentIds,
     };
+  }
+
+  /**
+   * COE can lock marks entry for a whole exam+department combo (via
+   * marks-entry-locks) to freeze it ahead of publishing. Resolves the
+   * department from the class, since exam_subject_mapping only carries
+   * class_id, not department_id directly.
+   */
+  private async assertMarksEntryNotLocked(examId: number, classId: number) {
+    const classRecord = await this.prisma.classes.findUnique({
+      where: { id: classId },
+      select: { department_id: true },
+    });
+    if (!classRecord) return;
+
+    const lock = await this.prisma.marks_entry_locks.findUnique({
+      where: {
+        exam_id_department_id: {
+          exam_id: examId,
+          department_id: classRecord.department_id,
+        },
+      },
+    });
+
+    if (lock?.is_locked) {
+      throw new ConflictException({
+        message: 'Marks entry is locked for this exam and department.',
+        errorCode: 'MARKS_ENTRY_LOCKED',
+      });
+    }
   }
 
   private async resolveFacultyByUserId(userId: number) {

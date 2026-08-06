@@ -1,12 +1,21 @@
 import {
   IsDateString,
+  IsEnum,
   IsInt,
-  IsNotEmpty,
+  IsOptional,
   IsPositive,
-  IsString,
-  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+export enum InvigilationSessionValue {
+  FN = 'FN',
+  AN = 'AN',
+}
+
+export enum InvigilationRoleValue {
+  chief = 'chief',
+  relief = 'relief',
+}
 
 export class CreateInvigilationDto {
   @IsInt()
@@ -27,8 +36,16 @@ export class CreateInvigilationDto {
   @IsDateString()
   duty_date!: string;
 
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(20)
-  shift!: string;
+  @IsEnum(InvigilationSessionValue, { message: 'session must be FN or AN' })
+  session!: InvigilationSessionValue;
+
+  @IsOptional()
+  @IsEnum(InvigilationRoleValue, { message: 'role must be chief or relief' })
+  role?: InvigilationRoleValue;
+
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  @Type(() => Number)
+  allocation_batch_id?: number;
 }

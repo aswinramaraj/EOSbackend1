@@ -17,7 +17,15 @@ export class ExamsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(createExamDto: CreateExamDto, createdByUserId: number) {
-    const { exam_type_id, batch_id, academic_year, semester } = createExamDto;
+    const {
+      exam_type_id,
+      batch_id,
+      academic_year,
+      semester,
+      title,
+      start_date,
+      end_date,
+    } = createExamDto;
 
     const examType = await this.prisma.exam_types.findUnique({
       where: { id: exam_type_id },
@@ -66,6 +74,9 @@ export class ExamsService {
             batch_id,
             academic_year,
             semester,
+            title,
+            start_date: start_date ? new Date(start_date) : undefined,
+            end_date: end_date ? new Date(end_date) : undefined,
             created_by_user_id: createdByUserId,
           },
         });
@@ -93,6 +104,7 @@ export class ExamsService {
                 select: {
                   class_id: true,
                   subject_id: true,
+                  is_elective: true,
                 },
               })
             : [];
@@ -109,6 +121,7 @@ export class ExamsService {
             exam_id: exam.id,
             class_id: cs.class_id,
             subject_id: cs.subject_id,
+            is_elective: cs.is_elective,
           })),
         });
 
@@ -205,6 +218,13 @@ export class ExamsService {
           batch_id: updateExamDto.batch_id,
           academic_year: updateExamDto.academic_year,
           semester: updateExamDto.semester,
+          title: updateExamDto.title,
+          start_date: updateExamDto.start_date
+            ? new Date(updateExamDto.start_date)
+            : undefined,
+          end_date: updateExamDto.end_date
+            ? new Date(updateExamDto.end_date)
+            : undefined,
         },
       });
     } catch (err: any) {
@@ -216,6 +236,52 @@ export class ExamsService {
       }
 
       this.logger.error('DB error while updating exam', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * POST /exams/:id/complete
+   * Manual COE-triggered transition (not a cron) to avoid surprise
+   * auto-completion. Only allowed once the exam's own end_date has passed,
+   * and only from timetable_published (skipping straight from `created`
+   * would mean no timetable was ever published).
+   */
+  async complete(id: number) {
+    const exam = await this.prisma.exams.findUnique({ where: { id } });
+
+    if (!exam) {
+      throw new NotFoundException({
+        message: 'Exam not found',
+        errorCode: 'EXAM_NOT_FOUND',
+      });
+    }
+
+    if (exam.status !== 'timetable_published') {
+      throw new BadRequestException({
+        message:
+          'Exam can only be marked completed after its timetable has been published.',
+        errorCode: 'TIMETABLE_NOT_PUBLISHED',
+      });
+    }
+
+    if (exam.end_date && exam.end_date.getTime() > Date.now()) {
+      throw new BadRequestException({
+        message: 'Exam end date has not passed yet.',
+        errorCode: 'EXAM_NOT_YET_OVER',
+      });
+    }
+
+    try {
+      return await this.prisma.exams.update({
+        where: { id },
+        data: { status: 'completed' },
+      });
+    } catch (err: any) {
+      this.logger.error('DB error while completing exam', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

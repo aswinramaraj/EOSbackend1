@@ -43,7 +43,15 @@ export class SeatingArrangementsService {
     }
 
     const mappings = await this.prisma.exam_subject_mapping.findMany({
-      where: { exam_id: dto.exam_id, exam_timetable: { exam_date: examDate } },
+      where: {
+        exam_id: dto.exam_id,
+        exam_timetable: {
+          some: {
+            exam_date: examDate,
+            exam_timetable_versions: { status: 'published' },
+          },
+        },
+      },
       select: { class_id: true },
     });
     const classIds = [...new Set(mappings.map((m) => m.class_id))];

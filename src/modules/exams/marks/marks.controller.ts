@@ -17,13 +17,20 @@ import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ApiResponse, ROLES } from 'src/common';
 
+/**
+ * COE-only override/correction surface for exam_marks — the canonical
+ * entry path for faculty is `/me/exams/:exam_subject_mapping_id/marks`
+ * (src/modules/faculty/exam-marks), which is ownership-checked and
+ * class-scoped. This controller exists for COE to create a missing entry
+ * or correct one directly; every update here is flagged is_moderated.
+ */
 @Controller('exam-marks')
 export class MarksController {
   constructor(private readonly marksService: MarksService) {}
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.COE)
   async create(@Body() createMarkDto: CreateMarkDto) {
     const mark = await this.marksService.create(createMarkDto);
     return ApiResponse.created(mark, 'Marks created successfully.');
@@ -43,7 +50,7 @@ export class MarksController {
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.COE)
   async update(@Param('id') id: string, @Body() updateMarkDto: UpdateMarkDto) {
     const mark = await this.marksService.update(+id, updateMarkDto);
     return ApiResponse.ok(mark, 'Marks updated successfully.');
@@ -51,7 +58,7 @@ export class MarksController {
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.COE)
   async remove(@Param('id') id: string) {
     await this.marksService.remove(+id);
     return ApiResponse.ok(null, 'Marks deleted successfully.');

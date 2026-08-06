@@ -27,9 +27,29 @@ export class ExamTypesService {
       });
     }
 
+    if (createExamTypeDto.code) {
+      const duplicateCode = await this.prisma.exam_types.findFirst({
+        where: {
+          code: { equals: createExamTypeDto.code, mode: 'insensitive' },
+        },
+      });
+
+      if (duplicateCode) {
+        throw new ConflictException({
+          message: 'Exam Type code already exists.',
+          errorCode: 'EXAM_TYPE_CODE_EXISTS',
+        });
+      }
+    }
+
     try {
       return await this.prisma.exam_types.create({
-        data: { name: createExamTypeDto.name },
+        data: {
+          name: createExamTypeDto.name,
+          code: createExamTypeDto.code,
+          category: createExamTypeDto.category,
+          is_university: createExamTypeDto.is_university,
+        },
       });
     } catch (err: any) {
       if (err?.code === 'P2002') {
@@ -108,10 +128,31 @@ export class ExamTypesService {
       }
     }
 
+    if (updateExamTypeDto.code) {
+      const duplicateCode = await this.prisma.exam_types.findFirst({
+        where: {
+          id: { not: id },
+          code: { equals: updateExamTypeDto.code, mode: 'insensitive' },
+        },
+      });
+
+      if (duplicateCode) {
+        throw new ConflictException({
+          message: 'Exam Type code already exists.',
+          errorCode: 'EXAM_TYPE_CODE_EXISTS',
+        });
+      }
+    }
+
     try {
       return await this.prisma.exam_types.update({
         where: { id },
-        data: { name: updateExamTypeDto.name },
+        data: {
+          name: updateExamTypeDto.name,
+          code: updateExamTypeDto.code,
+          category: updateExamTypeDto.category,
+          is_university: updateExamTypeDto.is_university,
+        },
       });
     } catch (err: any) {
       if (err?.code === 'P2002') {

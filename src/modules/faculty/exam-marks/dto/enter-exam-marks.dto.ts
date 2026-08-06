@@ -2,20 +2,32 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsInt,
   IsNumber,
+  IsOptional,
   Min,
   ValidateNested,
 } from 'class-validator';
 
-/** One student's mark within a POST /me/exams/:exam_subject_mapping_id/marks batch. */
+/**
+ * One student's mark within a POST /me/exams/:exam_subject_mapping_id/marks
+ * batch. marks_obtained is optional only when is_absent is true — an absent
+ * student has no mark, not a zero — enforced in the service since it's a
+ * cross-field check.
+ */
 export class ExamMarkEntryItemDto {
   @IsInt()
   student_id: number;
 
+  @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
-  marks_obtained: number;
+  marks_obtained?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  is_absent?: boolean;
 }
 
 /**

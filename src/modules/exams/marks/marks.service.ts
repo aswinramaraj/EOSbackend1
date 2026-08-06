@@ -36,6 +36,7 @@ export class MarksService {
       marks_obtained,
       max_marks,
       entered_by_faculty_id,
+      is_absent,
     } = createMarkDto;
 
     const mapping = await this.prisma.exam_subject_mapping.findUnique({
@@ -96,7 +97,8 @@ export class MarksService {
         data: {
           exam_subject_mapping_id,
           student_id,
-          marks_obtained,
+          marks_obtained: is_absent ? null : marks_obtained,
+          is_absent: is_absent ?? false,
           max_marks,
           entered_by_faculty_id,
         },
@@ -189,19 +191,25 @@ export class MarksService {
     }
 
     const maxMarks = updateMarkDto.max_marks ?? Number(existing.max_marks);
-    const marksObtained =
-      updateMarkDto.marks_obtained ??
-      (existing.marks_obtained !== null
-        ? Number(existing.marks_obtained)
-        : undefined);
+    const isAbsent = updateMarkDto.is_absent ?? existing.is_absent;
+    const marksObtained = isAbsent
+      ? undefined
+      : (updateMarkDto.marks_obtained ??
+        (existing.marks_obtained !== null
+          ? Number(existing.marks_obtained)
+          : undefined));
 
-    this.assertValidMarks(marksObtained, maxMarks);
+    if (!isAbsent) {
+      this.assertValidMarks(marksObtained, maxMarks);
+    }
 
     try {
       return await this.prisma.exam_marks.update({
         where: { id },
         data: {
-          marks_obtained: updateMarkDto.marks_obtained,
+          marks_obtained: isAbsent ? null : updateMarkDto.marks_obtained,
+          is_absent: isAbsent,
+          is_moderated: true,
           max_marks: updateMarkDto.max_marks,
           entered_by_faculty_id: updateMarkDto.entered_by_faculty_id,
         },

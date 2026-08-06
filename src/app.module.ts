@@ -26,17 +26,27 @@ import { MeProfileModule } from './modules/admissions/students/me-profile/me-pro
 import { AnnouncementsModule } from './modules/announcements/announcements/announcements.module';
 
 import { ExamsModule } from './modules/exams/exams/exams.module';
+import { CoeProfilesModule } from './modules/exams/coe-profiles/coe-profiles.module';
 import { ExamSubjectMappingModule } from './modules/exams/exam-subject-mapping/exam-subject-mapping.module';
 import { ExamTimetableModule } from './modules/exams/exam-timetable/exam-timetable.module';
+import { ExamTimetableVersionsModule } from './modules/exams/exam-timetable-versions/exam-timetable-versions.module';
 import { ExamTypesModule } from './modules/exams/exam-types/exam-types.module';
 import { HallPlansModule } from './modules/exams/hall-plans/hall-plans.module';
 import { HallTicketsModule } from './modules/exams/hall-tickets/hall-tickets.module';
 import { InvigilationModule } from './modules/exams/invigilation/invigilation.module';
+import { InvigilationAllocationBatchesModule } from './modules/exams/invigilation-allocation-batches/invigilation-allocation-batches.module';
 import { MarksModule } from './modules/exams/marks/marks.module';
+import { MarksEntryLocksModule } from './modules/exams/marks-entry-locks/marks-entry-locks.module';
 import { MarksheetsModule } from './modules/exams/marksheets/marksheets.module';
 import { ResultsModule } from './modules/exams/results/results.module';
+import { ExamSettingsModule } from './modules/exams/exam-settings/exam-settings.module';
+import { ExamReportsModule } from './modules/exams/reports/reports.module';
 import { RevaluationModule } from './modules/exams/revaluation/revaluation.module';
+import { MalpracticeModule } from './modules/exams/malpractice/malpractice.module';
+import { RevaluationWindowsModule } from './modules/exams/revaluation-windows/revaluation-windows.module';
+import { PhotocopyRequestsModule } from './modules/exams/photocopy-requests/photocopy-requests.module';
 import { SeatingArrangementsModule } from './modules/exams/seating-arrangements/seating-arrangements.module';
+import { SeatingPlanVersionsModule } from './modules/exams/seating-plan-versions/seating-plan-versions.module';
 
 import { AppraisalModule } from './modules/faculty/appraisal/appraisal.module';
 import { AssignmentsModule } from './modules/faculty/assignments/assignments.module';
@@ -144,17 +154,27 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     AnnouncementsModule,
 
     ExamsModule,
+    CoeProfilesModule,
     ExamSubjectMappingModule,
     ExamTimetableModule,
+    ExamTimetableVersionsModule,
     ExamTypesModule,
     HallPlansModule,
     HallTicketsModule,
     InvigilationModule,
+    InvigilationAllocationBatchesModule,
     MarksModule,
+    MarksEntryLocksModule,
     MarksheetsModule,
     ResultsModule,
+    ExamSettingsModule,
+    ExamReportsModule,
     RevaluationModule,
+    MalpracticeModule,
+    RevaluationWindowsModule,
+    PhotocopyRequestsModule,
     SeatingArrangementsModule,
+    SeatingPlanVersionsModule,
 
     AppraisalModule,
     AssignmentsModule,
