@@ -4,6 +4,9 @@ import { TimetableService } from './timetable.service';
 import { TimetableController } from './timetable.controller';
 import { MeTimetableController } from './me-timetable.controller';
 import { MeClassesController } from './me-classes.controller';
+import { MeCurrentSemesterController } from './me-current-semester.controller';
+import { MeFacultyTimetableController } from './me-faculty-timetable.controller';
+import { MeFacultyAcademicCalendarController } from './me-faculty-academic-calendar.controller';
 
 @Module({
   imports: [PrismaModule],
@@ -11,6 +14,9 @@ import { MeClassesController } from './me-classes.controller';
     TimetableController,
     MeTimetableController,
     MeClassesController,
+    MeCurrentSemesterController,
+    MeFacultyTimetableController,
+    MeFacultyAcademicCalendarController,
   ],
   providers: [TimetableService],
 })

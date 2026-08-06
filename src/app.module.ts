@@ -44,6 +44,7 @@ import { AttendanceModule } from './modules/faculty/attendance/attendance.module
 import { ClassMentorsModule } from './modules/faculty/class-mentors/class-mentors.module';
 import { ExamMarksModule } from './modules/faculty/exam-marks/exam-marks.module';
 import { FacultyLeavesModule } from './modules/faculty/faculty-leaves/faculty-leaves.module';
+import { FacultyOdModule } from './modules/faculty/faculty-od/faculty-od.module';
 import { FacultyMappingModule } from './modules/faculty/faculty-mapping/faculty-mapping.module';
 import { FacultyModule } from './modules/faculty/faculty/faculty.module';
 import { HolidaySlotsModule } from './modules/faculty/holiday-slots/holiday-slots.module';
@@ -162,6 +163,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     ClassMentorsModule,
     ExamMarksModule,
     FacultyLeavesModule,
+    FacultyOdModule,
     FacultyMappingModule,
     FacultyModule,
     HolidaySlotsModule,
