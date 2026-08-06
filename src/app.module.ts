@@ -15,6 +15,7 @@ import { DepartmentsModule } from './modules/academic-structure/departments/depa
 import { SubjectsModule } from './modules/academic-structure/subjects/subjects.module';
 
 import { BonafideModule } from './modules/admissions/bonafide/bonafide.module';
+import { BonafideReasonsModule } from './modules/admissions/bonafide-reasons/bonafide-reasons.module';
 import { CertificatesModule } from './modules/admissions/certificates/certificates.module';
 import { OdModule } from './modules/admissions/od/od.module';
 import { SoaApplicationsModule } from './modules/admissions/soa-applications/soa-applications.module';
@@ -132,6 +133,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     SubjectsModule,
 
     BonafideModule,
+    BonafideReasonsModule,
     CertificatesModule,
     OdModule,
     SoaApplicationsModule,

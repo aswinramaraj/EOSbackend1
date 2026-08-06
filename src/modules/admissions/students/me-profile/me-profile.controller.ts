@@ -38,6 +38,14 @@ import { MeOdRequestsService } from './me-od-requests.service';
 import { MeHostelOutingsService } from './me-hostel-outings.service';
 import { MeBonafideRequestsService } from './me-bonafide-requests.service';
 import { MeProjectsService } from './me-projects.service';
+import { MeFeesService } from './me-fees.service';
+import { MeExamScheduleService } from './me-exam-schedule.service';
+import { MeHostelRoomService } from './me-hostel-room.service';
+import { MeHostelComplaintsService } from './me-hostel-complaints.service';
+import { MeMessFeedbackService } from './me-mess-feedback.service';
+import { MeAcademicCalendarService } from './me-academic-calendar.service';
+import { CreateMyHostelComplaintDto } from './dto/create-my-hostel-complaint.dto';
+import { CreateMyMessFeedbackDto } from './dto/create-my-mess-feedback.dto';
 
 @Controller('me')
 export class MeController {
@@ -51,6 +59,12 @@ export class MeController {
     private readonly meHostelOutingsService: MeHostelOutingsService,
     private readonly meBonafideRequestsService: MeBonafideRequestsService,
     private readonly meProjectsService: MeProjectsService,
+    private readonly meFeesService: MeFeesService,
+    private readonly meExamScheduleService: MeExamScheduleService,
+    private readonly meHostelRoomService: MeHostelRoomService,
+    private readonly meHostelComplaintsService: MeHostelComplaintsService,
+    private readonly meMessFeedbackService: MeMessFeedbackService,
+    private readonly meAcademicCalendarService: MeAcademicCalendarService,
   ) {}
 
   /**
@@ -467,5 +481,135 @@ export class MeController {
   @Roles(ROLES.STUDENT)
   getProjects(@CurrentUser() user: JwtPayload, @Query() dto: GetProjectsDto) {
     return this.meProjectsService.getMyProjects(user.sub, dto);
+  }
+
+  /**
+   * GET /api/v1/me/fees
+   *
+   * Self-scoped: student_id resolved from the JWT. Returns every
+   * student_fee_demand_mapping row for the caller (one per demanded fee
+   * structure, e.g. per semester) with paid/due/status computed from their
+   * fee_payments rows, plus a flat payment history list for receipts.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED      – missing/invalid JWT
+   *  403 FORBIDDEN         – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND – authenticated user has no linked student record
+   *  500 INTERNAL_ERROR    – unexpected server failure
+   */
+  @Get('fees')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  getFees(@CurrentUser() user: JwtPayload) {
+    return this.meFeesService.getMyFees(user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/exam-schedule
+   *
+   * Self-scoped: class_id resolved from the JWT's linked student record.
+   * Returns every published exam_timetable row for the caller's own class,
+   * composed with subject/exam-type display names (the public exam-* list
+   * endpoints only return raw FK ids).
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED      – missing/invalid JWT
+   *  403 FORBIDDEN         – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND – authenticated user has no linked student record
+   *  500 INTERNAL_ERROR    – unexpected server failure
+   */
+  @Get('exam-schedule')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  getExamSchedule(@CurrentUser() user: JwtPayload) {
+    return this.meExamScheduleService.getMyExamSchedule(user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/hostel-room
+   *
+   * Self-scoped: student_id resolved from the JWT. `is_hostel_resident:
+   * false` (all room fields null) is a normal response for a day scholar,
+   * not an error.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED      – missing/invalid JWT
+   *  403 FORBIDDEN         – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND – authenticated user has no linked student record
+   *  500 INTERNAL_ERROR    – unexpected server failure
+   */
+  @Get('hostel-room')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  getHostelRoom(@CurrentUser() user: JwtPayload) {
+    return this.meHostelRoomService.getMyHostelRoom(user.sub);
+  }
+
+  /**
+   * POST /api/v1/me/hostel-complaints
+   *
+   * Self-scoped: student_id/hostel_id resolved from the JWT's linked
+   * student_hostel_mapping, never accepted from the request.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED      – missing/invalid JWT
+   *  403 FORBIDDEN         – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND – authenticated user has no linked student record
+   *  422 NOT_A_HOSTELLER   – caller has no student_hostel_mapping row
+   *  500 INTERNAL_ERROR    – unexpected server failure
+   */
+  @Post('hostel-complaints')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  createHostelComplaint(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateMyHostelComplaintDto,
+  ) {
+    return this.meHostelComplaintsService.createComplaint(user.sub, dto);
+  }
+
+  /**
+   * POST /api/v1/me/mess-feedback
+   *
+   * Self-scoped: student_id/hostel_id resolved from the JWT's linked
+   * student_hostel_mapping, never accepted from the request.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED      – missing/invalid JWT
+   *  403 FORBIDDEN         – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND – authenticated user has no linked student record
+   *  422 NOT_A_HOSTELLER   – caller has no student_hostel_mapping row
+   *  500 INTERNAL_ERROR    – unexpected server failure
+   */
+  @Post('mess-feedback')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  createMessFeedback(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateMyMessFeedbackDto,
+  ) {
+    return this.meMessFeedbackService.createFeedback(user.sub, dto);
+  }
+
+  /**
+   * GET /api/v1/me/academic-calendar
+   *
+   * Self-scoped: class_id resolved from the JWT's linked student record,
+   * then class_id -> classes.batch_id/current_semester -> the matching
+   * academic_calendars row and its calendar_events. A student with no class
+   * assigned, or whose batch/semester has no calendar published yet, gets
+   * an honest empty response (semester/dates null, events []), not an error.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED      – missing/invalid JWT
+   *  403 FORBIDDEN         – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND – authenticated user has no linked student record
+   *  500 INTERNAL_ERROR    – unexpected server failure
+   */
+  @Get('academic-calendar')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  getAcademicCalendar(@CurrentUser() user: JwtPayload) {
+    return this.meAcademicCalendarService.getMyAcademicCalendar(user.sub);
   }
 }
