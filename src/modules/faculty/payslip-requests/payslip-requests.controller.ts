@@ -61,7 +61,10 @@ export class PayslipRequestsController {
     return this.payslipRequestsService.findOne(id, user);
   }
 
-  /** PATCH /api/v1/payslip-requests/:id — HR Payroll only. */
+  /**
+   * PATCH /api/v1/payslip-requests/:id — HR Payroll only. Marks the request
+   * 'processed' or 'rejected' directly - no file upload involved.
+   */
   @Patch('payslip-requests/:id')
   @Roles(ROLES.HR_PAYROLL)
   update(

@@ -266,7 +266,13 @@ export class AppraisalService {
     return { academic_year: academicYear, divisions: Array.from(divisionsById.values()) };
   }
 
-  /** GET /appraisal (Faculty/HoD/HR Payroll). Faculty is always scoped to their own records. */
+  /**
+   * GET /appraisal (Faculty/HoD/HR Payroll). Faculty is always scoped to
+   * their own records. HR Payroll is deliberately left unscoped - HR's
+   * "Appraisal" page shows which faculty have applied (institution-wide),
+   * not HR's own appraisal (HR has no Apply tab at all on that screen - see
+   * AppraisalRequestScreen's canApply flag).
+   */
   async findAll(query: ListAppraisalQueryDto, currentUser: JwtPayload) {
     const where: Record<string, unknown> = {
       faculty_id: query.faculty_id,

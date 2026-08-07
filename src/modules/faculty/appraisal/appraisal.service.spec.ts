@@ -82,6 +82,44 @@ describe('AppraisalService', () => {
     expect(service).toBeDefined();
   });
 
+  describe('findAll', () => {
+    it('force-scopes a FACULTY caller to their own faculty_id regardless of the query param', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 5 });
+      prisma.$transaction.mockResolvedValue([[], 0]);
+
+      await service.findAll(
+        { faculty_id: 999, limit: 20, page: 1 } as any,
+        { sub: 1, role: 'faculty', email: 'x', roleId: 1 },
+      );
+
+      expect(prisma.faculty.findUnique).toHaveBeenCalledWith({
+        where: { user_id: 1 },
+      });
+    });
+
+    it('does not resolve a faculty record for an HR Payroll caller - HR sees every faculty\'s applications, not their own', async () => {
+      prisma.$transaction.mockResolvedValue([[], 0]);
+
+      await service.findAll(
+        { limit: 20, page: 1 } as any,
+        { sub: 2, role: 'hr_payroll', email: 'x', roleId: 3 },
+      );
+
+      expect(prisma.faculty.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('does not resolve a faculty record for a HoD caller (unrestricted)', async () => {
+      prisma.$transaction.mockResolvedValue([[], 0]);
+
+      await service.findAll(
+        { limit: 20, page: 1 } as any,
+        { sub: 3, role: 'hod', email: 'x', roleId: 2 },
+      );
+
+      expect(prisma.faculty.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
   describe('addAttachments', () => {
     it('throws 404 when the JWT user has no linked faculty record', async () => {
       prisma.faculty.findUnique.mockResolvedValue(null);

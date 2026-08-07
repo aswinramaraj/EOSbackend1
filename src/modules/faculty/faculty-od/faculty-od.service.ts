@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,6 +12,7 @@ import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { CreateFacultyOdDto } from './dto/create-faculty-od.dto';
 import { ListFacultyOdQueryDto } from './dto/list-faculty-od-query.dto';
+import { UpdateFacultyOdDto } from './dto/update-faculty-od.dto';
 
 const FACULTY_OD_SELECT = {
   id: true,
@@ -112,7 +115,16 @@ export class FacultyOdService {
     return toResponse(od);
   }
 
-  /** GET /me/faculty-od (Faculty/HoD/HR Payroll). Faculty is always scoped to their own records. */
+  /**
+   * GET /me/faculty-od (Faculty/HoD/HR Payroll). Faculty is always scoped
+   * to their own records. HR Payroll only ever sees requests the HoD has
+   * already approved - a request still awaiting HoD review has nothing for
+   * HR to act on yet (update() below 409s "HR approval requires HoD
+   * approval first" anyway), so it's hidden from HR's list entirely rather
+   * than shown as an unactionable "pending" row. This overrides whatever
+   * hod_approval_status the HR caller passes - it is never allowed to see
+   * pending/rejected-by-HoD requests.
+   */
   async findAll(query: ListFacultyOdQueryDto, currentUser: JwtPayload) {
     const where: Record<string, unknown> = {
       faculty_id: query.faculty_id,
@@ -123,6 +135,8 @@ export class FacultyOdService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HR_PAYROLL) {
+      where.hod_approval_status = 'approved';
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -137,6 +151,66 @@ export class FacultyOdService {
     ]);
 
     return paginate(rows.map(toResponse), total, query);
+  }
+
+  /**
+   * PATCH /me/faculty-od/:id (HoD or HR Payroll only).
+   * HoD may only set hod_approval_status. HR Payroll may only set
+   * hr_approval_status, and only once hod_approval_status is 'approved'.
+   * Mirrors FacultyLeavesService.update() exactly, applied to
+   * faculty_od_requests instead of faculty_leaves.
+   */
+  async update(id: number, dto: UpdateFacultyOdDto, currentUser: JwtPayload) {
+    if (!dto || Object.keys(dto).length === 0) {
+      throw new BadRequestException('No fields provided to update');
+    }
+
+    const existing = await this.prisma.faculty_od_requests.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Faculty OD request not found');
+    }
+
+    const data: {
+      hod_approval_status?: 'approved' | 'rejected';
+      hr_approval_status?: 'approved' | 'rejected';
+    } = {};
+
+    if (currentUser.role === ROLES.HOD) {
+      if (dto.hr_approval_status !== undefined) {
+        throw new ForbiddenException('HoD may only set hod_approval_status');
+      }
+      if (dto.hod_approval_status !== undefined) {
+        data.hod_approval_status = dto.hod_approval_status;
+      }
+    } else if (currentUser.role === ROLES.HR_PAYROLL) {
+      if (dto.hod_approval_status !== undefined) {
+        throw new ForbiddenException(
+          'HR Payroll may only set hr_approval_status',
+        );
+      }
+      if (dto.hr_approval_status !== undefined) {
+        if (existing.hod_approval_status !== 'approved') {
+          throw new ConflictException(
+            'HR approval requires HoD approval first',
+          );
+        }
+        data.hr_approval_status = dto.hr_approval_status;
+      }
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('No permitted fields provided to update');
+    }
+
+    const od = await this.prisma.faculty_od_requests.update({
+      where: { id },
+      data,
+      select: FACULTY_OD_SELECT,
+    });
+
+    return toResponse(od);
   }
 
   private async resolveFacultyByUserId(userId: number) {
