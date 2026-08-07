@@ -7,9 +7,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/common/storage/storage.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
-import { Prisma } from '../../../../generated/prisma/client';
+import { Prisma, announcement_status_enum } from '../../../../generated/prisma/client';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 
@@ -31,7 +32,27 @@ interface UserContext {
 export class AnnouncementsService {
   private readonly logger = new Logger(AnnouncementsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
+
+  /**
+   * POST /announcements/attachments (Admin/HOD/Faculty).
+   * Pure storage passthrough — never touches the announcements table.
+   * `key` is what the caller then sends back as `file_key` on
+   * create()/update() once that column exists.
+   */
+  async uploadAttachment(file: Express.Multer.File) {
+    const { key } = await this.storage.upload(
+      'announcements',
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+    );
+    const url = this.storage.getPublicUrl(key);
+    return { file_key: key, file_name: file.originalname, url };
+  }
 
   /**
    * POST /announcements
@@ -50,7 +71,90 @@ export class AnnouncementsService {
    */
   async create(dto: CreateAnnouncementDto, user: JwtPayload) {
     const context = await this.resolveUserContext(user);
-    await this.assertClassesValid(dto.class_ids, context);
+    const status = dto.status ?? 'published';
+
+    // A draft is a private scratchpad, visible only to its author (see
+    // buildVisibilityQuery) - it skips every targeting requirement below
+    // entirely. If class_ids happen to already be picked (continuing a
+    // partially-filled draft), they're still validated normally; nothing
+    // else is required.
+    if (status === 'draft') {
+      if (dto.class_ids !== undefined) {
+        await this.assertClassesValid(dto.class_ids, context);
+      }
+
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const announcement = await tx.announcements.create({
+            data: {
+              posted_by_user_id: user.sub,
+              title: dto.title,
+              content: dto.content,
+              // NOT NULL column - a draft with no audience chosen yet gets
+              // a placeholder that means nothing until actually published.
+              target_audience: dto.target_audience ?? 'students',
+              status,
+              file_key: dto.file_key,
+              file_name: dto.file_name,
+            },
+          });
+
+          if (dto.class_ids && dto.class_ids.length > 0) {
+            await tx.announcement_class_mapping.createMany({
+              data: dto.class_ids.map((class_id) => ({
+                announcement_id: announcement.id,
+                class_id,
+              })),
+            });
+          }
+
+          return this.toResponseShape({
+            ...announcement,
+            announcement_class_mapping: (dto.class_ids ?? []).map((class_id) => ({ class_id })),
+          });
+        });
+      } catch (err) {
+        this.logger.error('DB error while creating draft announcement', err);
+        throw new InternalServerErrorException({
+          message: 'Something went wrong. Please try again.',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
+    }
+
+    // 'teachers' is a department-wide faculty broadcast (department_id),
+    // never a class broadcast (announcement_class_mapping) - the two are
+    // mutually exclusive branches, matching the DTO's own ValidateIf split.
+    if (dto.target_audience === 'teachers') {
+      const departmentId = await this.resolveTeacherTargetDepartment(
+        dto.department_id,
+        context,
+      );
+
+      try {
+        const announcement = await this.prisma.announcements.create({
+          data: {
+            posted_by_user_id: user.sub,
+            title: dto.title,
+            content: dto.content,
+            target_audience: dto.target_audience,
+            department_id: departmentId,
+            status,
+            file_key: dto.file_key,
+            file_name: dto.file_name,
+          },
+        });
+        return this.toResponseShape({ ...announcement, announcement_class_mapping: [] });
+      } catch (err) {
+        this.logger.error('DB error while creating announcement', err);
+        throw new InternalServerErrorException({
+          message: 'Something went wrong. Please try again.',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
+    }
+
+    await this.assertClassesValid(dto.class_ids!, context);
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -59,18 +163,24 @@ export class AnnouncementsService {
             posted_by_user_id: user.sub,
             title: dto.title,
             content: dto.content,
-            target_audience: dto.target_audience,
+            target_audience: dto.target_audience!,
+            status,
+            file_key: dto.file_key,
+            file_name: dto.file_name,
           },
         });
 
         await tx.announcement_class_mapping.createMany({
-          data: dto.class_ids.map((class_id) => ({
+          data: dto.class_ids!.map((class_id) => ({
             announcement_id: announcement.id,
             class_id,
           })),
         });
 
-        return { ...announcement, class_ids: dto.class_ids };
+        return this.toResponseShape({
+          ...announcement,
+          announcement_class_mapping: dto.class_ids!.map((class_id) => ({ class_id })),
+        });
       });
     } catch (err) {
       this.logger.error('DB error while creating announcement', err);
@@ -82,11 +192,68 @@ export class AnnouncementsService {
   }
 
   /**
-   * GET /announcements
+   * Resolves the single department_id a 'teachers'-audience announcement
+   * broadcasts to (null = every faculty account, any department).
+   * HOD is hard-restricted to their own department - unlike class
+   * targeting (assertClassesValid), a mismatched request is rejected
+   * outright rather than silently corrected, since silently redirecting a
+   * broadcast to a different department than the one requested would be
+   * far more surprising than refusing it.
    */
-  async findAll(user: JwtPayload) {
+  private async resolveTeacherTargetDepartment(
+    requestedDepartmentId: number | undefined,
+    context: UserContext,
+  ): Promise<number | null> {
+    if (context.role === ROLES.HOD) {
+      if (context.departmentId === undefined) {
+        throw new InternalServerErrorException({
+          message: 'Something went wrong. Please try again.',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
+      if (
+        requestedDepartmentId !== undefined &&
+        requestedDepartmentId !== context.departmentId
+      ) {
+        throw new ForbiddenException({
+          message: 'You may only post faculty announcements to your own department',
+          errorCode: 'DEPARTMENT_OUTSIDE_SCOPE',
+        });
+      }
+      return context.departmentId;
+    }
+
+    if (context.role === ROLES.ADMIN) {
+      if (requestedDepartmentId === undefined) {
+        return null;
+      }
+      const department = await this.prisma.departments.findUnique({
+        where: { id: requestedDepartmentId },
+      });
+      if (!department) {
+        throw new NotFoundException({
+          message: 'Department not found',
+          errorCode: 'DEPARTMENT_NOT_FOUND',
+        });
+      }
+      return department.id;
+    }
+
+    throw new ForbiddenException({
+      message: 'You are not permitted to post announcements to faculty',
+      errorCode: 'ROLE_NOT_PERMITTED',
+    });
+  }
+
+  /**
+   * GET /announcements?status=
+   */
+  async findAll(user: JwtPayload, status?: announcement_status_enum) {
     const context = await this.resolveUserContext(user);
-    const where = this.buildVisibilityQuery(context);
+    const visibility = this.buildVisibilityQuery(context);
+    const where: Prisma.announcementsWhereInput = status
+      ? { AND: [visibility, { status }] }
+      : visibility;
 
     let announcements: Array<{ id: number } & Record<string, unknown>>;
 
@@ -177,8 +344,50 @@ export class AnnouncementsService {
 
     this.assertOwnership(existing, user, context);
 
+    const existingStatus = existing.status as announcement_status_enum;
+    const resultStatus = dto.status ?? existingStatus;
+
+    // Whenever target_audience is explicitly supplied — most importantly
+    // when publishing a draft that never had one — re-run the exact same
+    // targeting rules create() enforces. Switching audience away from
+    // 'teachers' drops any stale department_id from a previous save.
+    let resolvedDepartmentId: number | null | undefined;
+    if (dto.target_audience !== undefined) {
+      resolvedDepartmentId =
+        dto.target_audience === 'teachers'
+          ? await this.resolveTeacherTargetDepartment(dto.department_id, context)
+          : null;
+    }
+
+    if (
+      resultStatus === 'published' &&
+      existingStatus === 'draft' &&
+      dto.target_audience === undefined
+    ) {
+      throw new BadRequestException({
+        message: 'target_audience is required to publish this draft',
+        errorCode: 'TARGET_AUDIENCE_REQUIRED',
+      });
+    }
+
+    const effectiveTargetAudience = dto.target_audience ?? existing.target_audience;
+
     if (dto.class_ids !== undefined) {
       await this.assertClassesValid(dto.class_ids, context);
+    } else if (
+      resultStatus === 'published' &&
+      existingStatus === 'draft' &&
+      effectiveTargetAudience !== 'teachers'
+    ) {
+      const currentMappingCount = await this.prisma.announcement_class_mapping.count({
+        where: { announcement_id: id },
+      });
+      if (currentMappingCount === 0) {
+        throw new BadRequestException({
+          message: 'class_ids is required to publish this draft',
+          errorCode: 'CLASS_IDS_REQUIRED',
+        });
+      }
     }
 
     try {
@@ -186,7 +395,11 @@ export class AnnouncementsService {
         if (
           dto.title !== undefined ||
           dto.content !== undefined ||
-          dto.target_audience !== undefined
+          dto.target_audience !== undefined ||
+          dto.status !== undefined ||
+          dto.file_key !== undefined ||
+          dto.file_name !== undefined ||
+          resolvedDepartmentId !== undefined
         ) {
           await tx.announcements.update({
             where: { id },
@@ -194,6 +407,10 @@ export class AnnouncementsService {
               title: dto.title,
               content: dto.content,
               target_audience: dto.target_audience,
+              status: dto.status,
+              department_id: resolvedDepartmentId,
+              file_key: dto.file_key,
+              file_name: dto.file_name,
             },
           });
         }
@@ -214,7 +431,10 @@ export class AnnouncementsService {
         const updated = await tx.announcements.findUniqueOrThrow({
           where: { id },
         });
-        return { ...updated, class_ids: classIds };
+        return this.toResponseShape({
+          ...updated,
+          announcement_class_mapping: classIds.map((class_id) => ({ class_id })),
+        });
       });
     } catch (err) {
       this.logger.error('DB error while updating announcement', err);
@@ -300,7 +520,12 @@ export class AnnouncementsService {
         }
 
         const assignedClassIds = await this.getAssignedClassIds(faculty.id);
-        return { role: ROLES.FACULTY, userId: user.sub, assignedClassIds };
+        return {
+          role: ROLES.FACULTY,
+          userId: user.sub,
+          assignedClassIds,
+          departmentId: faculty.department_id,
+        };
       }
 
       case ROLES.STUDENT: {
@@ -334,7 +559,24 @@ export class AnnouncementsService {
 
   // ── Visibility algorithm ─────────────────────────────────────────────────
 
+  /**
+   * Wraps the role-specific query with one hard rule that applies
+   * regardless of role: a draft is only ever visible to its own author.
+   * Even Admin's normally-sees-everything `{}` gets constrained by this —
+   * drafts are a private scratchpad, not an org-wide announcement yet.
+   */
   private buildVisibilityQuery(
+    context: UserContext,
+  ): Prisma.announcementsWhereInput {
+    return {
+      AND: [
+        this.buildRoleVisibilityQuery(context),
+        { OR: [{ status: 'published' }, { posted_by_user_id: context.userId }] },
+      ],
+    };
+  }
+
+  private buildRoleVisibilityQuery(
     context: UserContext,
   ): Prisma.announcementsWhereInput {
     switch (context.role) {
@@ -346,6 +588,9 @@ export class AnnouncementsService {
           OR: [
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
+            // Admin's org-wide faculty broadcasts (department_id: null) —
+            // an HOD is also faculty and should see those.
+            { target_audience: 'teachers', department_id: null },
           ],
         };
 
@@ -368,6 +613,16 @@ export class AnnouncementsService {
                     },
                   },
                 },
+              ],
+            },
+            // Department-wide faculty broadcasts — either targeted at this
+            // faculty member's own department, or an org-wide broadcast
+            // (department_id: null) from Admin.
+            {
+              target_audience: 'teachers',
+              OR: [
+                { department_id: context.departmentId ?? -1 },
+                { department_id: null },
               ],
             },
           ],
@@ -589,9 +844,23 @@ export class AnnouncementsService {
     }
 
     try {
-      return await this.prisma.classes.findMany({
+      const classes = await this.prisma.classes.findMany({
         where: { id: { in: classIds } },
+        select: {
+          id: true,
+          section: true,
+          courses: { select: { code: true } },
+          batches: { select: { name: true } },
+        },
       });
+      // Raw class rows have no human-readable name of their own (just a
+      // section letter) - synthesize one the same way subject-records does,
+      // so the frontend's "Target classes" checkboxes show something
+      // meaningful instead of a bare "A".
+      return classes.map((klass) => ({
+        id: klass.id,
+        label: `${klass.courses.code}-${klass.section} (${klass.batches.name})`,
+      }));
     } catch (err) {
       this.logger.error('DB error while resolving assigned classes', err);
       throw new InternalServerErrorException({
@@ -682,6 +951,42 @@ export class AnnouncementsService {
     }
   }
 
+  /**
+   * GET /announcements/lookup/my-department
+   * HOD only. Single-item array (shape matches lookup/assigned-classes) for
+   * the "Target faculty" toggle — an HOD may only ever broadcast to their
+   * own department (see resolveTeacherTargetDepartment).
+   */
+  async lookupMyDepartment(user: JwtPayload) {
+    const context = await this.resolveUserContext(user);
+    if (context.role !== ROLES.HOD || context.departmentId === undefined) {
+      throw new ForbiddenException({
+        message: 'Only HOD accounts have a department to target',
+        errorCode: 'ROLE_NOT_PERMITTED',
+      });
+    }
+
+    try {
+      const department = await this.prisma.departments.findUnique({
+        where: { id: context.departmentId },
+      });
+      if (!department) {
+        throw new NotFoundException({
+          message: 'Department not found',
+          errorCode: 'DEPARTMENT_NOT_FOUND',
+        });
+      }
+      return [{ id: department.id, label: `${department.name} Faculty` }];
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      this.logger.error('DB error while resolving own department', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
   private async getClassesByIds(classIds: number[]) {
     try {
       return await this.prisma.classes.findMany({
@@ -725,6 +1030,11 @@ export class AnnouncementsService {
       class_id: number;
     }[];
     const { announcement_class_mapping, ...rest } = announcement;
-    return { ...rest, class_ids: mappings.map((m) => m.class_id) };
+    const fileKey = announcement.file_key as string | null | undefined;
+    return {
+      ...rest,
+      file_url: fileKey ? this.storage.getPublicUrl(fileKey) : null,
+      class_ids: mappings.map((m) => m.class_id),
+    };
   }
 }

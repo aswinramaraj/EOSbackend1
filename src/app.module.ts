@@ -55,6 +55,7 @@ import { LmsNotesModule } from './modules/faculty/lms-notes/lms-notes.module';
 import { MediaRequestsModule } from './modules/faculty/media-requests/media-requests.module';
 import { PayslipRequestsModule } from './modules/faculty/payslip-requests/payslip-requests.module';
 import { SalaryDivisionsModule } from './modules/faculty/salary-divisions/salary-divisions.module';
+import { SubjectRecordsModule } from './modules/faculty/subject-records/subject-records.module';
 import { StudentAssignmentStatusModule } from './modules/faculty/student-assignment-status/student-assignment-status.module';
 import { TimetableModule } from './modules/faculty/timetable/timetable.module';
 
@@ -175,6 +176,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     MediaRequestsModule,
     PayslipRequestsModule,
     SalaryDivisionsModule,
+    SubjectRecordsModule,
     StudentAssignmentStatusModule,
     TimetableModule,
 

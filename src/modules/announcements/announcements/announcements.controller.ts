@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -11,8 +12,11 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -22,6 +26,9 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { AnnouncementsService } from './announcements.service';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
+import { ListAnnouncementsQueryDto } from './dto/list-announcements-query.dto';
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
 
 @Controller('announcements')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -76,6 +83,45 @@ export class AnnouncementsController {
   }
 
   /**
+   * GET /api/v1/announcements/lookup/my-department
+   * HOD only — their own department, for the "Target faculty" toggle
+   * (an HOD may only ever broadcast to their own department's faculty).
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED, 403 FORBIDDEN, 404 DEPARTMENT_NOT_FOUND, 500 INTERNAL_ERROR
+   */
+  @Get('lookup/my-department')
+  @Roles(ROLES.HOD)
+  lookupMyDepartment(@CurrentUser() user: JwtPayload) {
+    return this.announcementsService.lookupMyDepartment(user);
+  }
+
+  /**
+   * POST /api/v1/announcements/attachments
+   * Admin/HOD/Faculty — uploads a single file to Supabase Storage (private
+   * bucket, see StorageService) and returns its storage key + a short-lived
+   * signed URL. The key is what gets attached to an announcement's
+   * file_key column on create/update — this endpoint itself never touches
+   * the announcements table.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR – no file, or file too large (>10MB)
+   *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
+   */
+  @Post('attachments')
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
+  uploadAttachment(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.announcementsService.uploadAttachment(file);
+  }
+
+  /**
    * POST /api/v1/announcements
    *
    * Error responses:
@@ -93,7 +139,11 @@ export class AnnouncementsController {
   }
 
   /**
-   * GET /api/v1/announcements
+   * GET /api/v1/announcements?status=
+   * `status` is an optional filter (e.g. status=draft for the "Drafts"
+   * tab) — regardless of role, a draft is only ever visible to its own
+   * author (see buildVisibilityQuery), so this can never leak someone
+   * else's drafts.
    *
    * Error responses:
    *  401 UNAUTHORIZED
@@ -101,8 +151,11 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Get()
-  findAll(@CurrentUser() user: JwtPayload) {
-    return this.announcementsService.findAll(user);
+  findAll(
+    @Query() query: ListAnnouncementsQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.announcementsService.findAll(user, query.status);
   }
 
   /**
