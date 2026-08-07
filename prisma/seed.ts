@@ -142,7 +142,38 @@ async function main() {
     }
   }
 
-  // 5. Print credentials table
+  // 5. Link the Parent test user to a real student, same reasoning as steps
+  // 3-4 above — every /me/children* endpoint resolves the caller's children
+  // via parent_student_mapping (parent_user_id -> student_id), so without a
+  // mapping row the Parent test account only ever sees an empty child list
+  // and can never reach the child-scoped attendance/performance/fees
+  // endpoints, even for a valid Parent JWT.
+  console.log('\n👨‍👩‍👧  Ensuring parent@eos.test has a linked child...');
+
+  const parentUser = await (prisma as any).users.findUnique({ where: { email: 'parent@eos.test' } });
+  const existingParentMapping = parentUser
+    ? await (prisma as any).parent_student_mapping.findFirst({ where: { parent_user_id: parentUser.id } })
+    : null;
+
+  if (existingParentMapping) {
+    console.log(`   ✅  Already exists: mapping.id=${existingParentMapping.id}, student_id=${existingParentMapping.student_id}`);
+  } else if (parentUser) {
+    const firstStudent = await (prisma as any).students.findFirst({ orderBy: { id: 'asc' } });
+    if (firstStudent) {
+      const mapping = await (prisma as any).parent_student_mapping.create({
+        data: {
+          parent_user_id: parentUser.id,
+          student_id: firstStudent.id,
+          relationship: 'mother',
+        },
+      });
+      console.log(`   ✅  Created: mapping.id=${mapping.id}, student_id=${mapping.student_id}`);
+    } else {
+      console.log('   ⚠️  No students exist yet — skipped (run this seed again after students are created).');
+    }
+  }
+
+  // 6. Print credentials table
   const LINE = '═'.repeat(65);
   console.log(`\n${LINE}`);
   console.log('  POSTMAN TEST CREDENTIALS');

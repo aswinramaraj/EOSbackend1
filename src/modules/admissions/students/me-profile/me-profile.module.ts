@@ -45,5 +45,11 @@ import { MeAcademicCalendarService } from './me-academic-calendar.service';
     MeMessFeedbackService,
     MeAcademicCalendarService,
   ],
+  exports: [
+    MeAttendanceService,
+    MeExamResultsService,
+    MeFeesService,
+    MeAcademicCalendarService,
+  ],
 })
 export class MeProfileModule {}
