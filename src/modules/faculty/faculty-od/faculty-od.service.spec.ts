@@ -62,7 +62,7 @@ describe('FacultyOdService', () => {
       await expect(
         service.create(
           { from_date: '2026-09-01', to_date: '2026-09-02' },
-          999,
+          { sub: 999, role: 'faculty' } as any,
         ),
       ).rejects.toThrow('Faculty profile not found for the authenticated user');
     });
@@ -73,7 +73,7 @@ describe('FacultyOdService', () => {
       await expect(
         service.create(
           { from_date: '2020-01-01', to_date: '2020-01-02' },
-          1,
+          { sub: 1, role: 'faculty' } as any,
         ),
       ).rejects.toThrow("from_date must not be before today's date");
     });
@@ -87,7 +87,7 @@ describe('FacultyOdService', () => {
       await expect(
         service.create(
           { from_date: futureStr, to_date: '2026-01-01' },
-          1,
+          { sub: 1, role: 'faculty' } as any,
         ),
       ).rejects.toThrow('from_date must be on or before to_date');
     });
@@ -112,7 +112,7 @@ describe('FacultyOdService', () => {
 
       const result = await service.create(
         { from_date: from, to_date: from, place: 'IIT Madras', purpose: 'FDP on Generative AI' },
-        1,
+        { sub: 1, role: 'faculty' } as any,
       );
 
       expect(prisma.faculty_od_requests.create).toHaveBeenCalledWith(
@@ -140,7 +140,8 @@ describe('FacultyOdService', () => {
       });
     });
 
-    it('does not resolve a faculty record for an HoD caller (unrestricted)', async () => {
+    it('scopes an HoD caller to their own department', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 3, department_id: 9 });
       prisma.$transaction.mockResolvedValue([[], 0]);
 
       await service.findAll(
@@ -148,7 +149,9 @@ describe('FacultyOdService', () => {
         { sub: 2, role: 'hod', email: 'x', roleId: 1 },
       );
 
-      expect(prisma.faculty.findUnique).not.toHaveBeenCalled();
+      expect(prisma.faculty.findUnique).toHaveBeenCalledWith({
+        where: { user_id: 2 },
+      });
     });
 
     it('force-filters an HR Payroll caller to hod_approval_status=approved, overriding whatever the query param says', async () => {

@@ -24,7 +24,13 @@ const FACULTY_OD_SELECT = {
   hr_approval_status: true,
   created_at: true,
   faculty: {
-    select: { id: true, first_name: true, last_name: true, designation: true },
+    select: {
+      id: true,
+      first_name: true,
+      last_name: true,
+      designation: true,
+      departments: { select: { id: true, name: true, code: true } },
+    },
   },
 } as const;
 
@@ -42,6 +48,7 @@ interface FacultyOdRow {
     first_name: string;
     last_name: string;
     designation: string;
+    departments: { id: number; name: string; code: string } | null;
   };
 }
 
@@ -82,9 +89,17 @@ export class FacultyOdService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** POST /me/create-od (Faculty only — always for the caller's own faculty record). */
-  async create(dto: CreateFacultyOdDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  /**
+   * POST /me/create-od (Faculty or HoD — always for the caller's own
+   * faculty record).
+   *
+   * An HoD's own OD has no one to fill the HoD-review stage (they can't
+   * review their own request) - so for an HoD-created request,
+   * hod_approval_status is set to 'approved' immediately at creation,
+   * sending it straight to HR Payroll.
+   */
+  async create(dto: CreateFacultyOdDto, currentUser: JwtPayload) {
+    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
 
     const fromDate = new Date(dto.from_date);
     const toDate = new Date(dto.to_date);
@@ -107,6 +122,8 @@ export class FacultyOdService {
         to_date: toDate,
         place: dto.place,
         purpose: dto.purpose,
+        hod_approval_status:
+          currentUser.role === ROLES.HOD ? 'approved' : undefined,
       },
       select: FACULTY_OD_SELECT,
     });
@@ -117,11 +134,12 @@ export class FacultyOdService {
 
   /**
    * GET /me/faculty-od (Faculty/HoD/HR Payroll). Faculty is always scoped
-   * to their own records. HR Payroll only ever sees requests the HoD has
-   * already approved - a request still awaiting HoD review has nothing for
-   * HR to act on yet (update() below 409s "HR approval requires HoD
-   * approval first" anyway), so it's hidden from HR's list entirely rather
-   * than shown as an unactionable "pending" row. This overrides whatever
+   * to their own records. HoD is scoped to their own department (previously
+   * unscoped). HR Payroll only ever sees requests the HoD has already
+   * approved - a request still awaiting HoD review has nothing for HR to
+   * act on yet (update() below 409s "HR approval requires HoD approval
+   * first" anyway), so it's hidden from HR's list entirely rather than
+   * shown as an unactionable "pending" row. This overrides whatever
    * hod_approval_status the HR caller passes - it is never allowed to see
    * pending/rejected-by-HoD requests.
    */
@@ -135,6 +153,9 @@ export class FacultyOdService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      where.faculty = { department_id: hod.department_id };
     } else if (currentUser.role === ROLES.HR_PAYROLL) {
       where.hod_approval_status = 'approved';
     }
@@ -157,8 +178,9 @@ export class FacultyOdService {
    * PATCH /me/faculty-od/:id (HoD or HR Payroll only).
    * HoD may only set hod_approval_status. HR Payroll may only set
    * hr_approval_status, and only once hod_approval_status is 'approved'.
-   * Mirrors FacultyLeavesService.update() exactly, applied to
-   * faculty_od_requests instead of faculty_leaves.
+   * Mirrors FacultyLeavesService.update() exactly — same two-column,
+   * two-role gate, same HoD-must-approve-before-HR ordering, same
+   * department scoping and self-review guard for HoD.
    */
   async update(id: number, dto: UpdateFacultyOdDto, currentUser: JwtPayload) {
     if (!dto || Object.keys(dto).length === 0) {
@@ -178,6 +200,22 @@ export class FacultyOdService {
     } = {};
 
     if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (existing.faculty_id === hod.id) {
+        throw new ForbiddenException({
+          message: 'You cannot review your own OD request',
+          errorCode: 'CANNOT_REVIEW_OWN_REQUEST',
+        });
+      }
+      const requestingFaculty = await this.prisma.faculty.findUnique({
+        where: { id: existing.faculty_id },
+        select: { department_id: true },
+      });
+      if (requestingFaculty?.department_id !== hod.department_id) {
+        throw new ForbiddenException(
+          'You may only approve OD requests from your own department',
+        );
+      }
       if (dto.hr_approval_status !== undefined) {
         throw new ForbiddenException('HoD may only set hod_approval_status');
       }

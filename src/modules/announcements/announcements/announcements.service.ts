@@ -502,9 +502,15 @@ export class AnnouncementsService {
           });
         }
 
+        // Also populated (not just Faculty's own branch below) so
+        // lookupAssignedClasses() works for an HoD who is themselves mapped
+        // to teach/mentor a class - see announcements.controller.ts's
+        // lookup/assigned-classes route, now HOD-allowed too.
+        const assignedClassIds = await this.getAssignedClassIds(faculty.id);
         return {
           role: ROLES.HOD,
           userId: user.sub,
+          assignedClassIds,
           departmentId: faculty.department_id,
         };
       }

@@ -22,10 +22,15 @@ import { SubjectRecordsService } from './subject-records.service';
  * plus publishing the result to the class. Reads exam_subject_mapping
  * (created by COE) and faculty_subject_class_mapping (created by HoD) but
  * never creates or modifies either.
+ *
+ * HOD is also allowed here - an HoD who is themselves mapped to teach a
+ * subject (faculty_subject_class_mapping) gets identical real data; one
+ * who isn't just gets an empty mapping list (see the mobile screen's own
+ * "no subjects mapped" empty state) - never a hard 403.
  */
 @Controller('me/subject-records')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.FACULTY)
+@Roles(ROLES.FACULTY, ROLES.HOD)
 export class SubjectRecordsController {
   constructor(private readonly subjectRecordsService: SubjectRecordsService) {}
 
