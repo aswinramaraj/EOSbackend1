@@ -59,6 +59,19 @@ export class ExamMarksController {
     return this.examMarksService.validate(dto, user.sub);
   }
 
+  /**
+   * GET /api/v1/me/exam-marks/roster/:exam_subject_mapping_id — full class
+   * roster joined against any already-entered marks. Declared before
+   * `exam-marks/:id` so "roster" is never swallowed by the :id param route.
+   */
+  @Get('exam-marks/roster/:exam_subject_mapping_id')
+  getRoster(
+    @Param('exam_subject_mapping_id', ParseIntPipe) examSubjectMappingId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.examMarksService.getRoster(examSubjectMappingId, user.sub);
+  }
+
   /** GET /api/v1/me/exam-marks — own-entered records, filtered, paginated. */
   @Get('exam-marks')
   findAll(

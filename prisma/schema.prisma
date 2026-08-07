@@ -116,6 +116,8 @@ model announcements {
   created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
   file_url                   String?
   file_name                  String?                      @db.VarChar(255)
+  status                     announcement_status_enum     @default(published)
+  file_key                   String?
   announcement_class_mapping announcement_class_mapping[]
   batches                    batches?                     @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   departments                departments?                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -244,15 +246,22 @@ model bonafide_reasons {
 }
 
 model bonafide_requests {
-  id               Int                  @id @default(autoincrement())
-  student_id       Int
-  reason_id        Int
-  status           bonafide_status_enum @default(pending)
-  requested_at     DateTime             @default(now()) @db.Timestamptz(6)
-  issued_at        DateTime?            @db.Timestamptz(6)
-  file_url         String?              @db.VarChar(500)
-  bonafide_reasons bonafide_reasons     @relation(fields: [reason_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students         students             @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                     Int                  @id @default(autoincrement())
+  student_id             Int
+  reason_id              Int
+  status                 bonafide_status_enum @default(pending)
+  requested_at           DateTime             @default(now()) @db.Timestamptz(6)
+  issued_at              DateTime?            @db.Timestamptz(6)
+  file_url               String?              @db.VarChar(500)
+  approved_by_faculty_id Int?
+  issued_by_hod_user_id  Int?
+  faculty                faculty?             @relation(fields: [approved_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                  users?               @relation(fields: [issued_by_hod_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bonafide_reasons       bonafide_reasons     @relation(fields: [reason_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students               students             @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([status], map: "idx_bonafide_requests_status")
+  @@index([student_id], map: "idx_bonafide_requests_student")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -658,6 +667,7 @@ model faculty {
   appraisal_requests            appraisal_requests[]
   assignments                   assignments[]
   attendance_records            attendance_records[]
+  bonafide_requests             bonafide_requests[]
   book_borrow_records           book_borrow_records[]
   class_mentors                 class_mentors[]
   exam_marks                    exam_marks[]
@@ -670,6 +680,7 @@ model faculty {
   faculty_documents             faculty_documents[]
   faculty_holiday_mapping       faculty_holiday_mapping[]
   faculty_hostel_mapping        faculty_hostel_mapping?
+  faculty_id_card_issuances     faculty_id_card_issuances[]
   faculty_leaves                faculty_leaves[]
   faculty_od_requests           faculty_od_requests[]
   faculty_sensitive_info        faculty_sensitive_info?
@@ -1377,6 +1388,7 @@ model purchase_orders {
   file_url                 String?                  @db.VarChar(500)
   sent_to_vendor_at        DateTime?                @db.Timestamptz(6)
   created_at               DateTime                 @default(now()) @db.Timestamptz(6)
+  bills                    bills[]
   grn                      grn[]
   users                    users?                   @relation(fields: [approved_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   purchase_order_proposals purchase_order_proposals @relation(fields: [proposal_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1509,6 +1521,7 @@ model service_orders {
   file_url                String?                 @db.VarChar(500)
   sent_to_vendor_at       DateTime?               @db.Timestamptz(6)
   created_at              DateTime                @default(now()) @db.Timestamptz(6)
+  bills                   bills[]
   users                   users?                  @relation(fields: [approved_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   service_order_proposals service_order_proposals @relation(fields: [proposal_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
@@ -1892,6 +1905,8 @@ model users {
   appraisal_requests_appraisal_requests_hod_reviewed_byTousers                      appraisal_requests[]               @relation("appraisal_requests_hod_reviewed_byTousers")
   appraisal_requests_appraisal_requests_management_approved_byTousers               appraisal_requests[]               @relation("appraisal_requests_management_approved_byTousers")
   attendance_records                                                                attendance_records[]
+  bills                                                                             bills[]
+  bonafide_requests                                                                 bonafide_requests[]
   book_borrow_records_book_borrow_records_damage_lost_collected_by_user_idTousers   book_borrow_records[]              @relation("book_borrow_records_damage_lost_collected_by_user_idTousers")
   book_borrow_records_book_borrow_records_fine_collected_by_user_idTousers          book_borrow_records[]              @relation("book_borrow_records_fine_collected_by_user_idTousers")
   calendar_events                                                                   calendar_events[]
@@ -1907,6 +1922,7 @@ model users {
   faculty                                                                           faculty?
   faculty_activity_log                                                              faculty_activity_log[]
   faculty_documents                                                                 faculty_documents[]
+  faculty_id_card_issuances                                                         faculty_id_card_issuances[]
   faculty_subject_class_mapping                                                     faculty_subject_class_mapping[]
   fee_payments                                                                      fee_payments[]
   feedback_forms                                                                    feedback_forms[]
@@ -1965,6 +1981,12 @@ model vendors {
   name                     String                     @db.VarChar(150)
   contact_info             String?                    @db.VarChar(255)
   gst_no                   String?                    @db.VarChar(30)
+  company_name             String?                    @db.VarChar(150)
+  item_name                String?                    @db.VarChar(255)
+  item_price               Decimal?                   @db.Decimal(12, 2)
+  phone                    String?                    @db.VarChar(20)
+  type                     vendor_type_enum?
+  bills                    bills[]
   purchase_order_proposals purchase_order_proposals[]
   service_order_proposals  service_order_proposals[]
   vendor_quotations        vendor_quotations[]
@@ -2422,6 +2444,43 @@ model secretary_service_requests {
   @@index([status], map: "idx_secretary_service_requests_status")
 }
 
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model bills {
+  id                 Int              @id @default(autoincrement())
+  bill_number        String           @unique @db.VarChar(50)
+  purchase_order_id  Int?
+  service_order_id   Int?
+  vendor_id          Int
+  quantity           Int
+  unit_price         Decimal          @db.Decimal(12, 2)
+  total_amount       Decimal          @db.Decimal(12, 2)
+  remarks            String?          @db.VarChar(255)
+  status             bill_status_enum @default(pending)
+  created_by_user_id Int?
+  paid_at            DateTime?        @db.Timestamptz(6)
+  created_at         DateTime         @default(now()) @db.Timestamptz(6)
+  users              users?           @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_orders    purchase_orders? @relation(fields: [purchase_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  service_orders     service_orders?  @relation(fields: [service_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vendors            vendors          @relation(fields: [vendor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([purchase_order_id], map: "idx_bills_purchase_order")
+  @@index([service_order_id], map: "idx_bills_service_order")
+  @@index([status], map: "idx_bills_status")
+  @@index([vendor_id], map: "idx_bills_vendor")
+}
+
+model faculty_id_card_issuances {
+  id                Int      @id @default(autoincrement())
+  faculty_id        Int
+  issued_at         DateTime @default(now()) @db.Timestamptz(6)
+  issued_by_user_id Int?
+  faculty           faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users             users?   @relation(fields: [issued_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([faculty_id, issued_at], map: "idx_faculty_id_card_issuances_faculty_id")
+}
+
 enum hostel_wing_enum {
   boys
   girls
@@ -2487,6 +2546,7 @@ enum attendance_status_enum {
 
 enum bonafide_status_enum {
   pending
+  faculty_approved
   issued
   rejected
 }
@@ -2816,4 +2876,19 @@ enum secretary_request_status_enum {
   pending
   approved
   rejected
+}
+
+enum announcement_status_enum {
+  draft
+  published
+}
+
+enum bill_status_enum {
+  pending
+  paid
+}
+
+enum vendor_type_enum {
+  product
+  service
 }

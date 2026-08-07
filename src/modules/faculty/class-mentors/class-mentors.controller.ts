@@ -30,6 +30,21 @@ export class ClassMentorsController {
     return this.classMentorsService.getMenteeClasses(user.sub);
   }
 
+  /**
+   * GET /api/v1/me/mentee-classes/:class_id/students — Faculty only (mentor
+   * of this class). Powers the "Class Result" screen: full roster with
+   * attendance %, CGPA/arrears (both derived from exam_marks — see
+   * getMenteeClassResult's doc comment), mentor, guardian, contact.
+   */
+  @Get('mentee-classes/:class_id/students')
+  @Roles(ROLES.FACULTY)
+  getMenteeClassResult(
+    @Param('class_id', ParseIntPipe) classId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classMentorsService.getMenteeClassResult(classId, user.sub);
+  }
+
   /** GET /api/v1/me/mentees/:student_id/profile — Faculty only (the mentee's class mentor). */
   @Get('mentees/:student_id/profile')
   @Roles(ROLES.FACULTY)
