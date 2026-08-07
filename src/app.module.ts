@@ -99,6 +99,9 @@ import { ServiceOrdersModule } from './modules/procurement/service-orders/servic
 import { VendorQuotationsModule } from './modules/procurement/vendor-quotations/vendor-quotations.module';
 import { VendorsModule } from './modules/procurement/vendors/vendors.module';
 
+import { PurchaseRequestsModule } from './modules/procurement/purchase-requests/purchase-requests.module';
+import { ServiceRequestsModule } from './modules/procurement/service-requests/service-requests.module';
+
 import { VenuesModule } from './modules/venues/venues/venues.module';
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
@@ -219,6 +222,9 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     ServiceOrdersModule,
     VendorQuotationsModule,
     VendorsModule,
+
+    PurchaseRequestsModule,
+    ServiceRequestsModule,
 
     VenuesModule,
     NotificationsModule,

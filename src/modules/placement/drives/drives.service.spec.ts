@@ -21,6 +21,7 @@ describe('DrivesService', () => {
     };
     faculty: { findUnique: jest.Mock };
     class_mentors: { findMany: jest.Mock; findFirst: jest.Mock };
+    classes: { findMany: jest.Mock; findUnique: jest.Mock };
     placement_drives: { findMany: jest.Mock };
   };
 
@@ -34,6 +35,7 @@ describe('DrivesService', () => {
       },
       faculty: { findUnique: jest.fn() },
       class_mentors: { findMany: jest.fn(), findFirst: jest.fn() },
+      classes: { findMany: jest.fn(), findUnique: jest.fn() },
       placement_drives: { findMany: jest.fn() },
     };
 
@@ -433,6 +435,192 @@ describe('DrivesService', () => {
       ]);
 
       const result = await service.getStudentPlacementHistoryForMentor(42, 1);
+
+      const [args] = prisma.student_drive_applications.findMany.mock
+        .calls[0] as [{ where: Record<string, unknown> }];
+      expect(args.where).toMatchObject({ student_id: 42 });
+      expect(result).toEqual([
+        {
+          drive_id: 10,
+          company_name: 'TCS',
+          scheduled_date: new Date('2026-09-01T00:00:00.000Z'),
+          drive_status: 'scheduled',
+          application_status: 'placed',
+          last_cleared_round: 3,
+        },
+      ]);
+    });
+  });
+
+  describe('getDepartmentClasses', () => {
+    it('throws 404 when the caller has no faculty profile', async () => {
+      prisma.faculty.findUnique.mockResolvedValue(null);
+
+      await expect(service.getDepartmentClasses(1)).rejects.toThrow(
+        'Faculty profile not found for the authenticated user',
+      );
+    });
+
+    it("lists every class in the HoD's own department, most recent batch first", async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 2 });
+      prisma.classes.findMany.mockResolvedValue([
+        {
+          id: 5,
+          section: 'A',
+          current_semester: 5,
+          batches: { name: '2022-2026', start_year: 2022 },
+          courses: { name: 'Computer Science and Engineering', code: 'CS' },
+        },
+      ]);
+
+      const result = await service.getDepartmentClasses(1);
+
+      const [args] = prisma.classes.findMany.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ];
+      expect(args.where).toEqual({ department_id: 2 });
+      expect(result).toEqual([
+        {
+          class_id: 5,
+          section: 'A',
+          semester: 5,
+          batch_name: '2022-2026',
+          course_name: 'Computer Science and Engineering',
+          course_code: 'CS',
+        },
+      ]);
+    });
+  });
+
+  describe('getDepartmentStudents', () => {
+    it('throws 404 when the caller has no faculty profile', async () => {
+      prisma.faculty.findUnique.mockResolvedValue(null);
+
+      await expect(service.getDepartmentStudents(1)).rejects.toThrow(
+        'Faculty profile not found for the authenticated user',
+      );
+    });
+
+    it('throws 403 when classId belongs to a different department', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 2 });
+      prisma.classes.findUnique.mockResolvedValue({ department_id: 99 });
+
+      await expect(service.getDepartmentStudents(1, 5)).rejects.toThrow(
+        'This class is not in your department',
+      );
+      expect(prisma.students.findMany).not.toHaveBeenCalled();
+    });
+
+    it('throws 403 when classId does not exist at all', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 2 });
+      prisma.classes.findUnique.mockResolvedValue(null);
+
+      await expect(service.getDepartmentStudents(1, 5)).rejects.toThrow(
+        'This class is not in your department',
+      );
+    });
+
+    it('scopes to just the one class when classId is given', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 2 });
+      prisma.classes.findUnique.mockResolvedValue({ department_id: 2 });
+      prisma.students.findMany.mockResolvedValue([]);
+
+      await service.getDepartmentStudents(1, 5);
+
+      expect(prisma.classes.findMany).not.toHaveBeenCalled();
+      const [args] = prisma.students.findMany.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ];
+      expect(args.where).toEqual({ class_id: { in: [5] } });
+    });
+
+    it('returns an empty list (not an error) when the department has no classes yet', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 2 });
+      prisma.classes.findMany.mockResolvedValue([]);
+
+      const result = await service.getDepartmentStudents(1);
+
+      expect(result).toEqual([]);
+      expect(prisma.students.findMany).not.toHaveBeenCalled();
+    });
+
+    it('lists every student across every class of the department, not just mentored ones', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 2 });
+      prisma.classes.findMany.mockResolvedValue([{ id: 5 }, { id: 6 }]);
+      prisma.students.findMany.mockResolvedValue([
+        {
+          id: 42,
+          student_id_no: '23CS001',
+          soa_applications: { first_name: 'Arjun', last_name: 'Kumar' },
+          users: { email: 'arjun@sece.ac.in' },
+          classes: { section: 'A', departments: { name: 'Computer Science and Engineering' } },
+        },
+      ]);
+
+      const result = await service.getDepartmentStudents(1);
+
+      const [classesArgs] = prisma.classes.findMany.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ];
+      expect(classesArgs.where).toEqual({ department_id: 2 });
+      const [studentsArgs] = prisma.students.findMany.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ];
+      expect(studentsArgs.where).toEqual({ class_id: { in: [5, 6] } });
+      expect(result).toEqual([
+        {
+          student_id: 42,
+          student_id_no: '23CS001',
+          name: 'Arjun Kumar',
+          section: 'A',
+          department_name: 'Computer Science and Engineering',
+        },
+      ]);
+    });
+  });
+
+  describe('getStudentPlacementHistoryForHod', () => {
+    it('throws 404 when the student does not exist', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 2 });
+      prisma.students.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getStudentPlacementHistoryForHod(42, 1),
+      ).rejects.toThrow('Student not found');
+    });
+
+    it("throws 403 when the student's class is in a different department", async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 2 });
+      prisma.students.findUnique.mockResolvedValue({
+        id: 42,
+        classes: { department_id: 99 },
+      });
+
+      await expect(
+        service.getStudentPlacementHistoryForHod(42, 1),
+      ).rejects.toThrow('This student is not in your department');
+    });
+
+    it('throws 403 when the student has no class at all', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 2 });
+      prisma.students.findUnique.mockResolvedValue({ id: 42, classes: null });
+
+      await expect(
+        service.getStudentPlacementHistoryForHod(42, 1),
+      ).rejects.toThrow('This student is not in your department');
+    });
+
+    it("returns the student's placement history once department authorization passes", async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 2 });
+      prisma.students.findUnique.mockResolvedValue({
+        id: 42,
+        classes: { department_id: 2 },
+      });
+      prisma.student_drive_applications.findMany.mockResolvedValue([
+        driveApplication({ status: 'placed', last_cleared_round: 3 }),
+      ]);
+
+      const result = await service.getStudentPlacementHistoryForHod(42, 1);
 
       const [args] = prisma.student_drive_applications.findMany.mock
         .calls[0] as [{ where: Record<string, unknown> }];

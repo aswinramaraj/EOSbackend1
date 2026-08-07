@@ -27,7 +27,14 @@ const APPRAISAL_SELECT = {
   management_approved_at: true,
   created_at: true,
   faculty: {
-    select: { id: true, first_name: true, last_name: true, designation: true },
+    select: {
+      id: true,
+      first_name: true,
+      last_name: true,
+      designation: true,
+      department_id: true,
+      departments: { select: { name: true } },
+    },
   },
   users_appraisal_requests_hod_reviewed_byTousers: {
     select: { id: true, email: true },
@@ -75,6 +82,8 @@ interface AppraisalRequestRow {
     first_name: string;
     last_name: string;
     designation: string;
+    department_id: number;
+    departments: { name: string };
   };
   users_appraisal_requests_hod_reviewed_byTousers: {
     id: number;
@@ -110,7 +119,13 @@ function toResponse(row: AppraisalRequestRow) {
     id: row.id,
     academic_year: row.academic_year,
     status: row.status,
-    faculty: row.faculty,
+    faculty: {
+      id: row.faculty.id,
+      first_name: row.faculty.first_name,
+      last_name: row.faculty.last_name,
+      designation: row.faculty.designation,
+      department_name: row.faculty.departments.name,
+    },
     hod_reviewer: row.users_appraisal_requests_hod_reviewed_byTousers,
     hod_reviewed_at: row.hod_reviewed_at,
     management_approver:
@@ -148,12 +163,16 @@ export class AppraisalService {
   ) {}
 
   /**
-   * POST /appraisal (Faculty only).
+   * POST /appraisal (Faculty or HoD).
    * Creates the header (appraisal_requests) and its line items
-   * (appraisal_entries) in a single transaction.
+   * (appraisal_entries) in a single transaction. An HoD's own submission
+   * has no one to fill the HoD-review stage (they can't review their own
+   * appraisal - see update()'s self-review guard), so it's created already
+   * at 'hod_reviewed' instead of 'submitted', skipping straight to HR
+   * scoring - same "goes directly to HR" treatment as Leave/OD.
    */
-  async create(dto: CreateAppraisalDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  async create(dto: CreateAppraisalDto, currentUser: JwtPayload) {
+    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
 
     const existing = await this.prisma.appraisal_requests.findFirst({
       where: { faculty_id: faculty.id, academic_year: dto.academic_year },
@@ -192,9 +211,21 @@ export class AppraisalService {
       );
     }
 
+    const isHodSelfSubmission = currentUser.role === ROLES.HOD;
+
     const request = await this.prisma.$transaction(async (tx) => {
       const header = await tx.appraisal_requests.create({
-        data: { faculty_id: faculty.id, academic_year: dto.academic_year },
+        data: {
+          faculty_id: faculty.id,
+          academic_year: dto.academic_year,
+          ...(isHodSelfSubmission
+            ? {
+                status: 'hod_reviewed' as const,
+                hod_reviewed_by: currentUser.sub,
+                hod_reviewed_at: new Date(),
+              }
+            : {}),
+        },
       });
 
       await tx.appraisal_entries.createMany({
@@ -266,7 +297,17 @@ export class AppraisalService {
     return { academic_year: academicYear, divisions: Array.from(divisionsById.values()) };
   }
 
-  /** GET /appraisal (Faculty/HoD/HR Payroll). Faculty is always scoped to their own records. */
+  /**
+   * GET /appraisal (Faculty/HoD/HR Payroll). Faculty is always scoped to
+   * their own records. HoD is always scoped to their own department (via
+   * their own faculty row's department_id - a HoD account has a faculty
+   * row too, designation "HOD & Professor" in the seed data). HR Payroll
+   * is deliberately left unscoped - HR's "Appraisal" page shows which
+   * faculty have applied (institution-wide), not HR's own appraisal (HR
+   * has no Apply tab at all on that screen - see AppraisalRequestScreen's
+   * canApply flag), and scoring/approval happens after a request has
+   * already left the department.
+   */
   async findAll(query: ListAppraisalQueryDto, currentUser: JwtPayload) {
     const where: Record<string, unknown> = {
       faculty_id: query.faculty_id,
@@ -277,6 +318,9 @@ export class AppraisalService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      where.faculty = { department_id: hod.department_id };
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -293,7 +337,10 @@ export class AppraisalService {
     return paginate(rows.map(toResponse), total, query);
   }
 
-  /** GET /appraisal/:id (Faculty/HoD/HR Payroll). Faculty may only view their own. */
+  /**
+   * GET /appraisal/:id (Faculty/HoD/HR Payroll). Faculty may only view
+   * their own; HoD may only view requests from their own department.
+   */
   async findOne(id: number, currentUser: JwtPayload) {
     const request = await this.prisma.appraisal_requests.findUnique({
       where: { id },
@@ -309,6 +356,13 @@ export class AppraisalService {
       if (request.faculty.id !== faculty.id) {
         throw new ForbiddenException(
           'You may only view your own appraisal requests',
+        );
+      }
+    } else if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (request.faculty.department_id !== hod.department_id) {
+        throw new ForbiddenException(
+          'You may only view appraisal requests from your own department',
         );
       }
     }
@@ -327,12 +381,29 @@ export class AppraisalService {
   async update(id: number, dto: UpdateAppraisalDto, currentUser: JwtPayload) {
     const existing = await this.prisma.appraisal_requests.findUnique({
       where: { id },
+      include: { faculty: { select: { department_id: true } } },
     });
     if (!existing) {
       throw new NotFoundException('Appraisal request not found');
     }
 
     if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      // An HoD can now submit their OWN appraisal too (see create()) -
+      // self-review would otherwise be possible since faculty_id === hod.id
+      // is a valid state. Block it outright rather than silently allow an
+      // HoD to approve their own request.
+      if (existing.faculty_id === hod.id) {
+        throw new ForbiddenException({
+          message: 'You cannot review your own appraisal request',
+          errorCode: 'CANNOT_REVIEW_OWN_REQUEST',
+        });
+      }
+      if (existing.faculty.department_id !== hod.department_id) {
+        throw new ForbiddenException(
+          'You may only review appraisal requests from your own department',
+        );
+      }
       return this.applyHodReview(id, existing.status, dto, currentUser.sub);
     }
 

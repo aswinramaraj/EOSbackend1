@@ -387,6 +387,123 @@ export class DrivesService {
     return this.buildHistoryForStudentId(studentId);
   }
 
+  // ───────────────────────────── HoD (department) view ─────────────────────────────
+
+  /**
+   * GET /me/department-classes (HoD only) — every class in the HoD's own
+   * department, for the class-selector on the Placements History tab.
+   * Ordered most-recent-batch-first, same reasoning as
+   * AssignmentsService.getHandledClasses: a department running the same
+   * course across several successive batches almost always wants the
+   * currently-running one surfaced first.
+   */
+  async getDepartmentClasses(userId: number) {
+    const hod = await this.resolveFacultyByUserId(userId);
+
+    const classes = await this.prisma.classes.findMany({
+      where: { department_id: hod.department_id },
+      select: {
+        id: true,
+        section: true,
+        current_semester: true,
+        batches: { select: { name: true, start_year: true } },
+        courses: { select: { name: true, code: true } },
+      },
+      orderBy: [{ batches: { start_year: 'desc' } }, { section: 'asc' }],
+    });
+
+    return classes.map((c) => ({
+      class_id: c.id,
+      section: c.section,
+      semester: c.current_semester,
+      batch_name: c.batches.name,
+      course_name: c.courses.name,
+      course_code: c.courses.code,
+    }));
+  }
+
+  /**
+   * GET /me/department-students (HoD only) — every student in every class
+   * of the HoD's own department (via their own faculty row's
+   * department_id), not just classes the HoD personally mentors - the same
+   * "pick a student, see their placement history" flow as the faculty
+   * mentor view, just scoped one level up. A HoD whose department has no
+   * classes yet gets an empty list rather than an error.
+   *
+   * `classId` optionally narrows this down to one class (the Placements
+   * History tab's class selector) - must belong to the HoD's own
+   * department, checked explicitly rather than silently ignored.
+   */
+  async getDepartmentStudents(userId: number, classId?: number) {
+    const hod = await this.resolveFacultyByUserId(userId);
+
+    let classIds: number[];
+    if (classId !== undefined) {
+      const cls = await this.prisma.classes.findUnique({
+        where: { id: classId },
+        select: { department_id: true },
+      });
+      if (!cls || cls.department_id !== hod.department_id) {
+        throw new ForbiddenException('This class is not in your department');
+      }
+      classIds = [classId];
+    } else {
+      const departmentClasses = await this.prisma.classes.findMany({
+        where: { department_id: hod.department_id },
+        select: { id: true },
+      });
+      classIds = departmentClasses.map((c) => c.id);
+    }
+    if (classIds.length === 0) return [];
+
+    const students = await this.prisma.students.findMany({
+      where: { class_id: { in: classIds } },
+      select: {
+        id: true,
+        student_id_no: true,
+        soa_applications: { select: { first_name: true, last_name: true } },
+        users: { select: { email: true } },
+        classes: {
+          select: { section: true, departments: { select: { name: true } } },
+        },
+      },
+      orderBy: { student_id_no: 'asc' },
+    });
+
+    return students.map((s) => ({
+      student_id: s.id,
+      student_id_no: s.student_id_no,
+      name: this.resolveStudentDisplayName(s),
+      section: s.classes?.section ?? null,
+      department_name: s.classes?.departments.name ?? null,
+    }));
+  }
+
+  /**
+   * GET /me/department-students/:studentId/placement-history (HoD only —
+   * student's class must belong to the HoD's own department). Same
+   * shape/logic as the mentor version, just department-scoped instead of
+   * class_mentors-scoped - see buildHistoryForStudentId().
+   */
+  async getStudentPlacementHistoryForHod(studentId: number, userId: number) {
+    const hod = await this.resolveFacultyByUserId(userId);
+
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { id: true, classes: { select: { department_id: true } } },
+    });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    if (!student.classes || student.classes.department_id !== hod.department_id) {
+      throw new ForbiddenException(
+        'This student is not in your department',
+      );
+    }
+
+    return this.buildHistoryForStudentId(studentId);
+  }
+
   /** No generic "display name" column on `students` - same fallback chain used across every other faculty-facing module in this codebase. */
   private resolveStudentDisplayName(student: {
     soa_applications: { first_name: string; last_name: string | null } | null;
