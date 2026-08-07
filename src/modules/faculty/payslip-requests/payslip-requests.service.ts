@@ -118,7 +118,7 @@ export class PayslipRequestsService {
       where.month = month;
     }
 
-    if (currentUser.role === ROLES.FACULTY) {
+    if (currentUser.role === ROLES.FACULTY || currentUser.role === ROLES.HOD) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
     }
@@ -147,7 +147,7 @@ export class PayslipRequestsService {
       throw new NotFoundException('Payslip request not found');
     }
 
-    if (currentUser.role === ROLES.FACULTY) {
+    if (currentUser.role === ROLES.FACULTY || currentUser.role === ROLES.HOD) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       if (request.faculty.id !== faculty.id) {
         throw new ForbiddenException(

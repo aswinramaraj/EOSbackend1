@@ -27,12 +27,16 @@ import { UpdateFacultyOdDto } from './dto/update-faculty-od.dto';
 export class FacultyOdController {
   constructor(private readonly facultyOdService: FacultyOdService) {}
 
-  /** POST /api/v1/me/create-od — Faculty only, for the caller's own record. */
+  /**
+   * POST /api/v1/me/create-od — Faculty or HoD, for the caller's own
+   * record. An HoD's own request skips the HoD-review stage entirely (see
+   * FacultyOdService.create) since they can't review their own OD.
+   */
   @Post('create-od')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateFacultyOdDto, @CurrentUser() user: JwtPayload) {
-    return this.facultyOdService.create(dto, user.sub);
+    return this.facultyOdService.create(dto, user);
   }
 
   /** GET /api/v1/me/faculty-od — Faculty (own only)/HoD/HR Payroll. Paginated, filterable. */
@@ -45,7 +49,7 @@ export class FacultyOdController {
     return this.facultyOdService.findAll(query, user);
   }
 
-  /** PATCH /api/v1/me/faculty-od/:id — HoD (review) or HR Payroll (approval) only. */
+  /** PATCH /api/v1/me/faculty-od/:id — HoD (hod_approval_status) or HR Payroll (hr_approval_status, after HoD) only. */
   @Patch('faculty-od/:id')
   @Roles(ROLES.HOD, ROLES.HR_PAYROLL)
   update(

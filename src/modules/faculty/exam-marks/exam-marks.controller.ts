@@ -27,10 +27,14 @@ import { ValidateExamMarksDto } from './dto/validate-exam-marks.dto';
  * Faculty-side exam marks entry — reads exam_subject_mapping (created by
  * COE) to know which class+subject to enter marks for, but never creates
  * or modifies exams/exam_subject_mapping/exam_types themselves.
+ *
+ * HOD is also allowed here - an HoD mapped to teach a subject gets the same
+ * real roster/entry flow as any other faculty; one who isn't just sees an
+ * empty class list, never a hard 403.
  */
 @Controller('me')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.FACULTY)
+@Roles(ROLES.FACULTY, ROLES.HOD)
 export class ExamMarksController {
   constructor(private readonly examMarksService: ExamMarksService) {}
 

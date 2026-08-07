@@ -148,12 +148,16 @@ export class AppraisalService {
   ) {}
 
   /**
-   * POST /appraisal (Faculty only).
+   * POST /appraisal (Faculty or HoD).
    * Creates the header (appraisal_requests) and its line items
-   * (appraisal_entries) in a single transaction.
+   * (appraisal_entries) in a single transaction. An HoD's own submission
+   * has no one to fill the HoD-review stage (they can't review their own
+   * appraisal - see update()'s self-review guard), so it's created already
+   * at 'hod_reviewed' instead of 'submitted', skipping straight to HR
+   * scoring - same "goes directly to HR" treatment as Leave/OD.
    */
-  async create(dto: CreateAppraisalDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  async create(dto: CreateAppraisalDto, currentUser: JwtPayload) {
+    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
 
     const existing = await this.prisma.appraisal_requests.findFirst({
       where: { faculty_id: faculty.id, academic_year: dto.academic_year },
@@ -192,9 +196,21 @@ export class AppraisalService {
       );
     }
 
+    const isHodSelfSubmission = currentUser.role === ROLES.HOD;
+
     const request = await this.prisma.$transaction(async (tx) => {
       const header = await tx.appraisal_requests.create({
-        data: { faculty_id: faculty.id, academic_year: dto.academic_year },
+        data: {
+          faculty_id: faculty.id,
+          academic_year: dto.academic_year,
+          ...(isHodSelfSubmission
+            ? {
+                status: 'hod_reviewed' as const,
+                hod_reviewed_by: currentUser.sub,
+                hod_reviewed_at: new Date(),
+              }
+            : {}),
+        },
       });
 
       await tx.appraisal_entries.createMany({
@@ -339,6 +355,17 @@ export class AppraisalService {
     }
 
     if (currentUser.role === ROLES.HOD) {
+      // HOD can now submit their OWN appraisal too (see create()/ROLES.HOD
+      // added there) - self-review would otherwise be possible since this
+      // module has no department scoping on the reviewer. Block it outright
+      // rather than silently allow an HOD to approve their own request.
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (existing.faculty_id === hod.id) {
+        throw new ForbiddenException({
+          message: 'You cannot review your own appraisal request',
+          errorCode: 'CANNOT_REVIEW_OWN_REQUEST',
+        });
+      }
       return this.applyHodReview(id, existing.status, dto, currentUser.sub);
     }
 

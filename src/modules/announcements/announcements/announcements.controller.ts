@@ -71,13 +71,14 @@ export class AnnouncementsController {
 
   /**
    * GET /api/v1/announcements/lookup/assigned-classes
-   * Faculty only.
+   * Faculty or HoD - an HoD who is themselves mapped to teach/mentor a
+   * class gets the same real list; one who isn't just gets an empty array.
    *
    * Error responses:
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 404 FACULTY_RECORD_NOT_FOUND, 500 INTERNAL_ERROR
    */
   @Get('lookup/assigned-classes')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   lookupAssignedClasses(@CurrentUser() user: JwtPayload) {
     return this.announcementsService.lookupAssignedClasses(user);
   }
