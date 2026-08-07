@@ -102,6 +102,60 @@ interface MyTimetableSlotRow {
   faculty: { id: number; first_name: string; last_name: string };
 }
 
+const FACULTY_ROSTER_SLOT_SELECT = {
+  day_of_week: true,
+  period_number: true,
+  start_time: true,
+  end_time: true,
+  academic_year: true,
+  semester: true,
+  subjects: { select: { id: true, name: true, subject_code: true } },
+  classes: {
+    select: {
+      id: true,
+      section: true,
+      departments: { select: { id: true, name: true, code: true } },
+    },
+  },
+} as const;
+
+interface FacultyRosterSlotRow {
+  day_of_week: number;
+  period_number: number;
+  start_time: Date;
+  end_time: Date;
+  academic_year: string;
+  semester: number;
+  subjects: { id: number; name: string; subject_code: string };
+  classes: {
+    id: number;
+    section: string;
+    departments: { id: number; name: string; code: string };
+  };
+}
+
+interface PeriodTemplateEntry {
+  day_of_week: number;
+  period_number: number;
+  start_time: Date;
+  end_time: Date;
+}
+
+function toRosterSlotResponse(slot: FacultyRosterSlotRow) {
+  return {
+    period_number: slot.period_number,
+    start_time: formatHHMM(slot.start_time),
+    end_time: formatHHMM(slot.end_time),
+    kind: 'class' as const,
+    subject: slot.subjects,
+    class: {
+      id: slot.classes.id,
+      section: slot.classes.section,
+      department: slot.classes.departments,
+    },
+  };
+}
+
 function formatHHMM(time: Date): string {
   return time.toISOString().slice(11, 16);
 }
@@ -699,6 +753,227 @@ export class TimetableService {
         a.event_date.localeCompare(b.event_date),
       ),
     };
+  }
+
+  /**
+   * GET /me/academic-calendar-institution (HoD/HR Payroll).
+   *
+   * HR Payroll (and HoD, browsing outside their own department) has no
+   * single "own" batch/semester to scope a calendar to, so - unlike
+   * getMergedAcademicCalendarForFaculty(), which merges only the calendars
+   * the caller personally teaches into - this merges every
+   * academic_calendars row institution-wide into one deduped events list.
+   * Same {semester, start_date, end_date, events} shape, so it's a drop-in
+   * for the shared AcademicCalendarScreen. `semester` is realistically
+   * always null here (more than one semester's calendar exists at once
+   * across a whole institution), same "null when not uniform" convention as
+   * the faculty merge.
+   */
+  async getInstitutionAcademicCalendar() {
+    const empty = { semester: null, start_date: null, end_date: null, events: [] };
+
+    const calendars = await this.prisma.academic_calendars.findMany({
+      select: {
+        semester: true,
+        start_date: true,
+        end_date: true,
+        calendar_events: {
+          orderBy: { event_date: 'asc' },
+          select: {
+            id: true,
+            event_date: true,
+            event_type: true,
+            title: true,
+            description: true,
+          },
+        },
+      },
+    });
+    if (calendars.length === 0) {
+      return empty;
+    }
+
+    const distinctSemesters = new Set(calendars.map((c) => c.semester));
+    const semester = distinctSemesters.size === 1 ? calendars[0].semester : null;
+
+    const startDates = calendars.map((c) => c.start_date.getTime());
+    const endDates = calendars.map((c) => c.end_date.getTime());
+
+    const eventsByKey = new Map<
+      string,
+      { id: number; event_date: string; event_type: string; title: string; description: string | null }
+    >();
+    for (const calendar of calendars) {
+      for (const event of calendar.calendar_events) {
+        const eventDate = toDateOnly(event.event_date);
+        const key = `${eventDate}:${event.title}`;
+        if (!eventsByKey.has(key)) {
+          eventsByKey.set(key, {
+            id: event.id,
+            event_date: eventDate,
+            event_type: event.event_type,
+            title: event.title,
+            description: event.description,
+          });
+        }
+      }
+    }
+
+    return {
+      semester,
+      start_date: toDateOnly(new Date(Math.min(...startDates))),
+      end_date: toDateOnly(new Date(Math.max(...endDates))),
+      events: Array.from(eventsByKey.values()).sort((a, b) =>
+        a.event_date.localeCompare(b.event_date),
+      ),
+    };
+  }
+
+  /**
+   * GET /me/timetable-departments (HoD/HR Payroll).
+   *
+   * One row per department, with its classes nested - backs the department
+   * picker for the HR "faculty timetable" roster screen (which then picks a
+   * faculty member - see getFullWeekForFacultyId()). classes has no "year"
+   * label of its own (only current_semester), so each class is returned as
+   * section + current_semester rather than a fabricated roman-numeral year
+   * (same convention as the class-label helpers already used elsewhere in
+   * the app for real, non-mock data).
+   */
+  async listDepartmentsWithClasses() {
+    return this.prisma.departments.findMany({
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        classes: {
+          select: { id: true, section: true, current_semester: true },
+          orderBy: { section: 'asc' },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  /**
+   * GET /me/timetable-departments/:departmentId/faculty (HoD/HR Payroll).
+   *
+   * "Every faculty in the department" - resolved from the faculty's own
+   * home department_id (not from which classes they happen to teach, since
+   * a faculty can teach outside their own department per
+   * faculty_subject_class_mapping and the ask is about department
+   * membership, not teaching assignment).
+   */
+  async listFacultyInDepartment(departmentId: number) {
+    const department = await this.prisma.departments.findUnique({
+      where: { id: departmentId },
+    });
+    if (!department) {
+      throw new NotFoundException('Department not found');
+    }
+
+    return this.prisma.faculty.findMany({
+      where: { department_id: departmentId, status: 'active' },
+      select: { id: true, first_name: true, last_name: true, designation: true },
+      orderBy: [{ first_name: 'asc' }, { last_name: 'asc' }],
+    });
+  }
+
+  /**
+   * GET /me/faculty-timetable-roster/:facultyId (HoD/HR Payroll).
+   *
+   * Full week for a faculty member chosen by id (not the caller) - the
+   * multi-faculty counterpart to findFullWeekForFaculty(). Each day's
+   * periods are built from the institution-wide period template (the
+   * distinct (day_of_week, period_number, start_time, end_time) combos that
+   * exist anywhere in timetable_slots - verified consistent per period
+   * number across every class), so a period this faculty has no row for on
+   * a day that otherwise runs classes is reported as a real, derived "free"
+   * period rather than simply omitted - not fabricated, since it's absence
+   * relative to a real institution-wide schedule, not an invented slot.
+   * Each real period also carries its class (section + department), since
+   * unlike the self-view a faculty being looked up here can teach several
+   * different classes across the week.
+   */
+  async getFullWeekForFacultyId(facultyId: number) {
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { id: facultyId },
+      select: { id: true, first_name: true, last_name: true, designation: true },
+    });
+    if (!faculty) {
+      throw new NotFoundException('Faculty not found');
+    }
+
+    const [slots, template] = await Promise.all([
+      this.prisma.timetable_slots.findMany({
+        where: { faculty_id: facultyId },
+        orderBy: [{ day_of_week: 'asc' }, { period_number: 'asc' }],
+        select: FACULTY_ROSTER_SLOT_SELECT,
+      }),
+      this.getPeriodTemplate(),
+    ]);
+
+    const slotsByDayPeriod = new Map<string, FacultyRosterSlotRow>();
+    for (const slot of slots) {
+      slotsByDayPeriod.set(`${slot.day_of_week}-${slot.period_number}`, slot);
+    }
+
+    const templateByDay = new Map<number, PeriodTemplateEntry[]>();
+    for (const entry of template) {
+      const list = templateByDay.get(entry.day_of_week) ?? [];
+      list.push(entry);
+      templateByDay.set(entry.day_of_week, list);
+    }
+
+    const days = [1, 2, 3, 4, 5, 6].map((dayOfWeek) => {
+      const dayTemplate = templateByDay.get(dayOfWeek) ?? [];
+      const periods = dayTemplate.map((entry) => {
+        const real = slotsByDayPeriod.get(`${dayOfWeek}-${entry.period_number}`);
+        if (real) return toRosterSlotResponse(real);
+        return {
+          period_number: entry.period_number,
+          start_time: formatHHMM(entry.start_time),
+          end_time: formatHHMM(entry.end_time),
+          kind: 'free' as const,
+        };
+      });
+      return { day_of_week: dayOfWeek, periods };
+    });
+
+    const distinctTerms = new Set(
+      slots.map((slot) => `${slot.academic_year}:${slot.semester}`),
+    );
+    const uniformTerm =
+      distinctTerms.size === 1 ? slots[0] : undefined;
+
+    return {
+      faculty,
+      total_periods_per_week: slots.length,
+      semester: uniformTerm?.semester ?? null,
+      academic_year: uniformTerm?.academic_year ?? null,
+      days,
+    };
+  }
+
+  /**
+   * The institution-wide "master schedule" of periods: every distinct
+   * (day_of_week, period_number) combo that exists in timetable_slots
+   * anywhere, with its start/end time. Used to derive "free" periods for
+   * getFullWeekForFacultyId() - period start/end times are consistent for a
+   * given period_number across every class, so any one row sharing that
+   * combo is representative.
+   */
+  private async getPeriodTemplate() {
+    return this.prisma.timetable_slots.findMany({
+      distinct: ['day_of_week', 'period_number'],
+      orderBy: [{ day_of_week: 'asc' }, { period_number: 'asc' }],
+      select: {
+        day_of_week: true,
+        period_number: true,
+        start_time: true,
+        end_time: true,
+      },
+    });
   }
 
   /**

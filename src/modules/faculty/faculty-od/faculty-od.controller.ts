@@ -4,6 +4,9 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseIntPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -17,6 +20,7 @@ import { ROLES } from 'src/common/constants/roles.constant';
 import { FacultyOdService } from './faculty-od.service';
 import { CreateFacultyOdDto } from './dto/create-faculty-od.dto';
 import { ListFacultyOdQueryDto } from './dto/list-faculty-od-query.dto';
+import { UpdateFacultyOdDto } from './dto/update-faculty-od.dto';
 
 @Controller('me')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -39,5 +43,16 @@ export class FacultyOdController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.facultyOdService.findAll(query, user);
+  }
+
+  /** PATCH /api/v1/me/faculty-od/:id — HoD (review) or HR Payroll (approval) only. */
+  @Patch('faculty-od/:id')
+  @Roles(ROLES.HOD, ROLES.HR_PAYROLL)
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateFacultyOdDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.facultyOdService.update(id, dto, user);
   }
 }

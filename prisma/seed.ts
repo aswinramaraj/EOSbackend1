@@ -108,7 +108,41 @@ async function main() {
     }
   }
 
-  // 4. Print credentials table
+  // 4. Give the HR Payroll test user a faculty row, same reasoning as step 3
+  // above — HR & Payroll staff have their own faculty row too (same table,
+  // same faculty_daily_attendance/payslip_requests/appraisal_requests
+  // sources as any other faculty member's self-service data), so without
+  // this row the HR test account 404s on every "my own" endpoint that
+  // resolves faculty.user_id, even for a valid HR Payroll JWT.
+  console.log('\n💼  Ensuring hr_payroll@eos.test has a faculty profile...');
+
+  const hrPayrollUser = await (prisma as any).users.findUnique({ where: { email: 'hr_payroll@eos.test' } });
+  const existingHrPayrollFaculty = hrPayrollUser
+    ? await (prisma as any).faculty.findUnique({ where: { user_id: hrPayrollUser.id } })
+    : null;
+
+  if (existingHrPayrollFaculty) {
+    console.log(`   ✅  Already exists: faculty.id=${existingHrPayrollFaculty.id}, department_id=${existingHrPayrollFaculty.department_id}`);
+  } else if (hrPayrollUser) {
+    const firstDepartment = await (prisma as any).departments.findFirst({ orderBy: { id: 'asc' } });
+    if (firstDepartment) {
+      const hrPayrollFaculty = await (prisma as any).faculty.create({
+        data: {
+          user_id: hrPayrollUser.id,
+          first_name: 'Test',
+          last_name: 'HR Payroll',
+          designation: 'HR & Payroll Executive',
+          department_id: firstDepartment.id,
+          status: 'active',
+        },
+      });
+      console.log(`   ✅  Created: faculty.id=${hrPayrollFaculty.id}, department_id=${hrPayrollFaculty.department_id}`);
+    } else {
+      console.log('   ⚠️  No departments exist yet — skipped (run this seed again after departments are created).');
+    }
+  }
+
+  // 5. Print credentials table
   const LINE = '═'.repeat(65);
   console.log(`\n${LINE}`);
   console.log('  POSTMAN TEST CREDENTIALS');

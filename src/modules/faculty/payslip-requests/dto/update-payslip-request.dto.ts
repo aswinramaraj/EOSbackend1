@@ -5,8 +5,9 @@ import { IsIn, IsOptional, IsUrl, MaxLength } from 'class-validator';
  *
  * A state-machine transition (pending -> processed/rejected), not a
  * free-form edit — same shape as Media Requests' review DTO. `file_url` is
- * required exactly when marking a request 'processed' (that's the payslip
- * file being delivered); not accepted/required for 'rejected'.
+ * optional and accepted for either transition, but never required - HR can
+ * approve immediately with no file, and attach one later some other way if
+ * needed.
  */
 export class UpdatePayslipRequestDto {
   @IsIn(['processed', 'rejected'])

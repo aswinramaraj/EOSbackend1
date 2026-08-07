@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -160,7 +159,12 @@ export class PayslipRequestsService {
     return toResponse(request);
   }
 
-  /** PATCH /payslip-requests/:id (HR Payroll only). */
+  /**
+   * PATCH /payslip-requests/:id (HR Payroll only). Marks the request
+   * 'processed' or 'rejected' directly - no file is required to approve.
+   * file_url stays whatever it already was (null unless set through some
+   * other means) - this endpoint never fabricates one.
+   */
   async update(id: number, dto: UpdatePayslipRequestDto) {
     const existing = await this.prisma.payslip_requests.findUnique({
       where: { id },
@@ -172,12 +176,6 @@ export class PayslipRequestsService {
     if (existing.status !== 'pending') {
       throw new ConflictException(
         'This payslip request has already been processed',
-      );
-    }
-
-    if (dto.status === 'processed' && !dto.file_url) {
-      throw new BadRequestException(
-        'file_url is required when marking a request as processed',
       );
     }
 

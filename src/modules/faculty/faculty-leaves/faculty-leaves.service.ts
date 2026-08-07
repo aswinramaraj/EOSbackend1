@@ -111,7 +111,16 @@ export class FacultyLeavesService {
     return toResponse(leave);
   }
 
-  /** GET /faculty-leaves (Faculty/HoD/HR Payroll). Faculty is always scoped to their own records. */
+  /**
+   * GET /faculty-leaves (Faculty/HoD/HR Payroll). Faculty is always scoped
+   * to their own records. HR Payroll only ever sees requests the HoD has
+   * already approved - a request still awaiting HoD review has nothing for
+   * HR to act on yet (update() below 409s "HR approval requires HoD
+   * approval first" anyway), so it's hidden from HR's list entirely rather
+   * than shown as an unactionable "pending" row. This overrides whatever
+   * hod_approval_status the HR caller passes - it is never allowed to see
+   * pending/rejected-by-HoD requests.
+   */
   async findAll(query: ListFacultyLeafQueryDto, currentUser: JwtPayload) {
     const where: Record<string, unknown> = {
       faculty_id: query.faculty_id,
@@ -122,6 +131,8 @@ export class FacultyLeavesService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HR_PAYROLL) {
+      where.hod_approval_status = 'approved';
     }
 
     const [rows, total] = await this.prisma.$transaction([
