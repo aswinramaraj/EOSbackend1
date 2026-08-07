@@ -82,7 +82,21 @@ export class MeExamResultsService {
       });
     }
 
-    const marks = await this.fetchExamMarks(userId, student.id, dto.semester);
+    return this.computeExamResults(student.id, dto.semester);
+  }
+
+  /**
+   * Same computation as getMyExamResults, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService
+   * once it has verified (via parent_student_mapping) that the caller is
+   * actually this student's parent.
+   */
+  async getExamResultsForStudentId(studentId: number, dto: GetExamResultsDto) {
+    return this.computeExamResults(studentId, dto.semester);
+  }
+
+  private async computeExamResults(studentId: number, semester: number) {
+    const marks = await this.fetchExamMarks(studentId, semester);
 
     const groups = new Map<number, ExamGroup>();
     for (const mark of marks) {
@@ -128,13 +142,13 @@ export class MeExamResultsService {
     const semesterExam = allGroups.find((g) => g.isSemesterExam);
 
     return {
-      semester: dto.semester,
+      semester,
       internals,
       semester_exam: semesterExam ? toResult(semesterExam) : null,
     };
   }
 
-  private async fetchExamMarks(userId: number, studentId: number, semester: number) {
+  private async fetchExamMarks(studentId: number, semester: number) {
     try {
       return await this.prisma.exam_marks.findMany({
         where: {
@@ -155,7 +169,7 @@ export class MeExamResultsService {
         },
       });
     } catch (err) {
-      this.logger.error(`Failed to fetch exam results for user ${userId}`, err);
+      this.logger.error(`Failed to fetch exam results for student ${studentId}`, err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

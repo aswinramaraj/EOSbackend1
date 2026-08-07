@@ -449,7 +449,35 @@ export class TimetableService {
         'Student profile not found for the authenticated user',
       );
     }
-    if (student.class_id === null) {
+
+    return this.computeTimetableForStudent(student.class_id, query);
+  }
+
+  /**
+   * Same computation as findForStudent, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService
+   * once it has verified (via parent_student_mapping) that the caller is
+   * actually this student's parent.
+   */
+  async getTimetableForStudentId(
+    studentId: number,
+    query: GetMyTimetableQueryDto,
+  ) {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+    });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    return this.computeTimetableForStudent(student.class_id, query);
+  }
+
+  private async computeTimetableForStudent(
+    classId: number | null,
+    query: GetMyTimetableQueryDto,
+  ) {
+    if (classId === null) {
       throw new UnprocessableEntityException({
         message: 'You have not been assigned to a class yet',
         errorCode: 'CLASS_NOT_ASSIGNED',
@@ -457,12 +485,12 @@ export class TimetableService {
     }
 
     const klass = await this.prisma.classes.findUnique({
-      where: { id: student.class_id },
+      where: { id: classId },
     });
 
     const rows = await this.prisma.timetable_slots.findMany({
       where: {
-        class_id: student.class_id,
+        class_id: classId,
         ...(klass?.current_semester != null && {
           semester: klass.current_semester,
         }),

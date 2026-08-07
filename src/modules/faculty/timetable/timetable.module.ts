@@ -21,5 +21,6 @@ import { MeFacultyAcademicCalendarController } from './me-faculty-academic-calen
     MeFacultyAcademicCalendarController,
   ],
   providers: [TimetableService],
+  exports: [TimetableService],
 })
 export class TimetableModule {}

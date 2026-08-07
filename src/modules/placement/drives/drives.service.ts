@@ -242,11 +242,15 @@ export class DrivesService {
   /** GET /drives/student/upcoming — drives still in progress (not yet placed/rejected) for this student. */
   async getUpcomingForStudent(user: JwtPayload) {
     const student = await this.findStudentOrThrow(user.sub);
+    return this.getUpcomingForStudentId(student.id);
+  }
 
+  /** Parent-facing (GET /me/children/:studentId/upcoming-drives) — same shape, resolved for an explicit studentId. */
+  async getUpcomingForStudentId(studentId: number) {
     const applications = await this.prisma.student_drive_applications.findMany(
       {
         where: {
-          student_id: student.id,
+          student_id: studentId,
           status: { notIn: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
         },
         include: { placement_drives: { include: { companies: true } } },
@@ -261,6 +265,11 @@ export class DrivesService {
   async getHistoryForStudent(user: JwtPayload) {
     const student = await this.findStudentOrThrow(user.sub);
     return this.buildHistoryForStudentId(student.id);
+  }
+
+  /** Parent-facing (GET /me/children/:studentId/placement-history) — same shape/logic as the student's own history. */
+  async getPlacementHistoryForStudentId(studentId: number) {
+    return this.buildHistoryForStudentId(studentId);
   }
 
   private async buildHistoryForStudentId(studentId: number) {
