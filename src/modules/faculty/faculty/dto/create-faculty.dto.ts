@@ -10,6 +10,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { CreateSensitiveInfoDto } from './create-sensitive-info.dto';
+import { FacultyExtendedFieldsDto } from './faculty-extended-fields.dto';
 
 /**
  * POST /faculty (Admin only).
@@ -17,7 +18,7 @@ import { CreateSensitiveInfoDto } from './create-sensitive-info.dto';
  * record in a single transaction. `email` becomes the new faculty's login;
  * a temporary password is generated server-side and returned once in the response.
  */
-export class CreateFacultyDto {
+export class CreateFacultyDto extends FacultyExtendedFieldsDto {
   @IsEmail({}, { message: 'Please provide a valid email address' })
   email: string;
 
