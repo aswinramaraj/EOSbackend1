@@ -75,16 +75,19 @@ describe('StudentLeavesService', () => {
     it('throws 404 when the caller has no faculty profile', async () => {
       prisma.faculty.findUnique.mockResolvedValue(null);
 
-      await expect(service.findAll({ limit: 20, page: 1 } as any, 1)).rejects.toThrow(
-        'Faculty profile not found for the authenticated user',
-      );
+      await expect(
+        service.findAll({ limit: 20, page: 1 } as any, { sub: 1, role: 'faculty' } as any),
+      ).rejects.toThrow('Faculty profile not found for the authenticated user');
     });
 
     it('returns an empty page (not an error) when the faculty mentors no class', async () => {
       prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
       prisma.class_mentors.findMany.mockResolvedValue([]);
 
-      const result = await service.findAll({ limit: 20, page: 1 } as any, 1);
+      const result = await service.findAll(
+        { limit: 20, page: 1 } as any,
+        { sub: 1, role: 'faculty' } as any,
+      );
 
       expect(result.data).toEqual([]);
       expect(result.meta.total).toBe(0);
@@ -102,7 +105,7 @@ describe('StudentLeavesService', () => {
 
       const result = await service.findAll(
         { limit: 20, page: 1, skip: 0 } as any,
-        1,
+        { sub: 1, role: 'faculty' } as any,
       );
 
       const [findManyArgs] = prisma.student_leaves.findMany.mock.calls[0] as [
@@ -140,7 +143,10 @@ describe('StudentLeavesService', () => {
       ]);
       prisma.student_leaves.count.mockResolvedValue(1);
 
-      const result = await service.findAll({ limit: 20, page: 1 } as any, 1);
+      const result = await service.findAll(
+        { limit: 20, page: 1 } as any,
+        { sub: 1, role: 'faculty' } as any,
+      );
 
       expect(result.data[0].student).toMatchObject({
         name: 'arjun@sece.ac.in',

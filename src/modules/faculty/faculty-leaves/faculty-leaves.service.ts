@@ -23,7 +23,13 @@ const FACULTY_LEAVE_SELECT = {
   hr_approval_status: true,
   created_at: true,
   faculty: {
-    select: { id: true, first_name: true, last_name: true, designation: true },
+    select: {
+      id: true,
+      first_name: true,
+      last_name: true,
+      designation: true,
+      departments: { select: { id: true, name: true, code: true } },
+    },
   },
 } as const;
 
@@ -40,6 +46,7 @@ interface FacultyLeaveRow {
     first_name: string;
     last_name: string;
     designation: string;
+    departments: { id: number; name: string; code: string } | null;
   };
 }
 
@@ -79,9 +86,19 @@ export class FacultyLeavesService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** POST /faculty-leaves (Faculty only — always for the caller's own faculty record). */
-  async create(dto: CreateFacultyLeafDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  /**
+   * POST /faculty-leaves (Faculty or HoD — always for the caller's own
+   * faculty record).
+   *
+   * An HoD's own leave has no one to fill the HoD-review stage (they can't
+   * review their own request, and this module has no "escalate to a higher
+   * HoD" concept) - so for an HoD-created request, hod_approval_status is
+   * set to 'approved' immediately at creation, sending it straight to HR
+   * Payroll, per the explicit requirement that an HoD's own leave/OD skips
+   * the HoD stage entirely.
+   */
+  async create(dto: CreateFacultyLeafDto, currentUser: JwtPayload) {
+    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
 
     const fromDate = new Date(dto.from_date);
     const toDate = new Date(dto.to_date);
@@ -103,6 +120,8 @@ export class FacultyLeavesService {
         from_date: fromDate,
         to_date: toDate,
         reason: dto.reason,
+        hod_approval_status:
+          currentUser.role === ROLES.HOD ? 'approved' : undefined,
       },
       select: FACULTY_LEAVE_SELECT,
     });
@@ -111,7 +130,18 @@ export class FacultyLeavesService {
     return toResponse(leave);
   }
 
-  /** GET /faculty-leaves (Faculty/HoD/HR Payroll). Faculty is always scoped to their own records. */
+  /**
+   * GET /faculty-leaves (Faculty/HoD/HR Payroll). Faculty is always scoped
+   * to their own records. HoD is scoped to their own department (previously
+   * unscoped - a HoD could see every department's faculty leave requests,
+   * not just their own). HR Payroll only ever sees requests the HoD has
+   * already approved - a request still awaiting HoD review has nothing for
+   * HR to act on yet (update() below 409s "HR approval requires HoD
+   * approval first" anyway), so it's hidden from HR's list entirely rather
+   * than shown as an unactionable "pending" row. This overrides whatever
+   * hod_approval_status the HR caller passes - it is never allowed to see
+   * pending/rejected-by-HoD requests.
+   */
   async findAll(query: ListFacultyLeafQueryDto, currentUser: JwtPayload) {
     const where: Record<string, unknown> = {
       faculty_id: query.faculty_id,
@@ -122,6 +152,11 @@ export class FacultyLeavesService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      where.faculty = { department_id: hod.department_id };
+    } else if (currentUser.role === ROLES.HR_PAYROLL) {
+      where.hod_approval_status = 'approved';
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -156,6 +191,13 @@ export class FacultyLeavesService {
           'You may only view your own leave requests',
         );
       }
+    } else if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (leave.faculty.departments?.id !== hod.department_id) {
+        throw new ForbiddenException(
+          'You may only view leave requests from your own department',
+        );
+      }
     }
 
     return toResponse(leave);
@@ -184,6 +226,22 @@ export class FacultyLeavesService {
     } = {};
 
     if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (existing.faculty_id === hod.id) {
+        throw new ForbiddenException({
+          message: 'You cannot review your own leave request',
+          errorCode: 'CANNOT_REVIEW_OWN_REQUEST',
+        });
+      }
+      const requestingFaculty = await this.prisma.faculty.findUnique({
+        where: { id: existing.faculty_id },
+        select: { department_id: true },
+      });
+      if (requestingFaculty?.department_id !== hod.department_id) {
+        throw new ForbiddenException(
+          'You may only approve leave requests from your own department',
+        );
+      }
       if (dto.hr_approval_status !== undefined) {
         throw new ForbiddenException('HoD may only set hod_approval_status');
       }

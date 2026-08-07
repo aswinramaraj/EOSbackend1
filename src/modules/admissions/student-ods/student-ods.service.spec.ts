@@ -14,9 +14,18 @@ describe('StudentOdsService', () => {
     class_mentors: { findMany: jest.Mock; findFirst: jest.Mock };
     od_requests: {
       findUnique: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
       findMany: jest.Mock;
       count: jest.Mock;
       update: jest.Mock;
+    };
+    od_team_members: { findMany: jest.Mock };
+    classes: { findMany: jest.Mock };
+    od_request_hod_approvals: {
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      createMany: jest.Mock;
+      updateMany: jest.Mock;
     };
     $transaction: jest.Mock;
   };
@@ -55,9 +64,18 @@ describe('StudentOdsService', () => {
       class_mentors: { findMany: jest.fn(), findFirst: jest.fn() },
       od_requests: {
         findUnique: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
         findMany: jest.fn(),
         count: jest.fn(),
         update: jest.fn(),
+      },
+      od_team_members: { findMany: jest.fn().mockResolvedValue([]) },
+      classes: { findMany: jest.fn().mockResolvedValue([]) },
+      od_request_hod_approvals: {
+        findMany: jest.fn(),
+        findFirst: jest.fn(),
+        createMany: jest.fn(),
+        updateMany: jest.fn(),
       },
       $transaction: jest.fn((queries: Promise<unknown>[]) => Promise.all(queries)),
     };
@@ -80,16 +98,19 @@ describe('StudentOdsService', () => {
     it('throws 404 when the caller has no faculty profile', async () => {
       prisma.faculty.findUnique.mockResolvedValue(null);
 
-      await expect(service.findAll({ limit: 20, page: 1 } as any, 1)).rejects.toThrow(
-        'Faculty profile not found for the authenticated user',
-      );
+      await expect(
+        service.findAll({ limit: 20, page: 1 } as any, { sub: 1, role: 'faculty' } as any),
+      ).rejects.toThrow('Faculty profile not found for the authenticated user');
     });
 
     it('returns an empty page (not an error) when the faculty mentors no class', async () => {
       prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
       prisma.class_mentors.findMany.mockResolvedValue([]);
 
-      const result = await service.findAll({ limit: 20, page: 1 } as any, 1);
+      const result = await service.findAll(
+        { limit: 20, page: 1 } as any,
+        { sub: 1, role: 'faculty' } as any,
+      );
 
       expect(result.data).toEqual([]);
       expect(result.meta.total).toBe(0);
@@ -107,7 +128,7 @@ describe('StudentOdsService', () => {
 
       const result = await service.findAll(
         { limit: 20, page: 1, skip: 0 } as any,
-        1,
+        { sub: 1, role: 'faculty' } as any,
       );
 
       const [findManyArgs] = prisma.od_requests.findMany.mock.calls[0] as [
@@ -154,7 +175,10 @@ describe('StudentOdsService', () => {
       ]);
       prisma.od_requests.count.mockResolvedValue(1);
 
-      const result = await service.findAll({ limit: 20, page: 1 } as any, 1);
+      const result = await service.findAll(
+        { limit: 20, page: 1 } as any,
+        { sub: 1, role: 'faculty' } as any,
+      );
 
       expect(result.data[0]).toMatchObject({
         faculty_guide_name: null,

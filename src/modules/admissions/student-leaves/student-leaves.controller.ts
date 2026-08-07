@@ -32,15 +32,18 @@ export class StudentLeavesController {
     return this.studentLeavesService.create(createStudentLeafDto);
   }
 
-  /** GET /api/v1/me/student-leaves — Faculty only. The mentor's review queue. */
+  /**
+   * GET /api/v1/me/student-leaves — Faculty (mentor's review queue) or
+   * HoD (own-department queue, faculty_approved/hod_approved/rejected only).
+   */
   @Get('student-leaves')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   findAll(
     @Query() query: ListStudentLeaveQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.studentLeavesService.findAll(query, user.sub);
+    return this.studentLeavesService.findAll(query, user);
   }
 
   @Get('student-leaves/:id')
