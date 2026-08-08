@@ -45,9 +45,13 @@ import { AssignmentsModule } from './modules/faculty/assignments/assignments.mod
 import { AttendanceModule } from './modules/faculty/attendance/attendance.module';
 import { ClassMentorsModule } from './modules/faculty/class-mentors/class-mentors.module';
 import { ExamMarksModule } from './modules/faculty/exam-marks/exam-marks.module';
+import { FacultyAttendanceModule } from './modules/faculty/faculty-attendance/faculty-attendance.module';
+import { FacultyFilesModule } from './modules/faculty/faculty-files/faculty-files.module';
+import { FacultyIdCardModule } from './modules/faculty/faculty-id-card/faculty-id-card.module';
 import { FacultyLeavesModule } from './modules/faculty/faculty-leaves/faculty-leaves.module';
 import { FacultyOdModule } from './modules/faculty/faculty-od/faculty-od.module';
 import { FacultyMappingModule } from './modules/faculty/faculty-mapping/faculty-mapping.module';
+import { FacultyVerificationModule } from './modules/faculty/faculty-verification/faculty-verification.module';
 import { FacultyModule } from './modules/faculty/faculty/faculty.module';
 import { HolidaySlotsModule } from './modules/faculty/holiday-slots/holiday-slots.module';
 import { HrPayrollModule } from './modules/faculty/hr-payroll/hr-payroll.module';
@@ -171,9 +175,13 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     AttendanceModule,
     ClassMentorsModule,
     ExamMarksModule,
+    FacultyAttendanceModule,
+    FacultyFilesModule,
+    FacultyIdCardModule,
     FacultyLeavesModule,
     FacultyOdModule,
     FacultyMappingModule,
+    FacultyVerificationModule,
     FacultyModule,
     HolidaySlotsModule,
     HrPayrollModule,
