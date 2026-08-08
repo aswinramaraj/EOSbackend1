@@ -32,15 +32,18 @@ export class StudentLeavesController {
     return this.studentLeavesService.create(createStudentLeafDto);
   }
 
-  /** GET /api/v1/student-leaves — Faculty only. The mentor's review queue. */
+  /**
+   * GET /api/v1/me/student-leaves — Faculty (mentor's review queue) or
+   * HoD (own-department queue, faculty_approved/hod_approved/rejected only).
+   */
   @Get('student-leaves')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   findAll(
     @Query() query: ListStudentLeaveQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.studentLeavesService.findAll(query, user.sub);
+    return this.studentLeavesService.findAll(query, user);
   }
 
   @Get('student-leaves/:id')
@@ -57,7 +60,7 @@ export class StudentLeavesController {
   }
 
   /**
-   * PATCH /api/v1/student-leaves/:id/faculty-approve — Faculty only (the
+   * PATCH /api/v1/me/student-leaves/:id/faculty-approve — Faculty only (the
    * student's assigned mentor). First stage of the two-stage approval chain.
    */
   @Patch('student-leaves/:id/faculty-approve')
@@ -72,7 +75,7 @@ export class StudentLeavesController {
   }
 
   /**
-   * PATCH /api/v1/student-leaves/:id/hod-approve — HoD only. Second (final)
+   * PATCH /api/v1/me/student-leaves/:id/hod-approve — HoD only. Second (final)
    * stage of the two-stage approval chain.
    */
   @Patch('student-leaves/:id/hod-approve')

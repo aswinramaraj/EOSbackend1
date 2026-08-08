@@ -6,7 +6,9 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { CreateStudentLeafDto } from './dto/create-student-leaf.dto';
 import { UpdateStudentLeafDto } from './dto/update-student-leaf.dto';
 import { ListStudentLeaveQueryDto } from './dto/list-student-leave-query.dto';
@@ -30,6 +32,12 @@ const STUDENT_LEAVE_SELECT = {
       class_id: true,
       soa_applications: { select: { first_name: true, last_name: true } },
       users: { select: { id: true, email: true } },
+      classes: {
+        select: {
+          section: true,
+          departments: { select: { name: true } },
+        },
+      },
     },
   },
 } as const;
@@ -50,6 +58,7 @@ interface StudentLeaveRow {
     class_id: number | null;
     soa_applications: { first_name: string; last_name: string | null } | null;
     users: { id: number; email: string };
+    classes: { section: string; departments: { name: string } } | null;
   };
 }
 
@@ -75,6 +84,8 @@ function toResponse(leave: StudentLeaveRow) {
       id: leave.students.id,
       student_id_no: leave.students.student_id_no,
       name: resolveStudentName(leave.students),
+      section: leave.students.classes?.section ?? null,
+      department_name: leave.students.classes?.departments.name ?? null,
     },
     from_date: leave.from_date,
     to_date: leave.to_date,
@@ -98,28 +109,54 @@ export class StudentLeavesService {
   }
 
   /**
-   * GET /student-leaves (Faculty only, for now) — the calling faculty's
-   * mentor-review queue: every leave request from a student in a class this
-   * faculty mentors, via class_mentors. A faculty who mentors no class gets
-   * an empty page rather than an error.
+   * GET /me/student-leaves (Faculty or HoD).
+   *
+   * Faculty: the calling faculty's mentor-review queue — every leave
+   * request from a student in a class this faculty mentors, via
+   * class_mentors. A faculty who mentors no class gets an empty page
+   * rather than an error.
+   *
+   * HoD: every leave request from a student in the HoD's own department,
+   * EXCLUDING status='pending' — those haven't even reached the mentor
+   * faculty yet, so they're not relevant to the HoD's queue at all (matches
+   * the two-stage chain: mentor first, HoD only once status='faculty_approved').
+   * If the caller doesn't filter by status, 'pending' is excluded by default
+   * for a HoD; an explicit status=pending request from a HoD still returns
+   * nothing (there's genuinely nothing there for them).
+   *
+   * student.section/department_name are included because a Class Mentor
+   * can mentor more than one class (class_mentors is one row per
+   * class_id, not capped at one) - without this, the mobile review queue
+   * would have no way to tell which section a given request belongs to
+   * when the mentor covers more than one.
    */
-  async findAll(query: ListStudentLeaveQueryDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  async findAll(query: ListStudentLeaveQueryDto, user: JwtPayload) {
+    let where: Record<string, unknown>;
 
-    const mentorClasses = await this.prisma.class_mentors.findMany({
-      where: { faculty_id: faculty.id },
-      select: { class_id: true },
-    });
-    const classIds = mentorClasses.map((m) => m.class_id);
+    if (user.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(user.sub);
+      where = {
+        status: query.status ?? { not: 'pending' },
+        students: { classes: { department_id: hod.department_id } },
+      };
+    } else {
+      const faculty = await this.resolveFacultyByUserId(user.sub);
 
-    if (classIds.length === 0) {
-      return paginate([], 0, query);
+      const mentorClasses = await this.prisma.class_mentors.findMany({
+        where: { faculty_id: faculty.id },
+        select: { class_id: true },
+      });
+      const classIds = mentorClasses.map((m) => m.class_id);
+
+      if (classIds.length === 0) {
+        return paginate([], 0, query);
+      }
+
+      where = {
+        status: query.status,
+        students: { class_id: { in: classIds } },
+      };
     }
-
-    const where = {
-      status: query.status,
-      students: { class_id: { in: classIds } },
-    };
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.student_leaves.findMany({

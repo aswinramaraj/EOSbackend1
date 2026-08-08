@@ -17,6 +17,11 @@ import type { JwtPayload } from '../../../auth/interfaces/jwt-payload.interface'
 export class StudentDrivesController {
   constructor(private readonly drivesService: DrivesService) {}
 
+  @Get('upcoming')
+  upcoming(@CurrentUser() user: JwtPayload) {
+    return this.drivesService.getUpcomingForStudent(user);
+  }
+
   @Get('history')
   history(@CurrentUser() user: JwtPayload) {
     return this.drivesService.getHistoryForStudent(user);

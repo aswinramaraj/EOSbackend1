@@ -12,6 +12,7 @@ import * as crypto from 'node:crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { JoinOdTeamDto } from './dto/join-od-team.dto';
 import { CreateOdRequestDto } from './dto/create-od-request.dto';
+import { toTimeDate, formatTime } from './od-time.util';
 
 function startOfToday(): Date {
   const now = new Date();
@@ -446,6 +447,7 @@ export class MeOdTeamsService {
    *                                  this code, kept for consistency with
    *                                  every sibling /me/* endpoint)
    *  404 TEAM_NOT_FOUND            – id doesn't match any od_teams row
+   *  404 FACULTY_NOT_FOUND         – faculty_guide_id doesn't match any faculty row
    *  403 NOT_TEAM_CREATOR          – caller isn't this team's creator
    *  409 REQUEST_ALREADY_SUBMITTED – od_teams.is_locked is already true
    *  422 INVALID_DATE_RANGE        – from_date in the past, or from_date > to_date
@@ -533,12 +535,33 @@ export class MeOdTeamsService {
       department_name: s.classes!.departments.name,
     }));
 
+    const fromTime = dto.from_time ? toTimeDate(dto.from_time) : null;
+    const toTime = dto.to_time ? toTimeDate(dto.to_time) : null;
+
+    let facultyGuideName: string | null = null;
+    if (dto.faculty_guide_id !== undefined) {
+      const guide = await this.prisma.faculty.findUnique({
+        where: { id: dto.faculty_guide_id },
+        select: { first_name: true, last_name: true },
+      });
+      if (!guide) {
+        throw new NotFoundException({
+          message: 'Faculty guide not found',
+          errorCode: 'FACULTY_NOT_FOUND',
+        });
+      }
+      facultyGuideName = `${guide.first_name} ${guide.last_name ?? ''}`.trim();
+    }
+
     const request = await this.insertOdRequest(
       userId,
       teamId,
       fromDate,
       toDate,
+      fromTime,
+      toTime,
       dto.reason,
+      dto.faculty_guide_id ?? null,
       hodApprovals,
     );
 
@@ -547,7 +570,11 @@ export class MeOdTeamsService {
       team_id: request.team_id,
       from_date: toDateOnly(request.from_date),
       to_date: toDateOnly(request.to_date),
+      from_time: formatTime(request.from_time),
+      to_time: formatTime(request.to_time),
       reason: request.reason,
+      faculty_guide_id: request.faculty_guide_id,
+      faculty_guide_name: facultyGuideName,
       mentor_approval_status: request.mentor_approval_status,
       hod_approvals: hodApprovals.map((a) => ({
         student_id: a.student_id,
@@ -563,7 +590,10 @@ export class MeOdTeamsService {
     teamId: number,
     fromDate: Date,
     toDate: Date,
-    reason: string | undefined,
+    fromTime: Date | null,
+    toTime: Date | null,
+    reason: string,
+    facultyGuideId: number | null,
     hodApprovals: { student_id: number; department_id: number }[],
   ) {
     try {
@@ -594,7 +624,10 @@ export class MeOdTeamsService {
             team_id: teamId,
             from_date: fromDate,
             to_date: toDate,
+            from_time: fromTime,
+            to_time: toTime,
             reason,
+            faculty_guide_id: facultyGuideId,
             mentor_approval_status: 'pending',
           },
         });

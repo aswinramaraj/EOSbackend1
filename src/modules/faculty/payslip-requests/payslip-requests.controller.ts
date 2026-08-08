@@ -30,9 +30,9 @@ export class PayslipRequestsController {
     private readonly payslipRequestsService: PayslipRequestsService,
   ) {}
 
-  /** POST /api/v1/payslip-requests — Faculty only. */
+  /** POST /api/v1/payslip-requests — Faculty or HoD, for the caller's own record. */
   @Post('payslip-requests')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   @HttpCode(HttpStatus.CREATED)
   create(
     @Body() dto: CreatePayslipRequestDto,
@@ -41,9 +41,9 @@ export class PayslipRequestsController {
     return this.payslipRequestsService.create(dto, user.sub);
   }
 
-  /** GET /api/v1/payslip-requests — HR Payroll (all) / Faculty (own only). */
+  /** GET /api/v1/payslip-requests — HR Payroll (all) / Faculty/HoD (own only). */
   @Get('payslip-requests')
-  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY)
+  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY, ROLES.HOD)
   findAll(
     @Query() query: ListPayslipRequestQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -51,9 +51,9 @@ export class PayslipRequestsController {
     return this.payslipRequestsService.findAll(query, user);
   }
 
-  /** GET /api/v1/payslip-requests/:id — HR Payroll (all) / Faculty (own only). */
+  /** GET /api/v1/payslip-requests/:id — HR Payroll (all) / Faculty/HoD (own only). */
   @Get('payslip-requests/:id')
-  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY)
+  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY, ROLES.HOD)
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -61,7 +61,10 @@ export class PayslipRequestsController {
     return this.payslipRequestsService.findOne(id, user);
   }
 
-  /** PATCH /api/v1/payslip-requests/:id — HR Payroll only. */
+  /**
+   * PATCH /api/v1/payslip-requests/:id — HR Payroll only. Marks the request
+   * 'processed' or 'rejected' directly - no file upload involved.
+   */
   @Patch('payslip-requests/:id')
   @Roles(ROLES.HR_PAYROLL)
   update(
@@ -71,9 +74,9 @@ export class PayslipRequestsController {
     return this.payslipRequestsService.update(id, dto);
   }
 
-  /** DELETE /api/v1/payslip-requests/:id — Faculty only, own request, only while still 'pending'. */
+  /** DELETE /api/v1/payslip-requests/:id — Faculty or HoD, own request, only while still 'pending'. */
   @Delete('payslip-requests/:id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

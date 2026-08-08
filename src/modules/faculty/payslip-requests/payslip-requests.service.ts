@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -21,6 +20,7 @@ const PAYSLIP_SELECT = {
   status: true,
   file_url: true,
   requested_at: true,
+  purpose: true,
   faculty: {
     select: { id: true, first_name: true, last_name: true, designation: true },
   },
@@ -33,6 +33,7 @@ interface PayslipRequestRow {
   status: string;
   file_url: string | null;
   requested_at: Date;
+  purpose: string | null;
   faculty: {
     id: number;
     first_name: string;
@@ -57,6 +58,7 @@ function toResponse(row: PayslipRequestRow) {
     status: row.status,
     file_url: row.file_url,
     requested_at: row.requested_at,
+    purpose: row.purpose,
     faculty: row.faculty,
   };
 }
@@ -93,7 +95,7 @@ export class PayslipRequestsService {
     }
 
     const request = await this.prisma.payslip_requests.create({
-      data: { faculty_id: faculty.id, year, month },
+      data: { faculty_id: faculty.id, year, month, purpose: dto.purpose },
       select: PAYSLIP_SELECT,
     });
 
@@ -116,7 +118,7 @@ export class PayslipRequestsService {
       where.month = month;
     }
 
-    if (currentUser.role === ROLES.FACULTY) {
+    if (currentUser.role === ROLES.FACULTY || currentUser.role === ROLES.HOD) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
     }
@@ -145,7 +147,7 @@ export class PayslipRequestsService {
       throw new NotFoundException('Payslip request not found');
     }
 
-    if (currentUser.role === ROLES.FACULTY) {
+    if (currentUser.role === ROLES.FACULTY || currentUser.role === ROLES.HOD) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       if (request.faculty.id !== faculty.id) {
         throw new ForbiddenException(
@@ -157,7 +159,12 @@ export class PayslipRequestsService {
     return toResponse(request);
   }
 
-  /** PATCH /payslip-requests/:id (HR Payroll only). */
+  /**
+   * PATCH /payslip-requests/:id (HR Payroll only). Marks the request
+   * 'processed' or 'rejected' directly - no file is required to approve.
+   * file_url stays whatever it already was (null unless set through some
+   * other means) - this endpoint never fabricates one.
+   */
   async update(id: number, dto: UpdatePayslipRequestDto) {
     const existing = await this.prisma.payslip_requests.findUnique({
       where: { id },
@@ -169,12 +176,6 @@ export class PayslipRequestsService {
     if (existing.status !== 'pending') {
       throw new ConflictException(
         'This payslip request has already been processed',
-      );
-    }
-
-    if (dto.status === 'processed' && !dto.file_url) {
-      throw new BadRequestException(
-        'file_url is required when marking a request as processed',
       );
     }
 

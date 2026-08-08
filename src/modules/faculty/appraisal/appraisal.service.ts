@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/modules/storage/storage.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
@@ -16,6 +17,7 @@ import {
   AppraisalEntryScoreDto,
 } from './dto/update-appraisal.dto';
 import { ListAppraisalQueryDto } from './dto/list-appraisal-query.dto';
+import { ListAppraisalCriteriaQueryDto } from './dto/list-appraisal-criteria-query.dto';
 
 const APPRAISAL_SELECT = {
   id: true,
@@ -25,7 +27,14 @@ const APPRAISAL_SELECT = {
   management_approved_at: true,
   created_at: true,
   faculty: {
-    select: { id: true, first_name: true, last_name: true, designation: true },
+    select: {
+      id: true,
+      first_name: true,
+      last_name: true,
+      designation: true,
+      department_id: true,
+      departments: { select: { name: true } },
+    },
   },
   users_appraisal_requests_hod_reviewed_byTousers: {
     select: { id: true, email: true },
@@ -48,6 +57,17 @@ const APPRAISAL_SELECT = {
       },
     },
   },
+  appraisal_attachments: {
+    select: {
+      id: true,
+      division_id: true,
+      file_url: true,
+      file_name: true,
+      storage_path: true,
+      uploaded_at: true,
+    },
+    orderBy: { uploaded_at: 'asc' },
+  },
 } as const;
 
 interface AppraisalRequestRow {
@@ -62,6 +82,8 @@ interface AppraisalRequestRow {
     first_name: string;
     last_name: string;
     designation: string;
+    department_id: number;
+    departments: { name: string };
   };
   users_appraisal_requests_hod_reviewed_byTousers: {
     id: number;
@@ -82,6 +104,14 @@ interface AppraisalRequestRow {
       appraisal_divisions: { id: number; name: string };
     };
   }>;
+  appraisal_attachments: Array<{
+    id: number;
+    division_id: number;
+    file_url: string;
+    file_name: string;
+    storage_path: string;
+    uploaded_at: Date;
+  }>;
 }
 
 function toResponse(row: AppraisalRequestRow) {
@@ -89,7 +119,13 @@ function toResponse(row: AppraisalRequestRow) {
     id: row.id,
     academic_year: row.academic_year,
     status: row.status,
-    faculty: row.faculty,
+    faculty: {
+      id: row.faculty.id,
+      first_name: row.faculty.first_name,
+      last_name: row.faculty.last_name,
+      designation: row.faculty.designation,
+      department_name: row.faculty.departments.name,
+    },
     hod_reviewer: row.users_appraisal_requests_hod_reviewed_byTousers,
     hod_reviewed_at: row.hod_reviewed_at,
     management_approver:
@@ -107,6 +143,13 @@ function toResponse(row: AppraisalRequestRow) {
         division: entry.appraisal_criteria.appraisal_divisions,
       },
     })),
+    attachments: row.appraisal_attachments.map((attachment) => ({
+      id: attachment.id,
+      division_id: attachment.division_id,
+      file_url: attachment.file_url,
+      file_name: attachment.file_name,
+      uploaded_at: attachment.uploaded_at,
+    })),
   };
 }
 
@@ -114,15 +157,22 @@ function toResponse(row: AppraisalRequestRow) {
 export class AppraisalService {
   private readonly logger = new Logger(AppraisalService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   /**
-   * POST /appraisal (Faculty only).
+   * POST /appraisal (Faculty or HoD).
    * Creates the header (appraisal_requests) and its line items
-   * (appraisal_entries) in a single transaction.
+   * (appraisal_entries) in a single transaction. An HoD's own submission
+   * has no one to fill the HoD-review stage (they can't review their own
+   * appraisal - see update()'s self-review guard), so it's created already
+   * at 'hod_reviewed' instead of 'submitted', skipping straight to HR
+   * scoring - same "goes directly to HR" treatment as Leave/OD.
    */
-  async create(dto: CreateAppraisalDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  async create(dto: CreateAppraisalDto, currentUser: JwtPayload) {
+    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
 
     const existing = await this.prisma.appraisal_requests.findFirst({
       where: { faculty_id: faculty.id, academic_year: dto.academic_year },
@@ -161,9 +211,21 @@ export class AppraisalService {
       );
     }
 
+    const isHodSelfSubmission = currentUser.role === ROLES.HOD;
+
     const request = await this.prisma.$transaction(async (tx) => {
       const header = await tx.appraisal_requests.create({
-        data: { faculty_id: faculty.id, academic_year: dto.academic_year },
+        data: {
+          faculty_id: faculty.id,
+          academic_year: dto.academic_year,
+          ...(isHodSelfSubmission
+            ? {
+                status: 'hod_reviewed' as const,
+                hod_reviewed_by: currentUser.sub,
+                hod_reviewed_at: new Date(),
+              }
+            : {}),
+        },
       });
 
       await tx.appraisal_entries.createMany({
@@ -186,7 +248,66 @@ export class AppraisalService {
     return toResponse(request);
   }
 
-  /** GET /appraisal (Faculty/HoD/HR Payroll). Faculty is always scoped to their own records. */
+  /**
+   * GET /appraisal-criteria?academic_year= (Faculty/HoD/HR Payroll).
+   * Reference data: the divisions/criteria a faculty member submits entries
+   * against on POST /appraisal. Defaults to the most recent academic_year
+   * present in appraisal_criteria when none is given (lexical max is safe
+   * here since the format is fixed-width "YYYY-YYYY").
+   */
+  async findCriteria(query: ListAppraisalCriteriaQueryDto) {
+    let academicYear = query.academic_year;
+    if (!academicYear) {
+      const latest = await this.prisma.appraisal_criteria.findFirst({
+        orderBy: { academic_year: 'desc' },
+        select: { academic_year: true },
+      });
+      academicYear = latest?.academic_year;
+    }
+
+    if (!academicYear) {
+      return { academic_year: null, divisions: [] };
+    }
+
+    const criteria = await this.prisma.appraisal_criteria.findMany({
+      where: { academic_year: academicYear },
+      orderBy: [{ division_id: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        criteria_name: true,
+        max_score: true,
+        appraisal_divisions: { select: { id: true, name: true } },
+      },
+    });
+
+    const divisionsById = new Map<
+      number,
+      { id: number; name: string; criteria: Array<{ id: number; name: string; max_score: unknown }> }
+    >();
+    for (const c of criteria) {
+      const division = divisionsById.get(c.appraisal_divisions.id) ?? {
+        id: c.appraisal_divisions.id,
+        name: c.appraisal_divisions.name,
+        criteria: [],
+      };
+      division.criteria.push({ id: c.id, name: c.criteria_name, max_score: c.max_score });
+      divisionsById.set(division.id, division);
+    }
+
+    return { academic_year: academicYear, divisions: Array.from(divisionsById.values()) };
+  }
+
+  /**
+   * GET /appraisal (Faculty/HoD/HR Payroll). Faculty is always scoped to
+   * their own records. HoD is always scoped to their own department (via
+   * their own faculty row's department_id - a HoD account has a faculty
+   * row too, designation "HOD & Professor" in the seed data). HR Payroll
+   * is deliberately left unscoped - HR's "Appraisal" page shows which
+   * faculty have applied (institution-wide), not HR's own appraisal (HR
+   * has no Apply tab at all on that screen - see AppraisalRequestScreen's
+   * canApply flag), and scoring/approval happens after a request has
+   * already left the department.
+   */
   async findAll(query: ListAppraisalQueryDto, currentUser: JwtPayload) {
     const where: Record<string, unknown> = {
       faculty_id: query.faculty_id,
@@ -197,6 +318,9 @@ export class AppraisalService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      where.faculty = { department_id: hod.department_id };
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -213,7 +337,10 @@ export class AppraisalService {
     return paginate(rows.map(toResponse), total, query);
   }
 
-  /** GET /appraisal/:id (Faculty/HoD/HR Payroll). Faculty may only view their own. */
+  /**
+   * GET /appraisal/:id (Faculty/HoD/HR Payroll). Faculty may only view
+   * their own; HoD may only view requests from their own department.
+   */
   async findOne(id: number, currentUser: JwtPayload) {
     const request = await this.prisma.appraisal_requests.findUnique({
       where: { id },
@@ -229,6 +356,13 @@ export class AppraisalService {
       if (request.faculty.id !== faculty.id) {
         throw new ForbiddenException(
           'You may only view your own appraisal requests',
+        );
+      }
+    } else if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (request.faculty.department_id !== hod.department_id) {
+        throw new ForbiddenException(
+          'You may only view appraisal requests from your own department',
         );
       }
     }
@@ -247,12 +381,29 @@ export class AppraisalService {
   async update(id: number, dto: UpdateAppraisalDto, currentUser: JwtPayload) {
     const existing = await this.prisma.appraisal_requests.findUnique({
       where: { id },
+      include: { faculty: { select: { department_id: true } } },
     });
     if (!existing) {
       throw new NotFoundException('Appraisal request not found');
     }
 
     if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      // An HoD can now submit their OWN appraisal too (see create()) -
+      // self-review would otherwise be possible since faculty_id === hod.id
+      // is a valid state. Block it outright rather than silently allow an
+      // HoD to approve their own request.
+      if (existing.faculty_id === hod.id) {
+        throw new ForbiddenException({
+          message: 'You cannot review your own appraisal request',
+          errorCode: 'CANNOT_REVIEW_OWN_REQUEST',
+        });
+      }
+      if (existing.faculty.department_id !== hod.department_id) {
+        throw new ForbiddenException(
+          'You may only review appraisal requests from your own department',
+        );
+      }
       return this.applyHodReview(id, existing.status, dto, currentUser.sub);
     }
 
@@ -287,6 +438,115 @@ export class AppraisalService {
 
     this.logger.log(`Appraisal request deleted: id=${id}`);
     return { id, deleted: true };
+  }
+
+  /**
+   * POST /appraisal_requests/:id/attachments (Faculty only — own request,
+   * only while still 'submitted'). Files are uploaded to Supabase Storage
+   * and only the resulting URL/name are persisted. Attachments belong to
+   * the division as a whole, not a specific criteria_id/entry - there is no
+   * FK to appraisal_entries.
+   */
+  async addAttachments(
+    requestId: number,
+    divisionId: number,
+    files: Array<{ buffer: Buffer; originalname: string; mimetype: string }>,
+    userId: number,
+  ) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const existing = await this.prisma.appraisal_requests.findUnique({
+      where: { id: requestId },
+    });
+    if (!existing) {
+      throw new NotFoundException('Appraisal request not found');
+    }
+    if (existing.faculty_id !== faculty.id) {
+      throw new ForbiddenException(
+        'You may only attach files to your own appraisal requests',
+      );
+    }
+    if (existing.status !== 'submitted') {
+      throw new ConflictException(
+        'Files can only be attached while the request is still in the submitted stage',
+      );
+    }
+
+    const division = await this.prisma.appraisal_divisions.findUnique({
+      where: { id: divisionId },
+    });
+    if (!division) {
+      throw new NotFoundException('Appraisal division not found');
+    }
+
+    const uploaded = await Promise.all(
+      files.map(async (file) => {
+        const path = `${requestId}/${divisionId}/${Date.now()}-${file.originalname}`;
+        const { url } = await this.storage.upload(file.buffer, path, file.mimetype);
+        return { file_url: url, file_name: file.originalname, storage_path: path };
+      }),
+    );
+
+    await this.prisma.appraisal_attachments.createMany({
+      data: uploaded.map((u) => ({
+        appraisal_request_id: requestId,
+        division_id: divisionId,
+        file_url: u.file_url,
+        file_name: u.file_name,
+        storage_path: u.storage_path,
+      })),
+    });
+
+    this.logger.log(
+      `${uploaded.length} attachment(s) added to appraisal request ${requestId}, division ${divisionId}`,
+    );
+
+    const request = await this.prisma.appraisal_requests.findUniqueOrThrow({
+      where: { id: requestId },
+      select: APPRAISAL_SELECT,
+    });
+    return toResponse(request);
+  }
+
+  /** DELETE /appraisal_requests/:id/attachments/:attachmentId (Faculty only — own request, only while still 'submitted'). */
+  async removeAttachment(
+    requestId: number,
+    attachmentId: number,
+    userId: number,
+  ) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const request = await this.prisma.appraisal_requests.findUnique({
+      where: { id: requestId },
+    });
+    if (!request) {
+      throw new NotFoundException('Appraisal request not found');
+    }
+    if (request.faculty_id !== faculty.id) {
+      throw new ForbiddenException(
+        'You may only remove attachments from your own appraisal requests',
+      );
+    }
+    if (request.status !== 'submitted') {
+      throw new ConflictException(
+        'Attachments can only be removed while the request is still in the submitted stage',
+      );
+    }
+
+    const attachment = await this.prisma.appraisal_attachments.findUnique({
+      where: { id: attachmentId },
+    });
+    if (!attachment || attachment.appraisal_request_id !== requestId) {
+      throw new NotFoundException('Attachment not found on this request');
+    }
+
+    await this.prisma.appraisal_attachments.delete({
+      where: { id: attachmentId },
+    });
+    await this.storage.remove(attachment.storage_path);
+
+    this.logger.log(`Attachment ${attachmentId} removed from appraisal request ${requestId}`);
+    return { id: attachmentId, deleted: true };
   }
 
   private async applyHodReview(

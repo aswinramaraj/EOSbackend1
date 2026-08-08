@@ -394,6 +394,8 @@ interface MenteeClassRow {
     id: number;
     section: string;
     departments: { id: number; name: string; code: string };
+    courses: { code: string } | null;
+    batches: { name: string };
     students: {
       id: number;
       student_id_no: string;
@@ -403,9 +405,22 @@ interface MenteeClassRow {
   };
 }
 
+interface ClassLabelInput {
+  section: string;
+  departments: { code: string };
+  courses: { code: string } | null;
+  batches: { name: string };
+}
+
+function classLabel(klass: ClassLabelInput): string {
+  const courseCode = klass.courses?.code ?? klass.departments.code;
+  return `${courseCode}-${klass.section} (${klass.batches.name})`;
+}
+
 function toMenteeClassResponse(row: MenteeClassRow) {
   return {
     class_id: row.classes.id,
+    label: classLabel(row.classes),
     section: row.classes.section,
     department: row.classes.departments,
     academic_year: row.academic_year,
@@ -415,6 +430,64 @@ function toMenteeClassResponse(row: MenteeClassRow) {
       name: resolveStudentName(student),
     })),
   };
+}
+
+// Anna University-style absolute grading bands, same convention already
+// used for the "Subject Records" feature (subject-records.service.ts) -
+// there is no stored letter-grade column anywhere, so this is re-derived
+// from marks_obtained/max_marks here too.
+const GRADE_POINTS: { min: number; point: number }[] = [
+  { min: 91, point: 10 }, // O
+  { min: 81, point: 9 }, // A+
+  { min: 71, point: 8 }, // A
+  { min: 61, point: 7 }, // B+
+  { min: 50, point: 6 }, // B
+  { min: 0, point: 0 }, // RA (arrear)
+];
+
+function gradePointForPercentage(percentage: number): number {
+  const band = GRADE_POINTS.find((b) => percentage >= b.min);
+  return band ? band.point : 0;
+}
+
+interface ClassResultStudentRow {
+  id: number;
+  student_id_no: string;
+  roll_no: string | null;
+  register_no: string | null;
+  soa_applications: { first_name: string; last_name: string | null } | null;
+  users: { email: string };
+  student_family_details: {
+    father_name: string | null;
+    father_mobile: string | null;
+    mother_name: string | null;
+    mother_mobile: string | null;
+  } | null;
+  student_contacts: { student_mobile: string | null } | null;
+}
+
+function resolveGuardian(student: ClassResultStudentRow): {
+  guardian_name: string | null;
+  guardian_relation: 'Father' | 'Mother' | null;
+} {
+  const family = student.student_family_details;
+  if (family?.father_name) {
+    return { guardian_name: family.father_name, guardian_relation: 'Father' };
+  }
+  if (family?.mother_name) {
+    return { guardian_name: family.mother_name, guardian_relation: 'Mother' };
+  }
+  return { guardian_name: null, guardian_relation: null };
+}
+
+function resolveContact(student: ClassResultStudentRow): string | null {
+  const family = student.student_family_details;
+  return (
+    student.student_contacts?.student_mobile ??
+    family?.father_mobile ??
+    family?.mother_mobile ??
+    null
+  );
 }
 
 @Injectable()
@@ -445,6 +518,8 @@ export class ClassMentorsService {
             id: true,
             section: true,
             departments: { select: { id: true, name: true, code: true } },
+            courses: { select: { code: true } },
+            batches: { select: { name: true } },
             students: { select: MENTEE_CLASS_STUDENT_SELECT },
           },
         },
@@ -452,6 +527,170 @@ export class ClassMentorsService {
     });
 
     return rows.map(toMenteeClassResponse);
+  }
+
+  /**
+   * GET /me/mentee-classes/:class_id/students (Faculty — mentor of this
+   * class only, via class_mentors).
+   *
+   * Powers the "Class Result" screen: full roster + per-student attendance
+   * %, CGPA and arrears. Neither CGPA nor "arrears" exist as stored columns
+   * anywhere in the schema (confirmed: no cgpa/arrear/backlog model) - both
+   * are derived here from exam_marks the same way Subject Records derives
+   * its grade distribution (marks_obtained/max_marks -> Anna University
+   * absolute-grading bands), weighted by subjects.credits where set
+   * (default 1 for subjects with no credits configured). This is a
+   * best-effort approximation over whatever exam_marks rows exist for the
+   * student across every exam they have marks in - not a substitute for an
+   * official semester result computation, which this schema has no model for.
+   */
+  async getMenteeClassResult(classId: number, userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mentorMapping = await this.prisma.class_mentors.findFirst({
+      where: { class_id: classId, faculty_id: faculty.id },
+      orderBy: { id: 'desc' },
+      select: {
+        academic_year: true,
+        faculty: { select: { id: true, first_name: true, last_name: true } },
+      },
+    });
+    if (!mentorMapping) {
+      throw new ForbiddenException({
+        message: 'You are not the mentor for this class',
+        errorCode: 'NOT_THE_MENTOR',
+      });
+    }
+
+    const klass = await this.prisma.classes.findUnique({
+      where: { id: classId },
+      select: {
+        id: true,
+        section: true,
+        departments: { select: { id: true, name: true, code: true } },
+        courses: { select: { code: true } },
+        batches: { select: { name: true } },
+      },
+    });
+    if (!klass) {
+      throw new NotFoundException({
+        message: 'Class not found',
+        errorCode: 'CLASS_NOT_FOUND',
+      });
+    }
+
+    const students = await this.prisma.students.findMany({
+      where: { class_id: classId },
+      orderBy: { roll_no: 'asc' },
+      select: {
+        id: true,
+        student_id_no: true,
+        roll_no: true,
+        register_no: true,
+        soa_applications: { select: { first_name: true, last_name: true } },
+        users: { select: { email: true } },
+        student_family_details: {
+          select: {
+            father_name: true,
+            father_mobile: true,
+            mother_name: true,
+            mother_mobile: true,
+          },
+        },
+        student_contacts: { select: { student_mobile: true } },
+      },
+    });
+    const studentIds = students.map((s) => s.id);
+
+    const [attendanceRecords, marks] = await Promise.all([
+      this.prisma.attendance_records.findMany({
+        where: { student_id: { in: studentIds } },
+        select: { student_id: true, status: true },
+      }),
+      this.prisma.exam_marks.findMany({
+        where: {
+          student_id: { in: studentIds },
+          marks_obtained: { not: null },
+        },
+        select: {
+          student_id: true,
+          marks_obtained: true,
+          max_marks: true,
+          exam_subject_mapping: {
+            select: { subjects: { select: { credits: true } } },
+          },
+        },
+      }),
+    ]);
+
+    const attendanceByStudent = new Map<
+      number,
+      { total: number; present: number }
+    >();
+    for (const record of attendanceRecords) {
+      const entry = attendanceByStudent.get(record.student_id) ?? {
+        total: 0,
+        present: 0,
+      };
+      entry.total += 1;
+      if (record.status === 'present') entry.present += 1;
+      attendanceByStudent.set(record.student_id, entry);
+    }
+
+    const resultByStudent = new Map<
+      number,
+      { weightedPoints: number; totalCredits: number; arrears: number }
+    >();
+    for (const mark of marks) {
+      const entry = resultByStudent.get(mark.student_id) ?? {
+        weightedPoints: 0,
+        totalCredits: 0,
+        arrears: 0,
+      };
+      const obtained = Number(mark.marks_obtained);
+      const max = Number(mark.max_marks);
+      const percentage = max > 0 ? (obtained / max) * 100 : 0;
+      const credits = mark.exam_subject_mapping.subjects.credits ?? 1;
+      const gradePoint = gradePointForPercentage(percentage);
+
+      entry.weightedPoints += gradePoint * credits;
+      entry.totalCredits += credits;
+      if (gradePoint === 0) entry.arrears += 1;
+      resultByStudent.set(mark.student_id, entry);
+    }
+
+    const mentorName = `${mentorMapping.faculty.first_name} ${mentorMapping.faculty.last_name}`;
+
+    return {
+      class: { id: klass.id, label: classLabel(klass) },
+      department: klass.departments,
+      academic_year: mentorMapping.academic_year,
+      mentor: { id: mentorMapping.faculty.id, name: mentorName },
+      students: students.map((student) => {
+        const attendance = attendanceByStudent.get(student.id);
+        const result = resultByStudent.get(student.id);
+        const { guardian_name, guardian_relation } = resolveGuardian(student);
+
+        return {
+          id: student.id,
+          name: resolveStudentName(student),
+          student_id_no: student.student_id_no,
+          roll_no: student.roll_no,
+          register_no: student.register_no,
+          attendance_percent: attendance
+            ? Math.round((attendance.present / attendance.total) * 10000) / 100
+            : null,
+          cgpa: result && result.totalCredits > 0
+            ? Math.round((result.weightedPoints / result.totalCredits) * 100) / 100
+            : null,
+          arrears: result?.arrears ?? 0,
+          mentor_name: mentorName,
+          guardian_name,
+          guardian_relation,
+          contact: resolveContact(student),
+        };
+      }),
+    };
   }
 
   /**

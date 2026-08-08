@@ -107,13 +107,15 @@ export class ExamMarksService {
 
   /**
    * POST /me/exams/:exam_subject_mapping_id/marks (Faculty only).
-   * Bulk-enters marks for a whole class+subject's exam in one call.
-   * Marks are entered once per exam_subject_mapping_id — a second
-   * full-batch attempt is blocked entirely (409), with no correction path;
-   * a mistaken entry has no PATCH/DELETE here by design (see the endpoint's
-   * documented Known Limitations — a correction path would need COE/HoD
-   * co-sign given the academic-integrity implications, which is out of
-   * scope for this endpoint).
+   * Bulk-enters marks for a class+subject's exam. A student who already
+   * has a row for this mapping is silently skipped rather than blocking
+   * the whole request — this is what lets a faculty top up the roster
+   * later for students missed the first time around, while the DB's own
+   * @@unique([exam_subject_mapping_id, student_id]) still makes a true
+   * double-entry for the same student impossible. Correcting an
+   * already-entered value still has no path here by design (see
+   * PATCH /me/exam-marks/:id instead) — this endpoint only ever fills in
+   * students with no row yet.
    */
   async enterMarks(
     examSubjectMappingId: number,
@@ -143,8 +145,21 @@ export class ExamMarksService {
       throw new BadRequestException('Duplicate student_id values in entries');
     }
 
+    const existing = await this.prisma.exam_marks.findMany({
+      where: { exam_subject_mapping_id: examSubjectMappingId },
+      select: { student_id: true, max_marks: true },
+    });
+
+    // max_marks is fixed to whatever the FIRST entry for this mapping
+    // established — every later top-up must share it, so marks stay
+    // comparable across the whole class (Subject Records' grade
+    // distribution and Class Result's CGPA both assume one max_marks per
+    // mapping). The caller's own dto.max_marks is only used to seed it.
+    const effectiveMaxMarks =
+      existing.length > 0 ? Number(existing[0].max_marks) : dto.max_marks;
+
     const outOfRange = dto.entries.filter(
-      (e) => e.marks_obtained < 0 || e.marks_obtained > dto.max_marks,
+      (e) => e.marks_obtained < 0 || e.marks_obtained > effectiveMaxMarks,
     );
     if (outOfRange.length > 0) {
       throw new UnprocessableEntityException({
@@ -168,24 +183,25 @@ export class ExamMarksService {
       });
     }
 
-    const alreadyEntered = await this.prisma.exam_marks.findFirst({
-      where: { exam_subject_mapping_id: examSubjectMappingId },
-    });
-    if (alreadyEntered) {
+    const alreadyEnteredIds = new Set(existing.map((e) => e.student_id));
+    const newEntries = dto.entries.filter(
+      (e) => !alreadyEnteredIds.has(e.student_id),
+    );
+    if (newEntries.length === 0) {
       throw new ConflictException({
-        message: 'Marks have already been entered for this exam and subject',
+        message: 'Marks have already been entered for every submitted student',
         errorCode: 'MARKS_ALREADY_ENTERED',
       });
     }
 
     const created = await this.prisma.$transaction(
-      dto.entries.map((e) =>
+      newEntries.map((e) =>
         this.prisma.exam_marks.create({
           data: {
             exam_subject_mapping_id: examSubjectMappingId,
             student_id: e.student_id,
             marks_obtained: e.marks_obtained,
-            max_marks: dto.max_marks,
+            max_marks: effectiveMaxMarks,
             entered_by_faculty_id: faculty.id,
           },
           select: { id: true },
@@ -194,12 +210,13 @@ export class ExamMarksService {
     );
 
     this.logger.log(
-      `Exam marks entered: mapping=${examSubjectMappingId} faculty=${faculty.id} count=${created.length}`,
+      `Exam marks entered: mapping=${examSubjectMappingId} faculty=${faculty.id} count=${created.length} (skipped ${dto.entries.length - newEntries.length} already-entered)`,
     );
 
     return {
       exam_subject_mapping_id: examSubjectMappingId,
       entered: created.length,
+      skipped_already_entered: dto.entries.length - newEntries.length,
     };
   }
 
@@ -328,6 +345,70 @@ export class ExamMarksService {
       entered: enteredStudentIds.size,
       validated: missingStudentIds.length === 0,
       missing_student_ids: missingStudentIds,
+    };
+  }
+
+  /**
+   * GET /me/exam-marks/roster/:exam_subject_mapping_id (Faculty only).
+   * Full class roster for the mapping's class, each student joined against
+   * their own exam_marks row if one exists yet (id + marks_obtained, else
+   * null) — this is what the CIA Marks entry screen renders and edits.
+   * `locked` is only true once EVERY student has a row — enterMarks() can
+   * always add rows for students who don't have one yet (a partial roster
+   * is never locked), so the frontend can keep filling in the gaps; only a
+   * fully-entered mapping has nothing left to bulk-add, leaving
+   * PATCH /me/exam-marks/:id as the only way to change a value.
+   */
+  async getRoster(examSubjectMappingId: number, userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mapping = await this.prisma.exam_subject_mapping.findUnique({
+      where: { id: examSubjectMappingId },
+    });
+    if (!mapping) {
+      throw new NotFoundException({
+        message: 'Exam subject mapping not found',
+        errorCode: 'MAPPING_NOT_FOUND',
+      });
+    }
+    await this.assertMappedToTeach(
+      faculty.id,
+      mapping.subject_id,
+      mapping.class_id,
+    );
+
+    const roster = await this.prisma.students.findMany({
+      where: { class_id: mapping.class_id },
+      orderBy: { roll_no: 'asc' },
+      select: {
+        id: true,
+        student_id_no: true,
+        roll_no: true,
+        soa_applications: { select: { first_name: true, last_name: true } },
+        users: { select: { email: true } },
+      },
+    });
+
+    const marks = await this.prisma.exam_marks.findMany({
+      where: { exam_subject_mapping_id: examSubjectMappingId },
+      select: { id: true, student_id: true, marks_obtained: true, max_marks: true },
+    });
+    const markByStudentId = new Map(marks.map((m) => [m.student_id, m]));
+
+    return {
+      exam_subject_mapping_id: examSubjectMappingId,
+      locked: marks.length > 0 && marks.length >= roster.length,
+      max_marks: marks.length > 0 ? marks[0].max_marks : null,
+      students: roster.map((student) => {
+        const mark = markByStudentId.get(student.id);
+        return {
+          student_id: student.id,
+          roll_no: student.roll_no ?? student.student_id_no,
+          name: resolveStudentName(student),
+          mark_id: mark?.id ?? null,
+          marks_obtained: mark?.marks_obtained ?? null,
+        };
+      }),
     };
   }
 
