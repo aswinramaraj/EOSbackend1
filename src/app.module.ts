@@ -114,6 +114,12 @@ import { MessFeedbackModule } from './modules/hostel/mess-feedback/mess-feedback
 import { HostelFeesModule } from './modules/hostel/fees/fees.module';
 import { HostelSettingsModule } from './modules/hostel/settings/settings.module';
 import { HostelReportsModule } from './modules/hostel/reports/reports.module';
+import { BlocksModule } from './modules/hostel/blocks/blocks.module';
+import { WardensModule } from './modules/hostel/wardens/wardens.module';
+import { GoodsModule } from './modules/hostel/goods/goods.module';
+import { QuitRequestsModule } from './modules/hostel/quit-requests/quit-requests.module';
+import { AllotmentsModule } from './modules/hostel/allotments/allotments.module';
+import { FacultyAllotmentsModule } from './modules/hostel/faculty-allotments/faculty-allotments.module';
 
 @Module({
   imports: [
@@ -232,6 +238,12 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     HostelFeesModule,
     HostelSettingsModule,
     HostelReportsModule,
+    BlocksModule,
+    WardensModule,
+    GoodsModule,
+    QuitRequestsModule,
+    AllotmentsModule,
+    FacultyAllotmentsModule,
   ],
 
   controllers: [AppController],

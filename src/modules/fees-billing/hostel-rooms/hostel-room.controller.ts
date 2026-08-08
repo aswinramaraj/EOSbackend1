@@ -34,6 +34,7 @@ export class HostelRoomController {
    *  403 FORBIDDEN                  – authenticated user is not an admin/warden
    *  404 HOSTEL_NOT_FOUND           – hostel_id does not exist
    *  404 HOSTEL_ROOM_TYPE_NOT_FOUND – room_type_id does not exist
+   *  404 BLOCK_NOT_FOUND            – block_id does not exist
    *  409 HOSTEL_ROOM_EXISTS         – a room with the same room_number already exists in this hostel
    *  500 INTERNAL_ERROR             – unexpected server failure
    */
@@ -46,7 +47,7 @@ export class HostelRoomController {
   }
 
   /**
-   * GET /api/v1/hostel-rooms?hostel_id=
+   * GET /api/v1/hostel-rooms?hostel_id=&block_id=
    *
    * Error responses:
    *  401 UNAUTHORIZED   – missing/invalid access token
@@ -54,9 +55,13 @@ export class HostelRoomController {
    */
   @Get()
   @UseGuards(JwtAuthGuard)
-  findAll(@Query('hostel_id') hostelId?: string) {
+  findAll(
+    @Query('hostel_id') hostelId?: string,
+    @Query('block_id') blockId?: string,
+  ) {
     return this.hostelRoomService.findAll(
       hostelId ? Number(hostelId) : undefined,
+      blockId ? Number(blockId) : undefined,
     );
   }
 

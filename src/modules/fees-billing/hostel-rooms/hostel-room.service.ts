@@ -12,6 +12,7 @@ import { UpdateHostelRoomDto } from './dto/update-hostel-room.dto';
 function toRoomResponse(room: {
   id: number;
   hostel_id: number;
+  block_id: number | null;
   room_number: string;
   room_type_id: number;
   capacity: number;
@@ -20,6 +21,7 @@ function toRoomResponse(room: {
   return {
     id: room.id,
     hostel_id: room.hostel_id,
+    block_id: room.block_id,
     room_number: room.room_number,
     room_type_id: room.room_type_id,
     capacity: room.capacity,
@@ -46,6 +48,9 @@ export class HostelRoomService {
   async create(dto: CreateHostelRoomDto) {
     await this.assertHostelExists(dto.hostel_id);
     await this.assertRoomTypeExists(dto.room_type_id);
+    if (dto.block_id) {
+      await this.assertBlockExists(dto.block_id);
+    }
 
     const existing = await this.findByHostelAndRoomNumber(
       dto.hostel_id,
@@ -64,6 +69,7 @@ export class HostelRoomService {
       const room = await this.prisma.hostel_rooms.create({
         data: {
           hostel_id: dto.hostel_id,
+          block_id: dto.block_id,
           room_number: dto.room_number,
           room_type_id: dto.room_type_id,
           capacity: dto.capacity,
@@ -81,12 +87,15 @@ export class HostelRoomService {
   }
 
   /**
-   * GET /hostel-rooms?hostel_id=
+   * GET /hostel-rooms?hostel_id=&block_id=
    */
-  async findAll(hostelId?: number) {
+  async findAll(hostelId?: number, blockId?: number) {
     try {
       const rooms = await this.prisma.hostel_rooms.findMany({
-        where: hostelId ? { hostel_id: hostelId } : {},
+        where: {
+          ...(hostelId ? { hostel_id: hostelId } : {}),
+          ...(blockId ? { block_id: blockId } : {}),
+        },
         include: { _count: { select: { student_hostel_mapping: true } } },
         orderBy: { room_number: 'asc' },
       });
@@ -146,6 +155,10 @@ export class HostelRoomService {
       await this.assertRoomTypeExists(dto.room_type_id);
     }
 
+    if (dto.block_id) {
+      await this.assertBlockExists(dto.block_id);
+    }
+
     if (dto.room_number || dto.hostel_id) {
       const effectiveHostelId = dto.hostel_id ?? room.hostel_id;
       const effectiveRoomNumber = dto.room_number ?? room.room_number;
@@ -168,6 +181,7 @@ export class HostelRoomService {
         where: { id },
         data: {
           hostel_id: dto.hostel_id,
+          block_id: dto.block_id,
           room_number: dto.room_number,
           room_type_id: dto.room_type_id,
           capacity: dto.capacity,
@@ -261,6 +275,29 @@ export class HostelRoomService {
       throw new NotFoundException({
         message: 'Hostel room type not found',
         errorCode: 'HOSTEL_ROOM_TYPE_NOT_FOUND',
+      });
+    }
+  }
+
+  private async assertBlockExists(blockId: number) {
+    let block: unknown;
+
+    try {
+      block = await this.prisma.hostel_blocks.findUnique({
+        where: { id: blockId },
+      });
+    } catch (err) {
+      this.logger.error('DB error during hostel block lookup', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (!block) {
+      throw new NotFoundException({
+        message: 'Hostel block not found',
+        errorCode: 'BLOCK_NOT_FOUND',
       });
     }
   }

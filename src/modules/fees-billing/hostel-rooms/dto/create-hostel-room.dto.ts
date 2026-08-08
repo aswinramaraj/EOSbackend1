@@ -1,8 +1,19 @@
-import { IsInt, IsNotEmpty, IsString, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class CreateHostelRoomDto {
   @IsInt()
   hostel_id: number;
+
+  @IsOptional()
+  @IsInt()
+  block_id?: number;
 
   @IsString()
   @IsNotEmpty()
