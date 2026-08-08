@@ -36,7 +36,7 @@ interface MediaRequestRow {
     first_name: string;
     last_name: string;
     designation: string;
-  };
+  } | null;
 }
 
 function toResponse(request: MediaRequestRow) {
@@ -63,6 +63,7 @@ export class MediaRequestsService {
     const request = await this.prisma.media_requests.create({
       data: {
         requested_by_faculty_id: faculty.id,
+        requested_by_user_id: faculty.user_id,
         description: dto.description,
         status: 'pending',
       },
@@ -112,7 +113,7 @@ export class MediaRequestsService {
 
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-      if (request.faculty.id !== faculty.id) {
+      if (request.faculty?.id !== faculty.id) {
         throw new ForbiddenException(
           'You may only view your own media requests',
         );

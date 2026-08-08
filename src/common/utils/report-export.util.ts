@@ -56,11 +56,28 @@ export async function renderExcelWorkbook(tables: ReportTable[]): Promise<Buffer
   return Buffer.from(buffer);
 }
 
+const PDF_PALETTE = {
+  title: '#0f172a',
+  subtitle: '#64748b',
+  accent: '#2563eb',
+  headerBg: '#1e293b',
+  headerText: '#ffffff',
+  border: '#cbd5e1',
+  zebra: '#f8fafc',
+  bodyText: '#334155',
+  emptyText: '#94a3b8',
+};
+
+const PDF_ROW_HEIGHT = 20;
+const PDF_HEADER_ROW_HEIGHT = 22;
+const PDF_CELL_PADDING = 5;
+
 /**
- * Simple manual-layout table — pdfkit has no built-in table widget, and
- * pulling in a heavier PDF templating library wasn't worth it for six
- * plain tabular reports. Columns are fixed-width and text is truncated to
- * fit; good enough for an exported report, not pixel-perfect typesetting.
+ * pdfkit has no built-in table widget, so the report layout — title band,
+ * bordered/zebra-striped table with a header row that repeats on every
+ * page, footer page numbers — is drawn by hand below. Columns are
+ * fixed-width and text is truncated with an ellipsis to fit; good enough
+ * for an exported report, not pixel-perfect typesetting.
  */
 export function renderPdf(table: ReportTable): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -68,13 +85,16 @@ export function renderPdf(table: ReportTable): Promise<Buffer> {
       margin: 40,
       size: 'A4',
       layout: 'landscape',
+      bufferPages: true,
     });
     const chunks: Buffer[] = [];
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    writePdfTable(doc, table, true);
+    writeReportHeader(doc, table.title);
+    writePdfTable(doc, table);
+    addPageFooters(doc);
     doc.end();
   });
 }
@@ -86,6 +106,7 @@ export function renderPdfBundle(tables: ReportTable[]): Promise<Buffer> {
       margin: 40,
       size: 'A4',
       layout: 'landscape',
+      bufferPages: true,
     });
     const chunks: Buffer[] = [];
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -94,55 +115,130 @@ export function renderPdfBundle(tables: ReportTable[]): Promise<Buffer> {
 
     tables.forEach((table, i) => {
       if (i > 0) doc.addPage();
-      writePdfTable(doc, table, false);
+      writeReportHeader(doc, table.title);
+      writePdfTable(doc, table);
     });
+    addPageFooters(doc);
     doc.end();
   });
 }
 
-function writePdfTable(
-  doc: PDFKit.PDFDocument,
-  table: ReportTable,
-  resetY: boolean,
-): void {
-  doc.fontSize(16).text(table.title, { align: 'left' });
-  doc.moveDown(0.5);
-  doc.fontSize(9);
+/** Title + generated-on timestamp + accent rule, leaving doc.y positioned for the table that follows. */
+function writeReportHeader(doc: PDFKit.PDFDocument, title: string): void {
+  const left = doc.page.margins.left;
+  const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
-  const pageWidth =
-    doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const colWidth = pageWidth / table.columns.length;
-  const rowHeight = 18;
+  doc.font('Helvetica-Bold').fontSize(17).fillColor(PDF_PALETTE.title).text(title, left, doc.y);
+  doc
+    .font('Helvetica')
+    .fontSize(8.5)
+    .fillColor(PDF_PALETTE.subtitle)
+    .text(
+      `Generated on ${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}`,
+      left,
+      doc.y + 2,
+    );
 
-  function drawRow(values: string[], y: number, bold: boolean) {
-    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica');
-    values.forEach((value, i) => {
-      doc.text(value, doc.page.margins.left + i * colWidth, y, {
-        width: colWidth - 4,
+  doc.moveDown(0.7);
+  doc.rect(left, doc.y, width, 2.5).fill(PDF_PALETTE.accent);
+  doc.moveDown(0.9);
+}
+
+function addPageFooters(doc: PDFKit.PDFDocument): void {
+  const range = doc.bufferedPageRange();
+  for (let i = range.start; i < range.start + range.count; i++) {
+    doc.switchToPage(i);
+    // Writing inside the bottom margin trips pdfkit's own "past the content
+    // area" check, which silently calls addPage() instead of drawing here -
+    // relaxing the margin for this one write keeps it on the current page.
+    const bottomMargin = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+    doc
+      .font('Helvetica')
+      .fontSize(8)
+      .fillColor(PDF_PALETTE.subtitle)
+      .text(`Page ${i + 1} of ${range.count}`, doc.page.margins.left, doc.page.height - 25, {
+        width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
+        align: 'center',
+      });
+    doc.page.margins.bottom = bottomMargin;
+  }
+}
+
+function writePdfTable(doc: PDFKit.PDFDocument, table: ReportTable): void {
+  const left = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const tableWidth = right - left;
+  const colWidth = tableWidth / table.columns.length;
+  const pageBottom = doc.page.height - doc.page.margins.bottom;
+
+  function drawHeaderRow(top: number): number {
+    doc.rect(left, top, tableWidth, PDF_HEADER_ROW_HEIGHT).fill(PDF_PALETTE.headerBg);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(PDF_PALETTE.headerText);
+    const cellHeight = doc.currentLineHeight(true) * 1.5;
+    table.columns.forEach((c, i) => {
+      doc.text(c.header, left + i * colWidth + PDF_CELL_PADDING, top + 6, {
+        width: colWidth - PDF_CELL_PADDING * 2,
+        height: cellHeight,
         ellipsis: true,
       });
     });
+    return top + PDF_HEADER_ROW_HEIGHT;
   }
 
-  let y = resetY ? doc.y : doc.page.margins.top + 40;
-  drawRow(
-    table.columns.map((c) => c.header),
-    y,
-    true,
-  );
-  y += rowHeight;
-  doc
-    .moveTo(doc.page.margins.left, y - 4)
-    .lineTo(doc.page.width - doc.page.margins.right, y - 4)
-    .stroke();
-
-  for (const row of table.rows) {
-    if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
-      doc.addPage();
-      y = doc.page.margins.top;
+  function drawColumnDividers(top: number, bottom: number): void {
+    doc.lineWidth(0.5).strokeColor(PDF_PALETTE.border);
+    for (let i = 0; i <= table.columns.length; i++) {
+      const x = left + i * colWidth;
+      doc.moveTo(x, top).lineTo(x, bottom).stroke();
     }
-    const values = table.columns.map((c) => String(row[c.key] ?? ''));
-    drawRow(values, y, false);
-    y += rowHeight;
   }
+
+  let pageTop = doc.y;
+  let y = drawHeaderRow(pageTop);
+
+  if (table.rows.length === 0) {
+    doc
+      .font('Helvetica-Oblique')
+      .fontSize(9)
+      .fillColor(PDF_PALETTE.emptyText)
+      .text('No records found for the selected filters.', left + PDF_CELL_PADDING, y + 8);
+    drawColumnDividers(pageTop, y);
+    return;
+  }
+
+  table.rows.forEach((row, i) => {
+    if (y + PDF_ROW_HEIGHT > pageBottom) {
+      drawColumnDividers(pageTop, y);
+      doc.addPage();
+      pageTop = doc.page.margins.top;
+      y = drawHeaderRow(pageTop);
+    }
+
+    if (i % 2 === 1) {
+      doc.rect(left, y, tableWidth, PDF_ROW_HEIGHT).fill(PDF_PALETTE.zebra);
+    }
+
+    doc.font('Helvetica').fontSize(8.5).fillColor(PDF_PALETTE.bodyText);
+    const cellHeight = doc.currentLineHeight(true) * 1.5;
+    table.columns.forEach((c, ci) => {
+      const value = String(row[c.key] ?? '');
+      doc.text(value, left + ci * colWidth + PDF_CELL_PADDING, y + 5, {
+        width: colWidth - PDF_CELL_PADDING * 2,
+        height: cellHeight,
+        ellipsis: true,
+      });
+    });
+
+    doc
+      .lineWidth(0.5)
+      .strokeColor(PDF_PALETTE.border)
+      .moveTo(left, y + PDF_ROW_HEIGHT)
+      .lineTo(right, y + PDF_ROW_HEIGHT)
+      .stroke();
+
+    y += PDF_ROW_HEIGHT;
+  });
+
+  drawColumnDividers(pageTop, y);
 }

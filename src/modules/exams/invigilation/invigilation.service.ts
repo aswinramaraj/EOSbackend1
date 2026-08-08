@@ -74,7 +74,7 @@ export class InvigilationService {
         where: {
           faculty_id: dto.faculty_id,
           duty_date: dutyDate,
-          shift: dto.shift,
+          session: dto.session,
         },
       });
 
@@ -99,7 +99,7 @@ export class InvigilationService {
           faculty_id: dto.faculty_id,
           hall_plan_id: dto.hall_plan_id,
           duty_date: dutyDate,
-          shift: dto.shift,
+          session: dto.session,
         },
         include: {
           faculty: { select: FACULTY_SELECT },
@@ -229,14 +229,14 @@ export class InvigilationService {
       dto.duty_date !== undefined
         ? new Date(dto.duty_date)
         : existing.duty_date;
-    const shift = dto.shift !== undefined ? dto.shift : existing.shift;
+    const session = dto.session !== undefined ? dto.session : existing.session;
 
     return this.prisma.$transaction(async (tx) => {
       const conflictRow = await tx.invigilation_duties.findFirst({
         where: {
           faculty_id: facultyId,
           duty_date: dutyDate,
-          shift,
+          session,
           NOT: { id },
         },
       });
@@ -261,7 +261,7 @@ export class InvigilationService {
       if (dto.hall_plan_id !== undefined) data.hall_plan_id = dto.hall_plan_id;
       if (dto.faculty_id !== undefined) data.faculty_id = dto.faculty_id;
       if (dto.duty_date !== undefined) data.duty_date = dutyDate;
-      if (dto.shift !== undefined) data.shift = dto.shift;
+      if (dto.session !== undefined) data.session = dto.session;
 
       return tx.invigilation_duties.update({
         where: { id },
