@@ -26,6 +26,8 @@ import { MeProfileModule } from './modules/admissions/students/me-profile/me-pro
 
 import { AnnouncementsModule } from './modules/announcements/announcements/announcements.module';
 import { ParentsModule } from './modules/parents/parents.module';
+import { ProfileModule } from './modules/profile/profile.module';
+import { LmsModule } from './modules/lms/lms.module';
 
 import { ExamsModule } from './modules/exams/exams/exams.module';
 import { ExamSubjectMappingModule } from './modules/exams/exam-subject-mapping/exam-subject-mapping.module';
@@ -154,6 +156,8 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     StudentsModule,
     MeProfileModule,
     ParentsModule,
+    ProfileModule,
+    LmsModule,
 
     AnnouncementsModule,
 
