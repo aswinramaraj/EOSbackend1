@@ -10,6 +10,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { CreateSensitiveInfoDto } from './create-sensitive-info.dto';
+import { FacultyExtendedFieldsDto } from './faculty-extended-fields.dto';
 
 /**
  * PATCH /faculty/:id — Admin-only edit of any faculty record.
@@ -23,7 +24,7 @@ import { CreateSensitiveInfoDto } from './create-sensitive-info.dto';
  * so that deactivating a faculty also blocks their login, consistent with
  * AuthService's ACCOUNT_INACTIVE check.
  */
-export class AdminUpdateFacultyDto {
+export class AdminUpdateFacultyDto extends FacultyExtendedFieldsDto {
   @IsOptional()
   @IsString()
   @MinLength(1)

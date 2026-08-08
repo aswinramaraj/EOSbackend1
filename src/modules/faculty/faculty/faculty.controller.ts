@@ -33,8 +33,8 @@ export class FacultyController {
   @Post('faculty')
   @Roles(ROLES.ADMIN)
   @HttpCode(HttpStatus.CREATED)
-  create(@Body() dto: CreateFacultyDto) {
-    return this.facultyService.create(dto);
+  create(@Body() dto: CreateFacultyDto, @CurrentUser() user: JwtPayload) {
+    return this.facultyService.create(dto, user.sub);
   }
 
   /** GET /api/v1/faculty — Admin/HoD only. Paginated list, filterable by department_id/status. */
@@ -69,14 +69,25 @@ export class FacultyController {
   updateByAdmin(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AdminUpdateFacultyDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.facultyService.updateByAdmin(id, dto);
+    return this.facultyService.updateByAdmin(id, dto, user.sub);
   }
 
   /** DELETE /api/v1/faculty/:id — Admin only. Soft delete (status → inactive on faculty + users). */
   @Delete('faculty/:id')
   @Roles(ROLES.ADMIN)
-  removeByAdmin(@Param('id', ParseIntPipe) id: number) {
-    return this.facultyService.removeByAdmin(id);
+  removeByAdmin(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.facultyService.removeByAdmin(id, user.sub);
+  }
+
+  /** GET /api/v1/faculty/:id/activity — Admin/HoD. Most recent audit-trail entries for this faculty. */
+  @Get('faculty/:id/activity')
+  @Roles(ROLES.ADMIN, ROLES.HOD)
+  listActivity(@Param('id', ParseIntPipe) id: number) {
+    return this.facultyService.listActivity(id);
   }
 }
