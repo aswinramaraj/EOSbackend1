@@ -48,6 +48,13 @@ export class DrivesController {
     return this.drivesService.findOne(id);
   }
 
+  @Get('students/:studentId/history')
+  getHistoryForStudentId(
+    @Param('studentId', ParseIntPipe) studentId: number,
+  ) {
+    return this.drivesService.getHistoryForStudentId(studentId);
+  }
+
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateDriveDto) {
     return this.drivesService.update(id, dto);

@@ -20,6 +20,18 @@ import { CreateSoaApplicationDto } from './dto/create-soa-application.dto';
 import { UpdateSoaApplicationDto } from './dto/update-soa-application.dto';
 import { UpdateSoaStatusDto } from './dto/update-soa-status.dto';
 import { CreatePerfectEntryDto } from './dto/create-perfect-entry.dto';
+import { ListSoaApplicationsQueryDto } from './dto/list-soa-applications-query.dto';
+import { paginate } from 'src/common/dto/pagination.dto';
+
+/**
+ * Statuses in which the draft application fields (name, contacts, cutoffs)
+ * can still be corrected. Locked once admission_confirmed — at that point the
+ * real students/users row (created by Perfect Entry) is the record of truth.
+ */
+const EDITABLE_STATUSES: soa_status_enum[] = [
+  soa_status_enum.applied,
+  soa_status_enum.fees_paid,
+];
 
 const VALID_ADDRESS_TYPES = Object.values(address_type_enum);
 
@@ -574,19 +586,125 @@ export class SoaApplicationsService {
     );
   }
 
-  findAll() {
-    return `This action returns all soaApplications`;
+  /**
+   * GET /soa-applications — the admissions pipeline view: every draft, its
+   * status, and whether Perfect Entry has already turned it into a real
+   * student (students.soa_application_id is unique, so at most one).
+   */
+  async findAll(query: ListSoaApplicationsQueryDto) {
+    const where: Record<string, unknown> = {};
+    if (query.status) where.status = query.status;
+    if (query.q) {
+      where.OR = [
+        { first_name: { contains: query.q, mode: 'insensitive' } },
+        { last_name: { contains: query.q, mode: 'insensitive' } },
+        { student_email: { contains: query.q, mode: 'insensitive' } },
+        { student_contact: { contains: query.q } },
+        { parent_contact: { contains: query.q } },
+      ];
+    }
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.soa_applications.findMany({
+        where,
+        skip: query.skip,
+        take: query.limit,
+        orderBy: { id: 'desc' },
+        include: { students: { select: { id: true, student_id_no: true } } },
+      }),
+      this.prisma.soa_applications.count({ where }),
+    ]);
+
+    return paginate(rows, total, query);
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} soaApplication`;
+  /** GET /soa-applications/:id */
+  async findOne(id: number) {
+    const row = await this.prisma.soa_applications.findUnique({
+      where: { id },
+      include: { students: { select: { id: true, student_id_no: true } } },
+    });
+    if (!row) {
+      throw new NotFoundException({
+        message: 'SOA application not found',
+        errorCode: 'SOA_APPLICATION_NOT_FOUND',
+      });
+    }
+    return row;
   }
 
-  update(id: number, updateSoaApplicationDto: UpdateSoaApplicationDto) {
-    return `This action updates a #${id} soaApplication`;
+  /**
+   * PATCH /soa-applications/:id — corrects the draft's own fields (name,
+   * contacts, cutoffs). Locked once the application is admission_confirmed;
+   * use the Perfect Entry categories to fix anything from that point on.
+   */
+  async update(id: number, dto: UpdateSoaApplicationDto) {
+    const existing = await this.prisma.soa_applications.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'SOA application not found',
+        errorCode: 'SOA_APPLICATION_NOT_FOUND',
+      });
+    }
+    if (!EDITABLE_STATUSES.includes(existing.status)) {
+      throw new UnprocessableEntityException({
+        message: `Application is ${existing.status} and can no longer be edited`,
+        errorCode: 'APPLICATION_NOT_EDITABLE',
+      });
+    }
+
+    for (const field of CUTOFF_FIELDS) {
+      const value = dto[field];
+      if (value !== undefined && (value < 0 || value > 100)) {
+        throw new UnprocessableEntityException({
+          message: `${field} must be between 0 and 100`,
+          errorCode: 'INVALID_CUTOFF_RANGE',
+        });
+      }
+    }
+
+    try {
+      return await this.prisma.soa_applications.update({
+        where: { id },
+        data: dto,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to update SOA application #${id}`, err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} soaApplication`;
+  /**
+   * DELETE /soa-applications/:id — hard delete (the table has no soft-delete
+   * column). Restricted to untouched drafts: once fees are paid or the
+   * application is decided, it stays as a permanent record; use the status
+   * endpoint to cancel it instead.
+   */
+  async remove(id: number) {
+    const existing = await this.prisma.soa_applications.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'SOA application not found',
+        errorCode: 'SOA_APPLICATION_NOT_FOUND',
+      });
+    }
+    if (existing.status !== soa_status_enum.applied) {
+      throw new ConflictException({
+        message: `Only applications still in 'applied' status can be deleted — this one is ${existing.status}`,
+        errorCode: 'APPLICATION_NOT_DELETABLE',
+      });
+    }
+
+    await this.prisma.soa_applications.delete({ where: { id } });
+    return { id, deleted: true };
   }
 }

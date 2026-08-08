@@ -7,6 +7,7 @@ import {
   Param,
   Delete,
   ParseIntPipe,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { SoaApplicationsService } from './soa-applications.service';
@@ -14,6 +15,7 @@ import { CreateSoaApplicationDto } from './dto/create-soa-application.dto';
 import { UpdateSoaApplicationDto } from './dto/update-soa-application.dto';
 import { UpdateSoaStatusDto } from './dto/update-soa-status.dto';
 import { CreatePerfectEntryDto } from './dto/create-perfect-entry.dto';
+import { ListSoaApplicationsQueryDto } from './dto/list-soa-applications-query.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -92,26 +94,61 @@ export class SoaApplicationsController {
     return this.soaApplicationsService.perfectEntry(id, dto);
   }
 
+  /**
+   * GET /api/v1/soa-applications
+   * The admissions pipeline: every application, filterable by status and
+   * searchable by name/email/contact, with pagination.
+   */
   @Get()
-  findAll() {
-    return this.soaApplicationsService.findAll();
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  findAll(@Query() query: ListSoaApplicationsQueryDto) {
+    return this.soaApplicationsService.findAll(query);
   }
 
+  /**
+   * GET /api/v1/soa-applications/:id
+   *
+   * Error responses:
+   *  404 SOA_APPLICATION_NOT_FOUND
+   */
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.soaApplicationsService.findOne(+id);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.soaApplicationsService.findOne(id);
   }
 
+  /**
+   * PATCH /api/v1/soa-applications/:id
+   * Corrects the draft's own fields. Locked once admission_confirmed.
+   *
+   * Error responses:
+   *  404 SOA_APPLICATION_NOT_FOUND
+   *  422 APPLICATION_NOT_EDITABLE / INVALID_CUTOFF_RANGE
+   */
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
   update(
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() updateSoaApplicationDto: UpdateSoaApplicationDto,
   ) {
-    return this.soaApplicationsService.update(+id, updateSoaApplicationDto);
+    return this.soaApplicationsService.update(id, updateSoaApplicationDto);
   }
 
+  /**
+   * DELETE /api/v1/soa-applications/:id
+   * Hard delete — restricted to untouched drafts still in 'applied' status.
+   *
+   * Error responses:
+   *  404 SOA_APPLICATION_NOT_FOUND
+   *  409 APPLICATION_NOT_DELETABLE
+   */
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.soaApplicationsService.remove(+id);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.soaApplicationsService.remove(id);
   }
 }

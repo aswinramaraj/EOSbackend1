@@ -212,8 +212,17 @@ export class DrivesService {
       );
     }
 
+    return this.getHistoryForStudentId(student.id);
+  }
+
+  /**
+   * GET /drives/students/:studentId/history (Admin/Placement).
+   * Same query as the student-self-service history above, keyed by an
+   * explicit student id instead of the caller's own JWT.
+   */
+  async getHistoryForStudentId(studentId: number) {
     const applications = await this.prisma.student_drive_applications.findMany({
-      where: { student_id: student.id },
+      where: { student_id: studentId },
       include: { placement_drives: { include: { companies: true } } },
       orderBy: { updated_at: 'desc' },
     });

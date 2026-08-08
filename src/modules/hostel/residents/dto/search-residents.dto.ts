@@ -16,6 +16,12 @@ export class SearchResidentsDto {
   @Transform(({ value }) => Number(value))
   @IsInt()
   @Min(1)
+  student_id?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @IsInt()
+  @Min(1)
   page?: number = 1;
 
   @IsOptional()

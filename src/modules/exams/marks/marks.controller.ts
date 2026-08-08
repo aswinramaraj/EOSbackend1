@@ -6,12 +6,14 @@ import {
   Body,
   Patch,
   Param,
+  Query,
   Delete,
   UseGuards,
 } from '@nestjs/common';
 import { MarksService } from './marks.service';
 import { CreateMarkDto } from './dto/create-mark.dto';
 import { UpdateMarkDto } from './dto/update-mark.dto';
+import { ListMarksQueryDto } from './dto/list-marks-query.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -30,8 +32,8 @@ export class MarksController {
   }
 
   @Get()
-  async findAll() {
-    const marks = await this.marksService.findAll();
+  async findAll(@Query() query: ListMarksQueryDto) {
+    const marks = await this.marksService.findAll(query);
     return ApiResponse.ok(marks, 'Marks fetched successfully.');
   }
 

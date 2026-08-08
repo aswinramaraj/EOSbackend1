@@ -55,12 +55,21 @@ export class FinanceOverviewService {
 
     try {
       [mappings, educationLoanDds, concessions, activeFeeStructures] =
-        await this.prisma.$transaction([
-          this.queryMappings(),
-          this.queryEducationLoanDds(),
-          this.queryConcessions(),
-          this.prisma.fee_structures.count(),
-        ]);
+        await this.prisma.$transaction(
+          [
+            this.queryMappings(),
+            this.queryEducationLoanDds(),
+            this.queryConcessions(),
+            this.prisma.fee_structures.count(),
+          ],
+          // The 5s/2s defaults (timeout/maxWait) are too tight against the
+          // current DB link (free-tier Supabase, cold-start/network latency
+          // observed up to ~7s for a single query) — both raised so a
+          // slow-but-healthy round trip doesn't get killed mid-transaction
+          // or rejected before it even starts while waiting for a
+          // connection to free up.
+          { timeout: 20_000, maxWait: 20_000 },
+        );
     } catch (err) {
       this.logger.error('DB error while building finance overview', err);
       throw new InternalServerErrorException({
