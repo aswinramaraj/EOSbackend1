@@ -101,6 +101,15 @@ export class StudentProfilesService {
           batch_id: true,
           course_id: true,
           student_profiles: true,
+          classes: {
+            select: {
+              section: true,
+              departments: { select: { name: true, code: true } },
+            },
+          },
+          soa_applications: {
+            select: { first_name: true, last_name: true },
+          },
           _count: { select: { student_projects: true } },
         },
       }),
