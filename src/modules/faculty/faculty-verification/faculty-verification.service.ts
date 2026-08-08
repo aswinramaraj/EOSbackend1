@@ -51,30 +51,40 @@ function toE164Indian(phone: string): string {
 @Injectable()
 export class FacultyVerificationService {
   private readonly logger = new Logger(FacultyVerificationService.name);
-  private readonly client: ReturnType<typeof twilio>;
-  private readonly verifyServiceSid: string;
+  private client: ReturnType<typeof twilio> | null = null;
+  private verifyServiceSid: string | null = null;
 
-  constructor() {
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
+  // Validated lazily, on first actual use — not in the constructor. This
+  // module is instantiated as part of every app boot (it's just another
+  // provider in the DI graph), so throwing here would crash the entire app
+  // for anyone without Twilio configured, even for people who never touch
+  // faculty verification at all. Same lazy-client pattern already used by
+  // WalletService.getRazorpay() and AttendanceCvService.getApiKey().
+  private getClient(): { client: ReturnType<typeof twilio>; verifyServiceSid: string } {
+    if (!this.client || !this.verifyServiceSid) {
+      const accountSid = process.env.TWILIO_ACCOUNT_SID;
+      const authToken = process.env.TWILIO_AUTH_TOKEN;
+      const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
 
-    if (!accountSid || !authToken || !verifyServiceSid) {
-      throw new InternalServerErrorException(
-        'Twilio Verify is not configured — TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SERVICE_SID must all be set.',
-      );
+      if (!accountSid || !authToken || !verifyServiceSid) {
+        throw new InternalServerErrorException(
+          'Twilio Verify is not configured — TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SERVICE_SID must all be set.',
+        );
+      }
+
+      this.verifyServiceSid = verifyServiceSid;
+      this.client = twilio(accountSid, authToken);
     }
-
-    this.verifyServiceSid = verifyServiceSid;
-    this.client = twilio(accountSid, authToken);
+    return { client: this.client, verifyServiceSid: this.verifyServiceSid };
   }
 
   /** POST /me/faculty-verification/send — starts a Twilio Verify verification. Twilio owns the OTP entirely. */
   async sendOtp(phone: string, channel: 'sms' | 'whatsapp') {
     const to = toE164Indian(phone);
+    const { client, verifyServiceSid } = this.getClient();
     try {
-      const verification = await this.client.verify.v2
-        .services(this.verifyServiceSid)
+      const verification = await client.verify.v2
+        .services(verifyServiceSid)
         .verifications.create({ to, channel });
 
       return {
@@ -95,9 +105,10 @@ export class FacultyVerificationService {
    */
   async checkOtp(phone: string, code: string) {
     const to = toE164Indian(phone);
+    const { client, verifyServiceSid } = this.getClient();
     try {
-      const check = await this.client.verify.v2
-        .services(this.verifyServiceSid)
+      const check = await client.verify.v2
+        .services(verifyServiceSid)
         .verificationChecks.create({ to, code });
 
       return {

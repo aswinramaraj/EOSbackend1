@@ -33,7 +33,12 @@ const TRANSACTION_SELECT = {
   remarks: true,
   created_at: true,
   wallet_outlets: { select: { name: true, outlet_type: true } },
-  counterparty_wallet: {
+  // Prisma's auto-generated name for this relation - shifts whenever
+  // schema.prisma is re-pulled and the surrounding disambiguation context
+  // changes (see the merge that introduced this exact name). No stable
+  // alias exists to depend on instead without hand-editing the generated
+  // schema, which a plain `db pull` would immediately overwrite again.
+  wallets_wallet_transactions_counterparty_wallet_idTowallets: {
     select: { users: { select: { email: true } } },
   },
 } as const;
@@ -139,7 +144,8 @@ export class WalletService {
         remarks: r.remarks,
         created_at: r.created_at,
         outlet: r.wallet_outlets,
-        counterparty_email: r.counterparty_wallet?.users.email ?? null,
+        counterparty_email:
+          r.wallets_wallet_transactions_counterparty_wallet_idTowallets?.users.email ?? null,
       })),
       total,
       query,
