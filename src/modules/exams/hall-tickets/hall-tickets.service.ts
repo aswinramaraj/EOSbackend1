@@ -31,8 +31,7 @@ export class HallTicketsService {
 
     const publishedSlot = await this.prisma.exam_timetable.findFirst({
       where: {
-        is_published: true,
-        exam_subject_mapping: { exam_id: examId },
+        exam_subject_mapping: { exam_id: examId, is_published: true },
       },
     });
     if (!publishedSlot) {
