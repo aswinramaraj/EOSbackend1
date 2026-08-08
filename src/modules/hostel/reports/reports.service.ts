@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
-import type { ReportTable } from 'src/modules/library/reports/report-export.util';
+import type { ReportTable } from 'src/common/utils/report-export.util';
 
 function residentName(student: {
   student_id_no: string;

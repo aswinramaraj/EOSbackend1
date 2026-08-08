@@ -16,8 +16,8 @@ export class ListAppraisalQueryDto extends PaginationDto {
 
   @IsOptional()
   @IsString()
-  @Matches(/^\d{4}-\d{2}$/, {
-    message: 'academic_year must be in the format YYYY-YY, e.g. 2025-26',
+  @Matches(/^\d{4}-\d{4}$/, {
+    message: 'academic_year must be in the format YYYY-YYYY, e.g. 2025-2026',
   })
   academic_year?: string;
 

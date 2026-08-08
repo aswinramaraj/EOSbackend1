@@ -106,6 +106,10 @@ function formatHHMM(time: Date): string {
   return time.toISOString().slice(11, 16);
 }
 
+function toDateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
 function toMySlotResponse(slot: MyTimetableSlotRow) {
   return {
     period_number: slot.period_number,
@@ -460,6 +464,241 @@ export class TimetableService {
     });
 
     return rows.map(toTodaySlotResponse);
+  }
+
+  /**
+   * GET /me/current-semester (Faculty/HoD).
+   *
+   * faculty_subject_class_mapping has no semester column of its own (only
+   * academic_year) and a faculty member can teach several class/section
+   * combos at once, unlike the single-section student view this mirrors -
+   * so this returns one row per (subject, class) combo for the faculty's
+   * most recent academic_year, each annotated with that class's own
+   * classes.current_semester, plus real per-combo counts (hours/week from
+   * timetable_slots, tasks from assignments, materials from lms_notes).
+   */
+  async getCurrentSemesterForFaculty(userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const latest = await this.prisma.faculty_subject_class_mapping.findFirst({
+      where: { faculty_id: faculty.id },
+      orderBy: { academic_year: 'desc' },
+      select: { academic_year: true },
+    });
+    if (!latest) {
+      return { academic_year: null, subjects: [] };
+    }
+    const academicYear = latest.academic_year;
+
+    const mappings = await this.prisma.faculty_subject_class_mapping.findMany({
+      where: { faculty_id: faculty.id, academic_year: academicYear },
+      select: {
+        subject_id: true,
+        class_id: true,
+        subjects: { select: { name: true, subject_code: true } },
+        classes: { select: { section: true, current_semester: true } },
+      },
+      orderBy: [{ class_id: 'asc' }, { subject_id: 'asc' }],
+    });
+
+    const subjects = await Promise.all(
+      mappings.map(async (mapping) => {
+        const [hoursPerWeek, tasks, materials] = await Promise.all([
+          this.prisma.timetable_slots.count({
+            where: {
+              faculty_id: faculty.id,
+              subject_id: mapping.subject_id,
+              class_id: mapping.class_id,
+              academic_year: academicYear,
+            },
+          }),
+          this.prisma.assignments.count({
+            where: {
+              faculty_id: faculty.id,
+              subject_id: mapping.subject_id,
+              class_id: mapping.class_id,
+              academic_year: academicYear,
+            },
+          }),
+          this.prisma.lms_notes.count({
+            where: {
+              faculty_id: faculty.id,
+              subject_id: mapping.subject_id,
+              class_id: mapping.class_id,
+            },
+          }),
+        ]);
+
+        return {
+          subject_id: mapping.subject_id,
+          subject_code: mapping.subjects.subject_code,
+          subject_name: mapping.subjects.name,
+          class_id: mapping.class_id,
+          section: mapping.classes.section,
+          semester: mapping.classes.current_semester,
+          hours_per_week: hoursPerWeek,
+          tasks,
+          materials,
+        };
+      }),
+    );
+
+    return { academic_year: academicYear, subjects };
+  }
+
+  /**
+   * GET /me/faculty-timetable (Faculty/HoD).
+   *
+   * The full-week counterpart to findForStudent(), scoped by faculty_id
+   * instead of class_id, reusing the same MY_TIMETABLE_SLOT_SELECT/
+   * toMySlotResponse shape so the response is drop-in compatible with what
+   * the shared TimetableScreen already renders for students. Not scoped by
+   * academic_year/semester - same reasoning as findTodayForFaculty (a
+   * faculty member can teach several classes/semesters at once, unlike a
+   * student anchored on one classes.current_semester).
+   */
+  async findFullWeekForFaculty(userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const rows = await this.prisma.timetable_slots.findMany({
+      where: { faculty_id: faculty.id },
+      orderBy: [{ day_of_week: 'asc' }, { period_number: 'asc' }],
+      select: MY_TIMETABLE_SLOT_SELECT,
+    });
+
+    const days = new Map<number, ReturnType<typeof toMySlotResponse>[]>();
+    for (const row of rows) {
+      const daySlots = days.get(row.day_of_week) ?? [];
+      daySlots.push(toMySlotResponse(row));
+      days.set(row.day_of_week, daySlots);
+    }
+
+    return {
+      days: Array.from(days.entries()).map(([day_of_week, slots]) => ({
+        day_of_week,
+        slots,
+      })),
+    };
+  }
+
+  /**
+   * GET /me/faculty-academic-calendar (Faculty/HoD).
+   *
+   * The student version (me-academic-calendar.service.ts) anchors on one
+   * class -> one (batch_id, semester) -> one academic_calendars row
+   * (unique). A faculty member has no single class, and can teach into
+   * several distinct (batch_id, semester) pairs at once - so this resolves
+   * every distinct pair from the faculty's latest-academic_year mapping
+   * rows (same "latest academic_year" tiebreak as
+   * getCurrentSemesterForFaculty), fetches each pair's academic_calendars
+   * row, and merges their calendar_events into one deduped list (by
+   * event_date+title, since the same institution-wide holiday can appear on
+   * more than one batch's calendar). `semester` is only a single number
+   * when every resolved calendar shares the same one - otherwise null,
+   * which the existing frontend header already renders as a plain "Academic
+   * calendar" (no fabricated single-semester label when several are real).
+   * start_date/end_date become the union range (earliest start, latest end)
+   * across every resolved calendar.
+   */
+  async getMergedAcademicCalendarForFaculty(userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+    const empty = { semester: null, start_date: null, end_date: null, events: [] };
+
+    const latest = await this.prisma.faculty_subject_class_mapping.findFirst({
+      where: { faculty_id: faculty.id },
+      orderBy: { academic_year: 'desc' },
+      select: { academic_year: true },
+    });
+    if (!latest) {
+      return empty;
+    }
+
+    const mappings = await this.prisma.faculty_subject_class_mapping.findMany({
+      where: { faculty_id: faculty.id, academic_year: latest.academic_year },
+      select: {
+        classes: { select: { batch_id: true, current_semester: true } },
+      },
+    });
+
+    const pairs = new Map<string, { batch_id: number; semester: number }>();
+    for (const mapping of mappings) {
+      if (mapping.classes.current_semester === null) continue;
+      const key = `${mapping.classes.batch_id}:${mapping.classes.current_semester}`;
+      pairs.set(key, {
+        batch_id: mapping.classes.batch_id,
+        semester: mapping.classes.current_semester,
+      });
+    }
+    if (pairs.size === 0) {
+      return empty;
+    }
+
+    const calendars = await Promise.all(
+      Array.from(pairs.values()).map((pair) =>
+        this.prisma.academic_calendars.findUnique({
+          where: {
+            batch_id_semester: { batch_id: pair.batch_id, semester: pair.semester },
+          },
+          select: {
+            semester: true,
+            start_date: true,
+            end_date: true,
+            calendar_events: {
+              orderBy: { event_date: 'asc' },
+              select: {
+                id: true,
+                event_date: true,
+                event_type: true,
+                title: true,
+                description: true,
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    const found = calendars.filter(
+      (calendar): calendar is NonNullable<typeof calendar> => calendar !== null,
+    );
+    if (found.length === 0) {
+      return empty;
+    }
+
+    const distinctSemesters = new Set(found.map((c) => c.semester));
+    const semester = distinctSemesters.size === 1 ? found[0].semester : null;
+
+    const startDates = found.map((c) => c.start_date.getTime());
+    const endDates = found.map((c) => c.end_date.getTime());
+
+    const eventsByKey = new Map<
+      string,
+      { id: number; event_date: string; event_type: string; title: string; description: string | null }
+    >();
+    for (const calendar of found) {
+      for (const event of calendar.calendar_events) {
+        const eventDate = toDateOnly(event.event_date);
+        const key = `${eventDate}:${event.title}`;
+        if (!eventsByKey.has(key)) {
+          eventsByKey.set(key, {
+            id: event.id,
+            event_date: eventDate,
+            event_type: event.event_type,
+            title: event.title,
+            description: event.description,
+          });
+        }
+      }
+    }
+
+    return {
+      semester,
+      start_date: toDateOnly(new Date(Math.min(...startDates))),
+      end_date: toDateOnly(new Date(Math.max(...endDates))),
+      events: Array.from(eventsByKey.values()).sort((a, b) =>
+        a.event_date.localeCompare(b.event_date),
+      ),
+    };
   }
 
   /**

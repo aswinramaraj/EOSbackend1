@@ -1,20 +1,20 @@
 import 'dotenv/config';
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '../../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
   constructor() {
     const connectionString = process.env.DATABASE_URL!;
 
-    // The Supabase pooler is in session mode with a hard cap of 15 total
-    // connections shared across everything hitting this DB (this app,
-    // Prisma Studio, etc.) — pg.Pool defaults to `max: 10` per instance,
-    // which alone eats most of that budget and causes intermittent
-    // "max clients reached" 500s under any concurrent load. Capping this
-    // pool low leaves headroom for other consumers; requests beyond the
-    // cap queue instead of failing, which is the trade we want here.
+    // The Supabase pooler this project points at (session mode, port 5432)
+    // caps total client connections at 15, shared with PostgREST/pg_cron/etc.
+    // A single Nest instance has no business holding more than a handful of
+    // those, so `max` is capped well below the pooler's ceiling.
     const adapter = new PrismaPg({
       connectionString,
       max: 5,
@@ -25,5 +25,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
 
   async onModuleInit() {
     await this.$connect();
+  }
+
+  async onModuleDestroy() {
+    await this.$disconnect();
   }
 }

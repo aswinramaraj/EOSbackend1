@@ -12,6 +12,12 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger('Bootstrap');
 
+  // Without this, SIGTERM/SIGINT (including nest's own --watch restarts)
+  // kill the process without running onModuleDestroy, so PrismaService never
+  // closes its pool — each restart leaks connections at the DB pooler until
+  // its low connection ceiling is exhausted.
+  app.enableShutdownHooks();
+
   // ── Global prefix ────────────────────────────────────────────────────────────
   app.setGlobalPrefix('api/v1');
 
@@ -48,7 +54,7 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, swaggerDocument);
 
   // ── Start ────────────────────────────────────────────────────────────────────
-  const port = parseInt(process.env.PORT || '6000', 10);
+  const port = parseInt(process.env.PORT || '3001', 10);
   await app.listen(port);
   logger.log(`🚀 EOS Backend running on http://localhost:${port}/api/v1`);
   logger.log(`📘 Swagger docs available at http://localhost:${port}/api/docs`);

@@ -31,12 +31,38 @@ export class ExamTimetableService {
     }
   }
 
+  /**
+   * exam_timetable rows now belong to an exam_timetable_versions parent
+   * (draft/publish workflow), but no version-management API exists yet.
+   * Until that lands, every exam shares one department-agnostic "default"
+   * version, created lazily here, so existing callers can keep creating/
+   * updating timetable rows without knowing about versions.
+   */
+  private async getOrCreateDefaultVersion(examId: number) {
+    const existing = await this.prisma.exam_timetable_versions.findFirst({
+      where: { exam_id: examId, department_id: null },
+    });
+    if (existing) {
+      return existing;
+    }
+
+    return this.prisma.exam_timetable_versions.create({
+      data: {
+        exam_id: examId,
+        department_id: null,
+        version_number: 1,
+        status: 'draft',
+      },
+    });
+  }
+
   async create(createExamTimetableDto: CreateExamTimetableDto) {
     const {
       exam_subject_mapping_id,
       exam_date,
       start_time,
       end_time,
+      session,
       is_published,
     } = createExamTimetableDto;
 
@@ -51,8 +77,10 @@ export class ExamTimetableService {
       });
     }
 
-    const existing = await this.prisma.exam_timetable.findUnique({
-      where: { exam_subject_mapping_id },
+    const version = await this.getOrCreateDefaultVersion(mapping.exam_id);
+
+    const existing = await this.prisma.exam_timetable.findFirst({
+      where: { exam_subject_mapping_id, version_id: version.id },
     });
 
     if (existing) {
@@ -67,15 +95,28 @@ export class ExamTimetableService {
     this.assertValidTimeRange(startTime, endTime);
 
     try {
-      return await this.prisma.exam_timetable.create({
+      const timetable = await this.prisma.exam_timetable.create({
         data: {
           exam_subject_mapping_id,
           exam_date: new Date(exam_date),
           start_time: startTime,
           end_time: endTime,
-          is_published: is_published ?? false,
+          version_id: version.id,
+          session,
         },
       });
+
+      if (is_published !== undefined) {
+        await this.prisma.exam_subject_mapping.update({
+          where: { id: exam_subject_mapping_id },
+          data: {
+            is_published,
+            published_at: is_published ? new Date() : null,
+          },
+        });
+      }
+
+      return timetable;
     } catch (err: any) {
       if (err?.code === 'P2002') {
         throw new ConflictException({
@@ -171,8 +212,8 @@ export class ExamTimetableService {
         });
       }
 
-      const duplicate = await this.prisma.exam_timetable.findUnique({
-        where: { exam_subject_mapping_id },
+      const duplicate = await this.prisma.exam_timetable.findFirst({
+        where: { exam_subject_mapping_id, version_id: existing.version_id },
       });
 
       if (duplicate && duplicate.id !== id) {
@@ -193,7 +234,7 @@ export class ExamTimetableService {
     this.assertValidTimeRange(startTime, endTime);
 
     try {
-      return await this.prisma.exam_timetable.update({
+      const timetable = await this.prisma.exam_timetable.update({
         where: { id },
         data: {
           exam_subject_mapping_id:
@@ -203,9 +244,23 @@ export class ExamTimetableService {
             : undefined,
           start_time: updateExamTimetableDto.start_time ? startTime : undefined,
           end_time: updateExamTimetableDto.end_time ? endTime : undefined,
-          is_published: updateExamTimetableDto.is_published,
+          session: updateExamTimetableDto.session,
         },
       });
+
+      if (updateExamTimetableDto.is_published !== undefined) {
+        await this.prisma.exam_subject_mapping.update({
+          where: { id: exam_subject_mapping_id },
+          data: {
+            is_published: updateExamTimetableDto.is_published,
+            published_at: updateExamTimetableDto.is_published
+              ? new Date()
+              : null,
+          },
+        });
+      }
+
+      return timetable;
     } catch (err: any) {
       if (err?.code === 'P2002') {
         throw new ConflictException({

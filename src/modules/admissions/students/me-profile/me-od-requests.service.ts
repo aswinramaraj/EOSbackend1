@@ -6,6 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { computeOverallStatus } from './od-status.util';
+import { formatTime } from './od-time.util';
 
 function toDateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -83,8 +85,11 @@ export class MeOdRequestsService {
         team_id: true,
         from_date: true,
         to_date: true,
+        from_time: true,
+        to_time: true,
         reason: true,
         mentor_approval_status: true,
+        faculty: { select: { first_name: true, last_name: true } },
       },
     });
     if (!request) {
@@ -125,30 +130,19 @@ export class MeOdRequestsService {
       team_id: request.team_id,
       from_date: toDateOnly(request.from_date),
       to_date: toDateOnly(request.to_date),
+      from_time: formatTime(request.from_time),
+      to_time: formatTime(request.to_time),
       reason: request.reason,
+      faculty_guide_name: request.faculty
+        ? `${request.faculty.first_name} ${request.faculty.last_name ?? ''}`.trim()
+        : null,
       mentor_approval_status: request.mentor_approval_status,
-      overall_status: this.computeOverallStatus(
+      overall_status: computeOverallStatus(
         request.mentor_approval_status,
         approvals.map((a) => a.status),
       ),
       member_approvals: memberApprovals,
     };
-  }
-
-  private computeOverallStatus(
-    mentorStatus: string,
-    approvalStatuses: string[],
-  ): string {
-    if (mentorStatus !== 'approved') {
-      return 'pending_mentor';
-    }
-    if (approvalStatuses.some((s) => s === 'rejected')) {
-      return 'rejected';
-    }
-    if (approvalStatuses.some((s) => s === 'pending')) {
-      return 'pending_hod';
-    }
-    return 'approved';
   }
 
   private async fetchApprovals(userId: number, odRequestId: number) {

@@ -11,5 +11,10 @@ import { SupabaseStorageProvider } from './providers/supabase-storage.provider';
 @Module({
   providers: [{ provide: StorageProvider, useClass: SupabaseStorageProvider }],
   exports: [StorageProvider],
+import { StorageService } from './storage.service';
+
+@Module({
+  providers: [StorageService],
+  exports: [StorageService],
 })
 export class StorageModule {}

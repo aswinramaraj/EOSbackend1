@@ -81,6 +81,9 @@ describe('MeOdRequestsService', () => {
       team_id: 61,
       from_date: '2099-08-12',
       to_date: '2099-08-13',
+      from_time: null,
+      to_time: null,
+      faculty_guide_name: null,
       reason: 'Inter-college hackathon',
       mentor_approval_status: 'approved',
       overall_status: 'pending_hod',
@@ -105,6 +108,27 @@ describe('MeOdRequestsService', () => {
         },
       ],
     });
+  });
+
+  it('formats from_time/to_time as HH:mm when set', async () => {
+    prisma.students.findUnique.mockResolvedValue({ id: 7 });
+    prisma.od_requests.findUnique.mockResolvedValue({
+      id: 61,
+      team_id: 61,
+      from_date: new Date('2099-08-12T00:00:00.000Z'),
+      to_date: new Date('2099-08-13T00:00:00.000Z'),
+      from_time: new Date('1970-01-01T09:30:00.000Z'),
+      to_time: new Date('1970-01-01T17:00:00.000Z'),
+      reason: null,
+      mentor_approval_status: 'approved',
+    });
+    prisma.od_team_members.findUnique.mockResolvedValue({ id: 1 });
+    prisma.od_request_hod_approvals.findMany.mockResolvedValue([]);
+
+    const result = await service.getOdRequestStatus(103, 61);
+
+    expect(result.from_time).toBe('09:30');
+    expect(result.to_time).toBe('17:00');
   });
 
   describe('overall_status precedence', () => {

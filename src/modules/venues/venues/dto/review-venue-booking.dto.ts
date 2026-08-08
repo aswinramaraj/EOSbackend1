@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsOptional } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 
 /**
  * PATCH /venue-bookings/:id (IQAC only).
@@ -18,4 +18,8 @@ export class ReviewVenueBookingDto {
   @IsOptional()
   @IsInt()
   alternative_venue_id?: number;
+
+  @IsOptional()
+  @IsString()
+  admin_remarks?: string;
 }

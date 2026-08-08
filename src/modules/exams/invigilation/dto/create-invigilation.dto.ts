@@ -1,12 +1,6 @@
-import {
-  IsDateString,
-  IsInt,
-  IsNotEmpty,
-  IsPositive,
-  IsString,
-  MaxLength,
-} from 'class-validator';
+import { IsDateString, IsEnum, IsInt, IsPositive } from 'class-validator';
 import { Type } from 'class-transformer';
+import { exam_session_enum } from '../../../../../generated/prisma/enums';
 
 export class CreateInvigilationDto {
   @IsInt()
@@ -27,8 +21,6 @@ export class CreateInvigilationDto {
   @IsDateString()
   duty_date!: string;
 
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(20)
-  shift!: string;
+  @IsEnum(exam_session_enum, { message: 'session must be one of FN, AN' })
+  session!: exam_session_enum;
 }
