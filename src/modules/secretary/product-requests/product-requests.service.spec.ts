@@ -6,10 +6,10 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications/notifications.service';
-import { MediaRequestsService } from './media-requests.service';
+import { ProductRequestsService } from './product-requests.service';
 
-describe('MediaRequestsService', () => {
-  let service: MediaRequestsService;
+describe('ProductRequestsService', () => {
+  let service: ProductRequestsService;
   let mockNotificationsService: { create: jest.Mock };
 
   beforeEach(async () => {
@@ -17,18 +17,20 @@ describe('MediaRequestsService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        MediaRequestsService,
+        ProductRequestsService,
         {
           provide: PrismaService,
           useValue: {
-            faculty: { findUnique: jest.fn() },
-            media_requests: {
+            secretary_product_requests: {
               create: jest.fn(),
               findMany: jest.fn(),
               count: jest.fn(),
               findUnique: jest.fn(),
               update: jest.fn(),
               delete: jest.fn(),
+            },
+            secretary_product_request_items: {
+              deleteMany: jest.fn(),
             },
             $transaction: jest.fn(),
           },
@@ -40,40 +42,48 @@ describe('MediaRequestsService', () => {
       ],
     }).compile();
 
-    service = module.get<MediaRequestsService>(MediaRequestsService);
+    service = module.get<ProductRequestsService>(ProductRequestsService);
   });
 
   it('should be defined', () => {
     expect(service).toBeDefined();
   });
 
-  it('notifies the requester when the media room updates the request status', async () => {
+  it('notifies the requester when a pending request is reviewed', async () => {
     const prisma = (service as unknown as { prisma: any }).prisma;
-    prisma.media_requests.findUnique.mockResolvedValue({
-      id: 3,
+    prisma.secretary_product_requests.findUnique.mockResolvedValue({
+      id: 5,
+      title: 'Lab equipment',
       status: 'pending',
-      requested_by_user_id: 55,
+      requested_by_user_id: 99,
     });
-    prisma.media_requests.update.mockResolvedValue({
-      id: 3,
-      description: 'Symposium coverage',
+    prisma.secretary_product_requests.update.mockResolvedValue({
+      id: 5,
+      title: 'Lab equipment',
+      justification: null,
       status: 'approved',
-      media_file_url: null,
       created_at: new Date(),
-      event_name: 'Symposium',
-      event_date: new Date(),
-      coordinator_name: 'Priya',
-      contact_number: '9000000000',
-      media_types: ['photography'],
-      faculty: null,
-      venues: null,
-      users: { id: 55, email: 'sec@example.com', faculty: null, non_teaching_staff: [] },
+      updated_at: new Date(),
+      reviewed_at: new Date(),
+      secretary_product_request_items: [],
+      users_secretary_product_requests_requested_by_user_idTousers: {
+        id: 99,
+        email: 'req@example.com',
+        faculty: null,
+        non_teaching_staff: [],
+      },
+      users_secretary_product_requests_reviewed_by_user_idTousers: {
+        id: 1,
+        email: 'admin@example.com',
+        faculty: null,
+        non_teaching_staff: [],
+      },
     });
 
-    await service.update(3, { status: 'approved' });
+    await service.review(5, { decision: 'approved' }, 1);
 
     expect(mockNotificationsService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ user_id: 55 }),
+      expect.objectContaining({ user_id: 99 }),
     );
   });
 });

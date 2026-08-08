@@ -103,12 +103,12 @@ export class VenuesController {
   }
 
   /**
-   * POST /api/v1/venue-bookings — HoD / Faculty / Placement / IQAC.
+   * POST /api/v1/venue-bookings — HoD / Faculty / Placement / IQAC / Secretary.
    * Always submitted as 'pending'; never auto-approved.
    */
   @Post('venue-bookings')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT, ROLES.IQAC)
+  @Roles(ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT, ROLES.IQAC, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
   createBooking(
     @Body() dto: CreateVenueBookingDto,
@@ -118,11 +118,11 @@ export class VenuesController {
   }
 
   /**
-   * GET /api/v1/venue-bookings — IQAC (all) / HoD-Faculty-Placement (own only).
+   * GET /api/v1/venue-bookings — IQAC (all) / HoD-Faculty-Placement-Secretary (own only).
    */
   @Get('venue-bookings')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.IQAC, ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT)
+  @Roles(ROLES.IQAC, ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT, ROLES.SECRETARY)
   findAllBookings(
     @Query() query: ListVenueBookingQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -131,11 +131,11 @@ export class VenuesController {
   }
 
   /**
-   * GET /api/v1/venue-bookings/:id — IQAC (any) / HoD-Faculty-Placement (own only).
+   * GET /api/v1/venue-bookings/:id — IQAC (any) / HoD-Faculty-Placement-Secretary (own only).
    */
   @Get('venue-bookings/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.IQAC, ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT)
+  @Roles(ROLES.IQAC, ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT, ROLES.SECRETARY)
   findOneBooking(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

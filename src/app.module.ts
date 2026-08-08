@@ -101,6 +101,10 @@ import { VendorQuotationsModule } from './modules/procurement/vendor-quotations/
 import { VendorsModule } from './modules/procurement/vendors/vendors.module';
 
 import { VenuesModule } from './modules/venues/venues/venues.module';
+import { ServiceRequestsModule } from './modules/secretary/service-requests/service-requests.module';
+import { ProductRequestsModule } from './modules/secretary/product-requests/product-requests.module';
+import { SecretaryDashboardModule } from './modules/secretary/dashboard/dashboard.module';
+import { SecretaryReportsModule } from './modules/secretary/reports/reports.module';
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
@@ -224,6 +228,10 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     VendorsModule,
 
     VenuesModule,
+    ServiceRequestsModule,
+    ProductRequestsModule,
+    SecretaryDashboardModule,
+    SecretaryReportsModule,
     NotificationsModule,
     FeedbackModule,
     HallTicketClearanceModule,

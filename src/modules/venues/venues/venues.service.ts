@@ -241,8 +241,9 @@ export class VenuesService {
   }
 
   /**
-   * GET /venues?from=...&to=...&page=...&limit=... — availability check
-   * (any authenticated user; no department/ownership filtering).
+   * GET /venues?from=...&to=...&search=...&page=...&limit=... — availability
+   * check (any authenticated user; no department/ownership filtering).
+   * `search` optionally filters by venue name (contains, case-insensitive).
    *
    * `venues` has no `created_at` column, so results are ordered by `id`
    * (same fallback used by lesson_plans, which has the same limitation).
@@ -259,8 +260,13 @@ export class VenuesService {
       throw new BadRequestException('from must be before to');
     }
 
+    const where = query.search
+      ? { name: { contains: query.search, mode: 'insensitive' as const } }
+      : {};
+
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.venues.findMany({
+        where,
         skip: query.skip,
         take: query.limit,
         orderBy: { id: 'asc' },
@@ -344,7 +350,7 @@ export class VenuesService {
   }
 
   /**
-   * POST /venue-bookings (HoD / Faculty / Placement / IQAC).
+   * POST /venue-bookings (HoD / Faculty / Placement / IQAC / Secretary).
    *
    * workflow.md: venue reservations are reviewed by IQAC afterwards, which
    * either approves, offers an alternative venue, or denies for no
@@ -366,9 +372,16 @@ export class VenuesService {
     const fromDatetime = new Date(dto.from_datetime);
     const toDatetime = new Date(dto.to_datetime);
 
-    if (fromDatetime <= new Date()) {
+    // A precise instant comparison, not a calendar-date-only one: a booking
+    // for today at a time that has already passed is genuinely in the past
+    // and must be rejected, while a booking later today (or any future day)
+    // must be allowed. `fromDatetime`/`now` are both absolute instants
+    // (parsed from/constructed with full timezone information), so `<` here
+    // is timezone-safe regardless of which zone the server or the caller is
+    // in — the comparison never needs to reason about "local" at all.
+    if (fromDatetime < new Date()) {
       throw new UnprocessableEntityException({
-        message: 'from_datetime must be in the future',
+        message: 'from_datetime must not be in the past',
         errorCode: 'INVALID_TIME_RANGE',
       });
     }

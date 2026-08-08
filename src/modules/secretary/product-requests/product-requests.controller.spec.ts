@@ -6,23 +6,22 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications/notifications.service';
-import { MediaRequestsController } from './media-requests.controller';
-import { MediaRequestsService } from './media-requests.service';
+import { ProductRequestsController } from './product-requests.controller';
+import { ProductRequestsService } from './product-requests.service';
 
-describe('MediaRequestsController', () => {
-  let controller: MediaRequestsController;
+describe('ProductRequestsController', () => {
+  let controller: ProductRequestsController;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      controllers: [MediaRequestsController],
+      controllers: [ProductRequestsController],
       providers: [
-        MediaRequestsService,
+        ProductRequestsService,
         { provide: NotificationsService, useValue: { create: jest.fn() } },
         {
           provide: PrismaService,
           useValue: {
-            faculty: { findUnique: jest.fn() },
-            media_requests: {
+            secretary_product_requests: {
               create: jest.fn(),
               findMany: jest.fn(),
               count: jest.fn(),
@@ -30,13 +29,18 @@ describe('MediaRequestsController', () => {
               update: jest.fn(),
               delete: jest.fn(),
             },
+            secretary_product_request_items: {
+              deleteMany: jest.fn(),
+            },
             $transaction: jest.fn(),
           },
         },
       ],
     }).compile();
 
-    controller = module.get<MediaRequestsController>(MediaRequestsController);
+    controller = module.get<ProductRequestsController>(
+      ProductRequestsController,
+    );
   });
 
   it('should be defined', () => {

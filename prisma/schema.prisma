@@ -67,14 +67,16 @@ model alumni_batches {
 }
 
 model alumni_group_messages {
-  id                         Int            @id @default(autoincrement())
+  id                         Int             @id @default(autoincrement())
   alumni_batch_id            Int
-  posted_by_alumni_member_id Int
+  posted_by_alumni_member_id Int?
   content                    String
-  attachment_url             String?        @db.VarChar(500)
-  created_at                 DateTime       @default(now()) @db.Timestamptz(6)
-  alumni_batches             alumni_batches @relation(fields: [alumni_batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  alumni_members             alumni_members @relation(fields: [posted_by_alumni_member_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  attachment_url             String?         @db.VarChar(500)
+  created_at                 DateTime        @default(now()) @db.Timestamptz(6)
+  posted_by_user_id          Int?
+  alumni_batches             alumni_batches  @relation(fields: [alumni_batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  alumni_members             alumni_members? @relation(fields: [posted_by_alumni_member_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                      users?          @relation(fields: [posted_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([alumni_batch_id, created_at], map: "idx_alumni_group_messages_batch")
 }
@@ -119,6 +121,7 @@ model announcements {
   status                     announcement_status_enum     @default(published)
   file_key                   String?
   announcement_class_mapping announcement_class_mapping[]
+  announcement_role_mapping  announcement_role_mapping[]
   batches                    batches?                     @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   departments                departments?                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                      users                        @relation(fields: [posted_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -194,6 +197,11 @@ model assignments {
   semester                  Int                         @db.SmallInt
   sequence_no               Int                         @db.SmallInt
   title                     String?                     @db.VarChar(200)
+  description               String?                     @db.VarChar(2000)
+  due_date                  DateTime?                   @db.Timestamptz(6)
+  max_marks                 Int?
+  task_type                 task_type_enum              @default(assignment)
+  attachment_url            String?                     @db.VarChar(500)
   classes                   classes                     @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   faculty                   faculty                     @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   subjects                  subjects                    @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -413,6 +421,7 @@ model classes {
   faculty_subject_class_mapping faculty_subject_class_mapping[]
   feedback_forms                feedback_forms[]
   lesson_plans                  lesson_plans[]
+  lms_folder_classes            lms_folder_classes[]
   lms_notes                     lms_notes[]
   project_teams                 project_teams[]
   students                      students[]
@@ -425,6 +434,7 @@ model companies {
   id               Int                @id @default(autoincrement())
   name             String             @db.VarChar(200)
   profile_info     String?
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
   placement_drives placement_drives[]
 }
 
@@ -664,6 +674,7 @@ model faculty {
   previous_experience_years     Int?
   office_room                   String?                         @db.VarChar(100)
   reports_to_faculty_id         Int?
+  resume_url                    String?                         @db.VarChar(500)
   appraisal_requests            appraisal_requests[]
   assignments                   assignments[]
   attendance_records            attendance_records[]
@@ -687,6 +698,7 @@ model faculty {
   faculty_subject_class_mapping faculty_subject_class_mapping[]
   invigilation_duties           invigilation_duties[]
   lesson_plans                  lesson_plans[]
+  lms_folders                   lms_folders[]
   lms_notes                     lms_notes[]
   malpractice_incidents         malpractice_incidents[]
   media_requests                media_requests[]
@@ -1049,16 +1061,17 @@ model invigilation_duties {
 }
 
 model lesson_plans {
-  id         Int      @id @default(autoincrement())
-  faculty_id Int
-  subject_id Int
-  class_id   Int
-  semester   Int      @db.SmallInt
-  content    String?
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
-  classes    classes  @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  faculty    faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  subjects   subjects @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                   Int                    @id @default(autoincrement())
+  faculty_id           Int
+  subject_id           Int
+  class_id             Int
+  semester             Int                    @db.SmallInt
+  content              String?
+  updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  lesson_plan_sessions lesson_plan_sessions[]
+  classes              classes                @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty              faculty                @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subjects             subjects               @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([faculty_id, subject_id, class_id, semester])
 }
@@ -1280,6 +1293,12 @@ model placement_drives {
   status                     String                       @default("scheduled") @db.VarChar(20)
   created_by_user_id         Int?
   notification_sent_at       DateTime?                    @db.Timestamptz(6)
+  job_role                   String?                      @db.VarChar(150)
+  package_lpa                Decimal?                     @db.Decimal(6, 2)
+  eligibility_cgpa           Decimal?                     @db.Decimal(3, 2)
+  venue                      String?                      @db.VarChar(200)
+  registration_start         DateTime?                    @db.Date
+  registration_end           DateTime?                    @db.Date
   companies                  companies                    @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                      users?                       @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_drive_applications student_drive_applications[]
@@ -1367,9 +1386,10 @@ model purchase_indents {
   department_id            Int
   item_name                String                     @db.VarChar(255)
   quantity                 Int
-  purpose                  String?                    @db.VarChar(255)
+  purpose                  String?
   status                   indent_status_enum         @default(submitted)
   created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  needed_by                DateTime?                  @db.Date
   book_borrow_records      book_borrow_records?
   departments              departments                @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                    users                      @relation(fields: [requested_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1387,6 +1407,8 @@ model purchase_order_proposals {
   hod_reviewed_by                                           Int?
   hod_reviewed_at                                           DateTime?            @db.Timestamptz(6)
   status                                                    proposal_status_enum @default(pending)
+  hod_remarks                                               String?
+  finance_remarks                                           String?
   users_purchase_order_proposals_finance_reviewed_byTousers users?               @relation("purchase_order_proposals_finance_reviewed_byTousers", fields: [finance_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_purchase_order_proposals_hod_reviewed_byTousers     users?               @relation("purchase_order_proposals_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   purchase_indents                                          purchase_indents     @relation(fields: [indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1448,10 +1470,11 @@ model revaluation_requests {
 }
 
 model roles {
-  id          Int     @id @default(autoincrement())
-  name        String  @unique @db.VarChar(50)
-  description String? @db.VarChar(255)
-  users       users[]
+  id                        Int                         @id @default(autoincrement())
+  name                      String                      @unique @db.VarChar(50)
+  description               String?                     @db.VarChar(255)
+  announcement_role_mapping announcement_role_mapping[]
+  users                     users[]
 }
 
 model salary_divisions {
@@ -1497,13 +1520,75 @@ model seating_arrangements {
   @@unique([hall_plan_id, seat_number])
 }
 
+model secretary_product_request_items {
+  id                         Int                        @id @default(autoincrement())
+  request_id                 Int
+  product_name               String                     @db.VarChar(255)
+  quantity                   Int
+  purpose                    String?                    @db.VarChar(255)
+  created_at                 DateTime                   @default(now()) @db.Timestamptz(6)
+  secretary_product_requests secretary_product_requests @relation(fields: [request_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([request_id], map: "idx_secretary_product_request_items_request")
+}
+
+model secretary_product_requests {
+  id                                                           Int                               @id @default(autoincrement())
+  requested_by_user_id                                         Int
+  title                                                        String                            @db.VarChar(255)
+  justification                                                String?                           @db.VarChar(1000)
+  status                                                       secretary_request_status_enum     @default(draft)
+  reviewed_by_user_id                                          Int?
+  reviewed_at                                                  DateTime?                         @db.Timestamptz(6)
+  created_at                                                   DateTime                          @default(now()) @db.Timestamptz(6)
+  updated_at                                                   DateTime                          @default(now()) @db.Timestamptz(6)
+  secretary_product_request_items                              secretary_product_request_items[]
+  users_secretary_product_requests_requested_by_user_idTousers users                             @relation("secretary_product_requests_requested_by_user_idTousers", fields: [requested_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_secretary_product_requests_reviewed_by_user_idTousers  users?                            @relation("secretary_product_requests_reviewed_by_user_idTousers", fields: [reviewed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([requested_by_user_id], map: "idx_secretary_product_requests_requester")
+  @@index([status], map: "idx_secretary_product_requests_status")
+}
+
+model secretary_service_request_items {
+  id                         Int                        @id @default(autoincrement())
+  request_id                 Int
+  service_name               String                     @db.VarChar(255)
+  created_at                 DateTime                   @default(now()) @db.Timestamptz(6)
+  secretary_service_requests secretary_service_requests @relation(fields: [request_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([request_id], map: "idx_secretary_service_request_items_request")
+}
+
+model secretary_service_requests {
+  id                                                           Int                               @id @default(autoincrement())
+  requested_by_user_id                                         Int
+  title                                                        String                            @db.VarChar(255)
+  justification                                                String?                           @db.VarChar(1000)
+  status                                                       secretary_request_status_enum     @default(draft)
+  reviewed_by_user_id                                          Int?
+  reviewed_at                                                  DateTime?                         @db.Timestamptz(6)
+  created_at                                                   DateTime                          @default(now()) @db.Timestamptz(6)
+  updated_at                                                   DateTime                          @default(now()) @db.Timestamptz(6)
+  secretary_service_request_items                              secretary_service_request_items[]
+  users_secretary_service_requests_requested_by_user_idTousers users                             @relation("secretary_service_requests_requested_by_user_idTousers", fields: [requested_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_secretary_service_requests_reviewed_by_user_idTousers  users?                            @relation("secretary_service_requests_reviewed_by_user_idTousers", fields: [reviewed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([requested_by_user_id], map: "idx_secretary_service_requests_requester")
+  @@index([status], map: "idx_secretary_service_requests_status")
+}
+
 model service_indents {
   id                      Int                       @id @default(autoincrement())
   requested_by_user_id    Int
   department_id           Int
-  service_description     String                    @db.VarChar(255)
+  service_description     String
   status                  indent_status_enum        @default(submitted)
   created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  title                   String?                   @db.VarChar(255)
+  needed_by               DateTime?                 @db.Date
+  quantity                String?                   @db.VarChar(100)
+  location                String?                   @db.VarChar(255)
   departments             departments               @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                   users                     @relation(fields: [requested_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   service_order_proposals service_order_proposals[]
@@ -1520,6 +1605,8 @@ model service_order_proposals {
   hod_reviewed_by                                          Int?
   hod_reviewed_at                                          DateTime?            @db.Timestamptz(6)
   status                                                   proposal_status_enum @default(pending)
+  hod_remarks                                              String?
+  finance_remarks                                          String?
   users_service_order_proposals_finance_reviewed_byTousers users?               @relation("service_order_proposals_finance_reviewed_byTousers", fields: [finance_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_service_order_proposals_hod_reviewed_byTousers     users?               @relation("service_order_proposals_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   service_indents                                          service_indents      @relation(fields: [indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1580,6 +1667,9 @@ model student_assignment_status {
   is_submitted         Boolean     @default(false)
   marked_by_faculty_id Int?
   marked_at            DateTime?   @db.Timestamptz(6)
+  submission_file_url  String?     @db.VarChar(500)
+  submitted_at         DateTime?   @db.Timestamptz(6)
+  marks_obtained       Int?
   assignments          assignments @relation(fields: [assignment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   faculty              faculty?    @relation(fields: [marked_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   students             students    @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1618,6 +1708,8 @@ model student_drive_applications {
   updated_by_user_id Int?
   updated_at         DateTime                      @default(now()) @db.Timestamptz(6)
   last_cleared_round Int?                          @db.SmallInt
+  offer_response     String?                       @db.VarChar(20)
+  offered_package    Decimal?                      @db.Decimal(6, 2)
   placement_drives   placement_drives              @relation(fields: [drive_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   students           students                      @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users              users?                        @relation(fields: [updated_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1743,15 +1835,6 @@ model student_transport_mapping {
   students                                                                          students         @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
-model student_wallets {
-  id                  Int                   @id @default(autoincrement())
-  student_id          Int                   @unique
-  balance             Decimal               @default(0) @db.Decimal(12, 2)
-  updated_at          DateTime              @default(now()) @db.Timestamptz(6)
-  students            students              @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  wallet_transactions wallet_transactions[]
-}
-
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model students {
   id                                                                Int                                @id @default(autoincrement())
@@ -1792,6 +1875,9 @@ model students {
   knew_institution_by                                               String?                            @db.VarChar(100)
   nominee                                                           String?                            @db.VarChar(150)
   created_at                                                        DateTime                           @default(now()) @db.Timestamptz(6)
+  photo_url                                                         String?                            @db.VarChar(500)
+  photo_uploaded_at                                                 DateTime?                          @db.Timestamptz(6)
+  face_enrolled_at                                                  DateTime?                          @db.Timestamptz(6)
   alumni_members                                                    alumni_members?
   attendance_records                                                attendance_records[]
   bonafide_requests                                                 bonafide_requests[]
@@ -1824,8 +1910,10 @@ model students {
   student_certificates                                              student_certificates[]
   student_contacts                                                  student_contacts?
   student_drive_applications                                        student_drive_applications[]
+  student_entrepreneurship                                          student_entrepreneurship?
   student_family_details                                            student_family_details?
   student_fee_demand_mapping                                        student_fee_demand_mapping[]
+  student_higher_education                                          student_higher_education?
   student_hostel_mapping                                            student_hostel_mapping?
   student_identity_marks                                            student_identity_marks[]
   student_leaves                                                    student_leaves[]
@@ -1833,7 +1921,6 @@ model students {
   student_projects                                                  student_projects[]
   student_sensitive_info                                            student_sensitive_info?
   student_transport_mapping                                         student_transport_mapping?
-  student_wallets                                                   student_wallets?
   batches                                                           batches                            @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   classes                                                           classes?                           @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   courses                                                           courses                            @relation(fields: [course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1854,12 +1941,18 @@ model subjects {
   subject_code                  String                          @unique @db.VarChar(30)
   department_id                 Int?
   credits                       Int?                            @db.SmallInt
+  course_type                   subject_course_type_enum?
+  short_code                    String?                         @db.VarChar(20)
+  category                      subject_category_enum?
+  hours                         Int?                            @db.SmallInt
+  semester                      Int?                            @db.SmallInt
   assignments                   assignments[]
   attendance_records            attendance_records[]
   class_subjects                class_subjects[]
   exam_subject_mapping          exam_subject_mapping[]
   faculty_subject_class_mapping faculty_subject_class_mapping[]
   lesson_plans                  lesson_plans[]
+  lms_folders                   lms_folders[]
   lms_notes                     lms_notes[]
   revaluation_requests          revaluation_requests[]
   departments                   departments?                    @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -2069,25 +2162,545 @@ model wallet_outlets {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model wallet_transactions {
-  id                   Int                    @id @default(autoincrement())
-  wallet_id            Int
-  txn_type             wallet_txn_type_enum
-  source               wallet_txn_source_enum
-  amount               Decimal                @db.Decimal(12, 2)
-  status               wallet_txn_status_enum @default(pending)
-  processed_by_user_id Int?
-  razorpay_order_id    String?                @unique(map: "idx_wallet_txn_razorpay_order", where: raw("(razorpay_order_id IS NOT NULL)")) @db.VarChar(100)
-  razorpay_payment_id  String?                @db.VarChar(100)
-  razorpay_signature   String?                @db.VarChar(255)
-  remarks              String?                @db.VarChar(255)
-  created_at           DateTime               @default(now()) @db.Timestamptz(6)
-  outlet_id            Int?
-  users                users?                 @relation(fields: [processed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "wallet_transactions_collected_by_user_id_fkey")
-  wallet_outlets       wallet_outlets?        @relation(fields: [outlet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  student_wallets      student_wallets        @relation(fields: [wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                                                          Int                    @id @default(autoincrement())
+  wallet_id                                                   Int
+  txn_type                                                    wallet_txn_type_enum
+  source                                                      wallet_txn_source_enum
+  amount                                                      Decimal                @db.Decimal(12, 2)
+  status                                                      wallet_txn_status_enum @default(pending)
+  processed_by_user_id                                        Int?
+  razorpay_order_id                                           String?                @unique(map: "idx_wallet_txn_razorpay_order", where: raw("(razorpay_order_id IS NOT NULL)")) @db.VarChar(100)
+  razorpay_payment_id                                         String?                @db.VarChar(100)
+  razorpay_signature                                          String?                @db.VarChar(255)
+  remarks                                                     String?                @db.VarChar(255)
+  created_at                                                  DateTime               @default(now()) @db.Timestamptz(6)
+  outlet_id                                                   Int?
+  counterparty_wallet_id                                      Int?
+  related_transaction_id                                      Int?
+  users                                                       users?                 @relation(fields: [processed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "wallet_transactions_collected_by_user_id_fkey")
+  wallets_wallet_transactions_counterparty_wallet_idTowallets wallets?               @relation("wallet_transactions_counterparty_wallet_idTowallets", fields: [counterparty_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  wallet_outlets                                              wallet_outlets?        @relation(fields: [outlet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  wallet_transactions                                         wallet_transactions?   @relation("wallet_transactionsTowallet_transactions", fields: [related_transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  other_wallet_transactions                                   wallet_transactions[]  @relation("wallet_transactionsTowallet_transactions")
+  student_wallets                                             wallets                @relation(fields: [wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([outlet_id, created_at], map: "idx_wallet_txn_outlet")
   @@index([wallet_id, created_at], map: "idx_wallet_txn_wallet")
+  @@index([counterparty_wallet_id], map: "idx_wallet_txn_counterparty")
+}
+
+model coe_profiles {
+  id         Int      @id @default(autoincrement())
+  user_id    Int      @unique
+  is_senior  Boolean  @default(false)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model exam_timetable_versions {
+  id                                                        Int                           @id @default(autoincrement())
+  exam_id                                                   Int
+  department_id                                             Int?
+  version_number                                            Int
+  status                                                    timetable_version_status_enum @default(draft)
+  signature                                                 String?                       @db.VarChar(64)
+  created_by_user_id                                        Int?
+  created_at                                                DateTime                      @default(now()) @db.Timestamptz(6)
+  published_by_user_id                                      Int?
+  published_at                                              DateTime?                     @db.Timestamptz(6)
+  withdrawn_at                                              DateTime?                     @db.Timestamptz(6)
+  exam_timetable                                            exam_timetable[]
+  users_exam_timetable_versions_created_by_user_idTousers   users?                        @relation("exam_timetable_versions_created_by_user_idTousers", fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  departments                                               departments?                  @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  exams                                                     exams                         @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_exam_timetable_versions_published_by_user_idTousers users?                        @relation("exam_timetable_versions_published_by_user_idTousers", fields: [published_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([exam_id, department_id, version_number])
+}
+
+model faculty_activity_log {
+  id                 Int      @id @default(autoincrement())
+  faculty_id         Int
+  description        String   @db.VarChar(500)
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  created_by_user_id Int?
+  users              users?   @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty            faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_daily_attendance {
+  id              Int                            @id @default(autoincrement())
+  faculty_id      Int
+  attendance_date DateTime                       @db.Date
+  punch_in        DateTime?                      @db.Time(6)
+  punch_out       DateTime?                      @db.Time(6)
+  status          faculty_attendance_status_enum
+  academic_year   String                         @db.VarChar(20)
+  created_at      DateTime                       @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime                       @default(now()) @db.Timestamptz(6)
+  faculty         faculty                        @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([faculty_id, attendance_date])
+  @@index([faculty_id, attendance_date], map: "idx_faculty_daily_attendance_faculty_date")
+}
+
+model faculty_documents {
+  id                  Int      @id @default(autoincrement())
+  faculty_id          Int
+  document_type       String   @db.VarChar(100)
+  file_name           String   @db.VarChar(255)
+  file_url            String
+  uploaded_at         DateTime @default(now()) @db.Timestamptz(6)
+  uploaded_by_user_id Int?
+  faculty             faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users?   @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_od_requests {
+  id                      Int                         @id @default(autoincrement())
+  faculty_id              Int
+  from_date               DateTime                    @db.Date
+  to_date                 DateTime                    @db.Date
+  place                   String?                     @db.VarChar(255)
+  purpose                 String?                     @db.VarChar(255)
+  hod_approval_status     approval_status_enum        @default(pending)
+  hr_approval_status      approval_status_enum        @default(pending)
+  created_at              DateTime                    @default(now()) @db.Timestamptz(6)
+  organization_visited    String?                     @db.VarChar(255)
+  students_guided         Int?
+  sanction_order          String?                     @db.VarChar(100)
+  latitude                Decimal?                    @db.Decimal(10, 6)
+  longitude               Decimal?                    @db.Decimal(10, 6)
+  photo_url               String?                     @db.VarChar(500)
+  photo_uploaded_at       DateTime?                   @db.Timestamptz(6)
+  certificate_url         String?                     @db.VarChar(500)
+  certificate_uploaded_at DateTime?                   @db.Timestamptz(6)
+  verification_status     od_verification_status_enum @default(awaiting_documents)
+  email_sender            String?                     @db.VarChar(255)
+  email_receiver          String?                     @db.VarChar(255)
+  email_subject           String?                     @db.VarChar(255)
+  email_sent_at           DateTime?                   @db.Timestamptz(6)
+  email_body              String?
+  admin_remarks           String?
+  faculty                 faculty                     @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([faculty_id], map: "idx_faculty_od_requests_faculty_id")
+}
+
+model marks_entry_locks {
+  id                   Int         @id @default(autoincrement())
+  exam_id              Int
+  department_id        Int
+  is_locked            Boolean     @default(false)
+  locked_by_user_id    Int?
+  locked_at            DateTime?   @db.Timestamptz(6)
+  is_published         Boolean     @default(false)
+  published_by_user_id Int?
+  published_at         DateTime?   @db.Timestamptz(6)
+  departments          departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  exams                exams       @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([exam_id, department_id])
+}
+
+model announcement_role_mapping {
+  id              Int           @id @default(autoincrement())
+  announcement_id Int
+  role_id         Int
+  announcements   announcements @relation(fields: [announcement_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_announcement_role")
+  roles           roles         @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_role")
+
+  @@unique([announcement_id, role_id], map: "uq_announcement_role")
+  @@index([role_id], map: "idx_announcement_role_mapping_role")
+}
+
+model appraisal_attachments {
+  id                   Int                 @id @default(autoincrement())
+  appraisal_request_id Int
+  division_id          Int
+  file_url             String              @db.VarChar(500)
+  file_name            String              @db.VarChar(255)
+  storage_path         String              @db.VarChar(500)
+  uploaded_at          DateTime            @default(now()) @db.Timestamptz(6)
+  appraisal_requests   appraisal_requests  @relation(fields: [appraisal_request_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  appraisal_divisions  appraisal_divisions @relation(fields: [division_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([appraisal_request_id, division_id], map: "idx_appraisal_attachments_request_division")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model bills {
+  id                 Int              @id @default(autoincrement())
+  bill_number        String           @unique @db.VarChar(50)
+  purchase_order_id  Int?
+  service_order_id   Int?
+  vendor_id          Int
+  quantity           Int
+  unit_price         Decimal          @db.Decimal(12, 2)
+  total_amount       Decimal          @db.Decimal(12, 2)
+  remarks            String?          @db.VarChar(255)
+  status             bill_status_enum @default(pending)
+  created_by_user_id Int?
+  paid_at            DateTime?        @db.Timestamptz(6)
+  created_at         DateTime         @default(now()) @db.Timestamptz(6)
+  users              users?           @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_orders    purchase_orders? @relation(fields: [purchase_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  service_orders     service_orders?  @relation(fields: [service_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vendors            vendors          @relation(fields: [vendor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([purchase_order_id], map: "idx_bills_purchase_order")
+  @@index([service_order_id], map: "idx_bills_service_order")
+  @@index([status], map: "idx_bills_status")
+  @@index([vendor_id], map: "idx_bills_vendor")
+}
+
+model exam_pass_rules_settings {
+  id                 Int      @id @default(autoincrement())
+  internal_max_marks Decimal  @default(40) @db.Decimal(6, 2)
+  external_max_marks Decimal  @default(60) @db.Decimal(6, 2)
+  pass_mark_total    Decimal  @default(50) @db.Decimal(6, 2)
+  min_external_marks Decimal  @default(24) @db.Decimal(6, 2)
+  updated_at         DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model faculty_hostel_mapping {
+  id               Int             @id @default(autoincrement())
+  faculty_id       Int             @unique
+  room_id          Int
+  fee_structure_id Int?
+  allocated_date   DateTime        @default(dbgenerated("CURRENT_DATE")) @db.Date
+  faculty          faculty         @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fee_structures   fee_structures? @relation(fields: [fee_structure_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  hostel_rooms     hostel_rooms    @relation(fields: [room_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_id_card_issuances {
+  id                Int      @id @default(autoincrement())
+  faculty_id        Int
+  issued_at         DateTime @default(now()) @db.Timestamptz(6)
+  issued_by_user_id Int?
+  faculty           faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users             users?   @relation(fields: [issued_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([faculty_id, issued_at], map: "idx_faculty_id_card_issuances_faculty_id")
+}
+
+model grade_bands {
+  id             Int      @id @default(autoincrement())
+  grade_label    String   @unique @db.VarChar(10)
+  min_percentage Decimal  @db.Decimal(5, 2)
+  grade_point    Decimal? @db.Decimal(3, 1)
+  is_pass        Boolean  @default(true)
+  display_order  Int
+}
+
+model hostel_blocks {
+  id             Int              @id @default(autoincrement())
+  hostel_id      Int
+  name           String           @db.VarChar(100)
+  floors         Int              @db.SmallInt
+  created_at     DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime         @default(now()) @db.Timestamptz(6)
+  hostels        hostels          @relation(fields: [hostel_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  hostel_goods   hostel_goods[]
+  hostel_rooms   hostel_rooms[]
+  hostel_wardens hostel_wardens[]
+
+  @@unique([hostel_id, name])
+  @@index([hostel_id], map: "idx_hostel_blocks_hostel")
+}
+
+model hostel_goods {
+  id             Int             @id @default(autoincrement())
+  req_date       DateTime        @default(dbgenerated("CURRENT_DATE")) @db.Date
+  location       String          @db.VarChar(150)
+  item           String          @db.VarChar(150)
+  purpose        String?         @db.VarChar(255)
+  warden_id      Int?
+  block_id       Int?
+  received       Boolean         @default(false)
+  created_at     DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime        @default(now()) @db.Timestamptz(6)
+  hostel_blocks  hostel_blocks?  @relation(fields: [block_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  hostel_wardens hostel_wardens? @relation(fields: [warden_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([block_id], map: "idx_hostel_goods_block")
+}
+
+model hostel_quit_requests {
+  id                  Int                         @id @default(autoincrement())
+  student_id          Int
+  room_id             Int
+  requested_date      DateTime                    @default(dbgenerated("CURRENT_DATE")) @db.Date
+  reason              String?                     @db.VarChar(255)
+  fee_status          hostel_quit_fee_status_enum @default(pending)
+  status              approval_status_enum        @default(pending)
+  resolved_at         DateTime?                   @db.Timestamptz(6)
+  resolved_by_user_id Int?
+  created_at          DateTime                    @default(now()) @db.Timestamptz(6)
+  users               users?                      @relation(fields: [resolved_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  hostel_rooms        hostel_rooms                @relation(fields: [room_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students            students                    @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model hostel_wardens {
+  id            Int                     @id @default(autoincrement())
+  user_id       Int?
+  name          String                  @db.VarChar(150)
+  emp_id        String                  @unique @db.VarChar(30)
+  role          hostel_warden_role_enum
+  gender        String?                 @db.VarChar(20)
+  designation   String?                 @db.VarChar(100)
+  block_id      Int?
+  mobile        String?                 @db.VarChar(20)
+  email         String?                 @db.VarChar(150)
+  joined_date   DateTime?               @db.Date
+  quarters      String?                 @db.VarChar(50)
+  created_at    DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime                @default(now()) @db.Timestamptz(6)
+  hostel_goods  hostel_goods[]
+  hostel_blocks hostel_blocks?          @relation(fields: [block_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users         users?                  @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([block_id], map: "idx_hostel_wardens_block")
+}
+
+model invigilation_allocation_batches {
+  id                   Int                                 @id @default(autoincrement())
+  exam_id              Int
+  exam_date            DateTime                            @db.Date
+  session              exam_session_enum
+  status               invigilation_allocation_status_enum @default(draft)
+  created_by_user_id   Int?
+  created_at           DateTime                            @default(now()) @db.Timestamptz(6)
+  published_by_user_id Int?
+  published_at         DateTime?                           @db.Timestamptz(6)
+  exams                exams                               @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  invigilation_duties  invigilation_duties[]
+
+  @@unique([exam_id, exam_date, session])
+}
+
+model lesson_plan_sessions {
+  id             Int          @id @default(autoincrement())
+  lesson_plan_id Int
+  session_date   DateTime     @db.Date
+  unit_title     String?      @db.VarChar(200)
+  topic          String       @db.VarChar(300)
+  is_covered     Boolean      @default(false)
+  sequence_no    Int          @db.SmallInt
+  created_at     DateTime     @default(now()) @db.Timestamptz(6)
+  lesson_plans   lesson_plans @relation(fields: [lesson_plan_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([lesson_plan_id, sequence_no])
+  @@index([lesson_plan_id], map: "idx_lesson_plan_sessions_plan")
+}
+
+model lms_folder_classes {
+  id          Int         @id @default(autoincrement())
+  folder_id   Int
+  class_id    Int
+  classes     classes     @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  lms_folders lms_folders @relation(fields: [folder_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([folder_id, class_id])
+  @@index([class_id], map: "idx_lms_folder_classes_class")
+}
+
+model lms_folders {
+  id                 Int                  @id @default(autoincrement())
+  subject_id         Int
+  faculty_id         Int
+  title              String               @db.VarChar(200)
+  description        String?              @db.VarChar(1000)
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  lms_folder_classes lms_folder_classes[]
+  faculty            faculty              @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subjects           subjects             @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  lms_resources      lms_resources[]
+
+  @@index([faculty_id], map: "idx_lms_folders_faculty")
+  @@index([subject_id], map: "idx_lms_folders_subject")
+}
+
+model lms_resources {
+  id                  Int                    @id @default(autoincrement())
+  folder_id           Int
+  title               String                 @db.VarChar(200)
+  description         String?                @db.VarChar(1000)
+  resource_type       lms_resource_type_enum
+  file_url            String?                @db.VarChar(500)
+  link_url            String?                @db.VarChar(500)
+  uploaded_by_user_id Int?
+  created_at          DateTime               @default(now()) @db.Timestamptz(6)
+  lms_folders         lms_folders            @relation(fields: [folder_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users               users?                 @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([folder_id], map: "idx_lms_resources_folder")
+}
+
+model malpractice_incidents {
+  id                      Int                     @id @default(autoincrement())
+  student_id              Int
+  exam_id                 Int
+  exam_subject_mapping_id Int?
+  venue_id                Int?
+  incident_date           DateTime                @db.Date
+  session                 exam_session_enum
+  seat_number             String?                 @db.VarChar(20)
+  nature                  malpractice_nature_enum
+  action_taken            malpractice_action_enum
+  invigilator_remarks     String?                 @db.VarChar(1000)
+  reported_by_faculty_id  Int?
+  recorded_by_user_id     Int?
+  created_at              DateTime                @default(now()) @db.Timestamptz(6)
+  exams                   exams                   @relation(fields: [exam_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  exam_subject_mapping    exam_subject_mapping?   @relation(fields: [exam_subject_mapping_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                   users?                  @relation(fields: [recorded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty                 faculty?                @relation(fields: [reported_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students                students                @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  venues                  venues?                 @relation(fields: [venue_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model personal_calendar_entries {
+  id         Int                                   @id @default(autoincrement())
+  user_id    Int
+  entry_date DateTime                              @db.Date
+  title      String                                @db.VarChar(200)
+  category   personal_calendar_entry_category_enum @default(personal)
+  details    String?                               @db.VarChar(255)
+  created_at DateTime                              @default(now()) @db.Timestamptz(6)
+  users      users                                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, entry_date], map: "idx_personal_calendar_entries_user_date")
+}
+
+model photocopy_requests {
+  id                   Int                   @id @default(autoincrement())
+  student_id           Int
+  exam_marks_id        Int
+  fee_amount           Decimal               @db.Decimal(8, 2)
+  status               photocopy_status_enum @default(requested)
+  applied_at           DateTime              @default(now()) @db.Timestamptz(6)
+  processed_by_user_id Int?
+  processed_at         DateTime?             @db.Timestamptz(6)
+  exam_marks           exam_marks            @relation(fields: [exam_marks_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students             students              @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([student_id, exam_marks_id])
+}
+
+model revaluation_windows {
+  id                      Int                               @id @default(autoincrement())
+  exam_id                 Int                               @unique
+  application_type        revaluation_application_type_enum @default(reval_only)
+  is_open                 Boolean                           @default(false)
+  opens_at                DateTime?                         @db.Timestamptz(6)
+  closes_at               DateTime?                         @db.Timestamptz(6)
+  fee_per_paper           Decimal                           @db.Decimal(8, 2)
+  photocopy_fee_per_paper Decimal                           @db.Decimal(8, 2)
+  max_papers_per_student  Int?
+  created_by_user_id      Int?
+  created_at              DateTime                          @default(now()) @db.Timestamptz(6)
+  exams                   exams                             @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model seating_plan_venue_departments {
+  id                          Int                         @id @default(autoincrement())
+  version_venue_id            Int
+  department_id               Int
+  departments                 departments                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  seating_plan_version_venues seating_plan_version_venues @relation(fields: [version_venue_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([version_venue_id, department_id])
+}
+
+model seating_plan_version_venues {
+  id                             Int                              @id @default(autoincrement())
+  version_id                     Int
+  venue_id                       Int
+  hall_plan_id                   Int?
+  allocation_mode                seating_allocation_mode_enum     @default(automatic)
+  pattern                        seating_pattern_enum?
+  seating_plan_venue_departments seating_plan_venue_departments[]
+  hall_plans                     hall_plans?                      @relation(fields: [hall_plan_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  venues                         venues                           @relation(fields: [venue_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  seating_plan_versions          seating_plan_versions            @relation(fields: [version_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([version_id, venue_id])
+}
+
+model seating_plan_versions {
+  id                                                      Int                           @id @default(autoincrement())
+  exam_id                                                 Int
+  exam_date                                               DateTime                      @db.Date
+  session                                                 exam_session_enum
+  version_number                                          Int
+  status                                                  timetable_version_status_enum @default(draft)
+  signature                                               String?                       @db.VarChar(64)
+  created_by_user_id                                      Int?
+  created_at                                              DateTime                      @default(now()) @db.Timestamptz(6)
+  published_by_user_id                                    Int?
+  published_at                                            DateTime?                     @db.Timestamptz(6)
+  withdrawn_at                                            DateTime?                     @db.Timestamptz(6)
+  seating_arrangements                                    seating_arrangements[]
+  seating_plan_version_venues                             seating_plan_version_venues[]
+  users_seating_plan_versions_created_by_user_idTousers   users?                        @relation("seating_plan_versions_created_by_user_idTousers", fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  exams                                                   exams                         @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_seating_plan_versions_published_by_user_idTousers users?                        @relation("seating_plan_versions_published_by_user_idTousers", fields: [published_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([exam_id, exam_date, session, version_number])
+}
+
+model student_entrepreneurship {
+  id                   Int      @id @default(autoincrement())
+  student_id           Int      @unique
+  business_name        String   @db.VarChar(255)
+  business_description String?
+  sector               String?  @db.VarChar(150)
+  stage                String?  @db.VarChar(50)
+  funding_required     Decimal? @db.Decimal(12, 2)
+  remarks              String?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  students             students @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model student_higher_education {
+  id                   Int      @id @default(autoincrement())
+  student_id           Int      @unique
+  preferred_course     String   @db.VarChar(255)
+  preferred_country    String   @db.VarChar(100)
+  preferred_university String?  @db.VarChar(255)
+  remarks              String?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  students             students @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model user_social_links {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  title         String   @db.VarChar(100)
+  url           String   @db.VarChar(500)
+  display_order Int      @default(0) @db.SmallInt
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  users         users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id], map: "idx_user_social_links_user_id")
+}
+
+model wallets {
+  id                                                                      Int                   @id(map: "student_wallets_pkey") @default(autoincrement())
+  balance                                                                 Decimal               @default(0) @db.Decimal(12, 2)
+  updated_at                                                              DateTime              @default(now()) @db.Timestamptz(6)
+  user_id                                                                 Int                   @unique
+  qr_token                                                                String                @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pin_hash                                                                String?               @db.VarChar(255)
+  pin_set_at                                                              DateTime?             @db.Timestamptz(6)
+  failed_pin_attempts                                                     Int                   @default(0) @db.SmallInt
+  pin_locked_until                                                        DateTime?             @db.Timestamptz(6)
+  wallet_transactions_wallet_transactions_counterparty_wallet_idTowallets wallet_transactions[] @relation("wallet_transactions_counterparty_wallet_idTowallets")
+  wallet_transactions                                                     wallet_transactions[]
+  users                                                                   users                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model coe_profiles {
@@ -2765,6 +3378,7 @@ enum target_audience_enum {
   parents
   teachers
   students
+  roles
 }
 
 enum user_status_enum {
@@ -2790,6 +3404,7 @@ enum wallet_txn_source_enum {
   razorpay
   adjustment
   purchase
+  transfer
 }
 
 enum wallet_txn_status_enum {
