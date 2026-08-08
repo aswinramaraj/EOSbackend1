@@ -13,6 +13,7 @@ export default () => ({
   supabase: {
     url: process.env.SUPABASE_URL,
     serviceKey: process.env.SUPABASE_SERVICE_KEY,
+    storageBucket: process.env.SUPABASE_STORAGE_BUCKET || 'appraisal-attachments',
   },
 
   app: {

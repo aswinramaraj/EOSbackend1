@@ -5,7 +5,7 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { NotificationsService } from '../../notifications/notifications/notifications.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { VenuesService } from './venues.service';
 
 describe('VenuesService', () => {
@@ -39,10 +39,7 @@ describe('VenuesService', () => {
             $transaction: jest.fn(),
           },
         },
-        {
-          provide: NotificationsService,
-          useValue: mockNotificationsService,
-        },
+        { provide: NotificationsService, useValue: { create: jest.fn() } },
       ],
     }).compile();
 

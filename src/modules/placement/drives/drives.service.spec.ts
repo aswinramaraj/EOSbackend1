@@ -13,22 +13,28 @@ jest.mock('../../../prisma/prisma.service', () => ({
 describe('DrivesService', () => {
   let service: DrivesService;
   let prisma: {
-    students: { findUnique: jest.Mock };
+    students: { findUnique: jest.Mock; findMany: jest.Mock };
     student_drive_applications: {
       findMany: jest.Mock;
       findUnique: jest.Mock;
       update: jest.Mock;
     };
+    faculty: { findUnique: jest.Mock };
+    class_mentors: { findMany: jest.Mock; findFirst: jest.Mock };
+    placement_drives: { findMany: jest.Mock };
   };
 
   beforeEach(async () => {
     prisma = {
-      students: { findUnique: jest.fn() },
+      students: { findUnique: jest.fn(), findMany: jest.fn() },
       student_drive_applications: {
         findMany: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
       },
+      faculty: { findUnique: jest.fn() },
+      class_mentors: { findMany: jest.fn(), findFirst: jest.fn() },
+      placement_drives: { findMany: jest.fn() },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -284,6 +290,163 @@ describe('DrivesService', () => {
       const [args] = prisma.student_drive_applications.update.mock
         .calls[0] as [{ data: Record<string, unknown> }];
       expect(args.data).not.toHaveProperty('last_cleared_round');
+    });
+  });
+
+  describe('getUpcomingDrivesForFaculty', () => {
+    it('lists every scheduled drive with no status field, masking undisclosed companies', async () => {
+      prisma.placement_drives.findMany.mockResolvedValue([
+        {
+          id: 1,
+          scheduled_date: new Date('2026-09-01T00:00:00.000Z'),
+          is_disclosed: true,
+          disclosed_reveal_date: null,
+          companies: { name: 'TCS', profile_info: 'IT services' },
+        },
+        {
+          id: 2,
+          scheduled_date: new Date('2026-09-10T00:00:00.000Z'),
+          is_disclosed: false,
+          disclosed_reveal_date: new Date('2026-09-05T00:00:00.000Z'),
+          companies: { name: 'Secret Corp', profile_info: 'Stealth mode' },
+        },
+      ]);
+
+      const result = await service.getUpcomingDrivesForFaculty();
+
+      const [args] = prisma.placement_drives.findMany.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ];
+      expect(args.where).toEqual({ status: 'scheduled' });
+      expect(result).toEqual([
+        {
+          drive_id: 1,
+          company_name: 'TCS',
+          company_profile_info: 'IT services',
+          scheduled_date: new Date('2026-09-01T00:00:00.000Z'),
+          is_disclosed: true,
+          disclosed_reveal_date: null,
+        },
+        {
+          drive_id: 2,
+          company_name: 'Undisclosed',
+          company_profile_info: null,
+          scheduled_date: new Date('2026-09-10T00:00:00.000Z'),
+          is_disclosed: false,
+          disclosed_reveal_date: new Date('2026-09-05T00:00:00.000Z'),
+        },
+      ]);
+      expect(result[0]).not.toHaveProperty('application_status');
+    });
+  });
+
+  describe('getMentoredStudents', () => {
+    it('throws 404 when the caller has no faculty profile', async () => {
+      prisma.faculty.findUnique.mockResolvedValue(null);
+
+      await expect(service.getMentoredStudents(1)).rejects.toThrow(
+        'Faculty profile not found for the authenticated user',
+      );
+    });
+
+    it('returns an empty list (not an error) when the faculty mentors no class', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
+      prisma.class_mentors.findMany.mockResolvedValue([]);
+
+      const result = await service.getMentoredStudents(1);
+
+      expect(result).toEqual([]);
+      expect(prisma.students.findMany).not.toHaveBeenCalled();
+    });
+
+    it('lists every student in a mentored class, resolving name/section/department', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
+      prisma.class_mentors.findMany.mockResolvedValue([{ class_id: 5 }]);
+      prisma.students.findMany.mockResolvedValue([
+        {
+          id: 42,
+          student_id_no: '23CS001',
+          soa_applications: { first_name: 'Arjun', last_name: 'Kumar' },
+          users: { email: 'arjun@sece.ac.in' },
+          classes: { section: 'A', departments: { name: 'Computer Science and Engineering' } },
+        },
+        {
+          id: 43,
+          student_id_no: '23CS002',
+          soa_applications: null,
+          users: { email: 'noname@sece.ac.in' },
+          classes: null,
+        },
+      ]);
+
+      const result = await service.getMentoredStudents(1);
+
+      const [args] = prisma.students.findMany.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ];
+      expect(args.where).toEqual({ class_id: { in: [5] } });
+      expect(result).toEqual([
+        {
+          student_id: 42,
+          student_id_no: '23CS001',
+          name: 'Arjun Kumar',
+          section: 'A',
+          department_name: 'Computer Science and Engineering',
+        },
+        {
+          student_id: 43,
+          student_id_no: '23CS002',
+          name: 'noname@sece.ac.in',
+          section: null,
+          department_name: null,
+        },
+      ]);
+    });
+  });
+
+  describe('getStudentPlacementHistoryForMentor', () => {
+    it('throws 404 when the student does not exist', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
+      prisma.students.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getStudentPlacementHistoryForMentor(42, 1),
+      ).rejects.toThrow('Student not found');
+    });
+
+    it('throws 403 when the caller does not mentor this student\'s class', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
+      prisma.students.findUnique.mockResolvedValue({ id: 42, class_id: 5 });
+      prisma.class_mentors.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.getStudentPlacementHistoryForMentor(42, 1),
+      ).rejects.toThrow("You are not the mentor for this student's class");
+    });
+
+    it("returns the student's placement history once mentor authorization passes", async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
+      prisma.students.findUnique.mockResolvedValue({ id: 42, class_id: 5 });
+      prisma.class_mentors.findFirst.mockResolvedValue({ id: 1 });
+      prisma.student_drive_applications.findMany.mockResolvedValue([
+        driveApplication({ status: 'placed', last_cleared_round: 3 }),
+      ]);
+
+      const result = await service.getStudentPlacementHistoryForMentor(42, 1);
+
+      const [args] = prisma.student_drive_applications.findMany.mock
+        .calls[0] as [{ where: Record<string, unknown> }];
+      expect(args.where).toMatchObject({ student_id: 42 });
+      expect(result).toEqual([
+        {
+          drive_id: 10,
+          company_name: 'TCS',
+          scheduled_date: new Date('2026-09-01T00:00:00.000Z'),
+          drive_status: 'scheduled',
+          application_status: 'placed',
+          last_cleared_round: 3,
+        },
+      ]);
     });
   });
 });

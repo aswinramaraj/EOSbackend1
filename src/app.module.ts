@@ -18,8 +18,11 @@ import { BonafideModule } from './modules/admissions/bonafide/bonafide.module';
 import { BonafideReasonsModule } from './modules/admissions/bonafide-reasons/bonafide-reasons.module';
 import { CertificatesModule } from './modules/admissions/certificates/certificates.module';
 import { OdModule } from './modules/admissions/od/od.module';
+import { OdHodApprovalsModule } from './modules/admissions/od-hod-approvals/od-hod-approvals.module';
+import { IqacStudentOdsModule } from './modules/admissions/iqac-student-ods/iqac-student-ods.module';
 import { SoaApplicationsModule } from './modules/admissions/soa-applications/soa-applications.module';
 import { StudentLeavesModule } from './modules/admissions/student-leaves/student-leaves.module';
+import { StudentOdsModule } from './modules/admissions/student-ods/student-ods.module';
 import { StudentsModule } from './modules/admissions/students/students.module';
 import { MeProfileModule } from './modules/admissions/students/me-profile/me-profile.module';
 
@@ -44,6 +47,7 @@ import { AttendanceModule } from './modules/faculty/attendance/attendance.module
 import { ClassMentorsModule } from './modules/faculty/class-mentors/class-mentors.module';
 import { ExamMarksModule } from './modules/faculty/exam-marks/exam-marks.module';
 import { FacultyLeavesModule } from './modules/faculty/faculty-leaves/faculty-leaves.module';
+import { FacultyOdModule } from './modules/faculty/faculty-od/faculty-od.module';
 import { FacultyMappingModule } from './modules/faculty/faculty-mapping/faculty-mapping.module';
 import { FacultyModule } from './modules/faculty/faculty/faculty.module';
 import { HolidaySlotsModule } from './modules/faculty/holiday-slots/holiday-slots.module';
@@ -104,6 +108,7 @@ import { SecretaryReportsModule } from './modules/secretary/reports/reports.modu
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
+import { IqacReportsModule } from './modules/iqac/reports/iqac-reports.module';
 
 import { AlumniModule } from './modules/alumni/alumni.module';
 import { AchievementsModule } from './modules/achievements/achievements.module';
@@ -140,8 +145,11 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     BonafideReasonsModule,
     CertificatesModule,
     OdModule,
+    OdHodApprovalsModule,
+    IqacStudentOdsModule,
     SoaApplicationsModule,
     StudentLeavesModule,
+    StudentOdsModule,
     StudentsModule,
     MeProfileModule,
 
@@ -166,6 +174,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     ClassMentorsModule,
     ExamMarksModule,
     FacultyLeavesModule,
+    FacultyOdModule,
     FacultyMappingModule,
     FacultyModule,
     HolidaySlotsModule,
@@ -226,6 +235,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     NotificationsModule,
     FeedbackModule,
     HallTicketClearanceModule,
+    IqacReportsModule,
 
     AlumniModule,
     AchievementsModule,

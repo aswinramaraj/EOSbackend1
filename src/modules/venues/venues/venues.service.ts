@@ -11,13 +11,23 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
-import { NotificationsService } from '../../notifications/notifications/notifications.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 import { CreateVenueBookingDto } from './dto/create-venue-booking.dto';
 import { ListVenueQueryDto } from './dto/list-venue-query.dto';
 import { ReviewVenueBookingDto } from './dto/review-venue-booking.dto';
+import { ReallocateVenueBookingDto } from './dto/reallocate-venue-booking.dto';
 import { ListVenueBookingQueryDto } from './dto/list-venue-booking-query.dto';
+
+/**
+ * Prisma's default $transaction maxWait (2000ms) is too tight for this
+ * project's Supabase pooler round-trip under real-world latency — every
+ * batch $transaction here was observed failing at a hard ~2.0-2.3s ceiling
+ * ("Unable to start a transaction in the given time"), not intermittently,
+ * so this raises the budget rather than papering over a one-off blip.
+ */
+const TRANSACTION_OPTIONS = { maxWait: 10000, timeout: 15000 };
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -104,20 +114,108 @@ const VENUE_BOOKING_SELECT = {
   id: true,
   venue_id: true,
   purpose: true,
+  description: true,
+  requirements: true,
   from_datetime: true,
   to_datetime: true,
   accommodating_strength: true,
   status: true,
   reviewed_by_user_id: true,
   alternative_venue_id: true,
+  admin_remarks: true,
+  reviewed_at: true,
   created_at: true,
   venues_venue_bookings_venue_idTovenues: {
     select: { id: true, name: true, location: true, capacity: true },
   },
+  venues_venue_bookings_alternative_venue_idTovenues: {
+    select: { id: true, name: true, location: true, capacity: true },
+  },
   users_venue_bookings_booked_by_user_idTousers: {
-    select: { id: true, email: true },
+    select: {
+      id: true,
+      email: true,
+      phone: true,
+      faculty: { select: { first_name: true, last_name: true, departments: { select: { name: true } } } },
+      non_teaching_staff: {
+        select: { first_name: true, last_name: true, departments: { select: { name: true } } },
+      },
+    },
   },
 } as const;
+
+interface VenueBookingBookerRow {
+  id: number;
+  email: string;
+  phone: string | null;
+  faculty: { first_name: string; last_name: string; departments: { name: string } } | null;
+  non_teaching_staff: {
+    first_name: string;
+    last_name: string | null;
+    departments: { name: string } | null;
+  }[];
+}
+
+interface VenueBookingRow {
+  id: number;
+  venue_id: number;
+  purpose: string;
+  description: string | null;
+  requirements: string[];
+  from_datetime: Date;
+  to_datetime: Date;
+  accommodating_strength: number | null;
+  status: string;
+  reviewed_by_user_id: number | null;
+  alternative_venue_id: number | null;
+  admin_remarks: string | null;
+  reviewed_at: Date | null;
+  created_at: Date;
+  venues_venue_bookings_venue_idTovenues: {
+    id: number;
+    name: string;
+    location: string | null;
+    capacity: number | null;
+  };
+  venues_venue_bookings_alternative_venue_idTovenues: {
+    id: number;
+    name: string;
+    location: string | null;
+    capacity: number | null;
+  } | null;
+  users_venue_bookings_booked_by_user_idTousers: VenueBookingBookerRow;
+}
+
+/** Same fallback chain as resolveBookerName - faculty first, then non_teaching_staff, then email. */
+function resolveBooker(user: VenueBookingBookerRow) {
+  const profile = user.faculty ?? user.non_teaching_staff[0] ?? null;
+  return {
+    name: profile ? `${profile.first_name} ${profile.last_name ?? ''}`.trim() : user.email,
+    department_name: profile?.departments?.name ?? null,
+    email: user.email,
+    phone: user.phone,
+  };
+}
+
+function toBookingResponse(booking: VenueBookingRow) {
+  return {
+    id: booking.id,
+    venue_id: booking.venue_id,
+    venue: booking.venues_venue_bookings_venue_idTovenues,
+    purpose: booking.purpose,
+    description: booking.description,
+    requirements: booking.requirements,
+    from_datetime: booking.from_datetime,
+    to_datetime: booking.to_datetime,
+    accommodating_strength: booking.accommodating_strength,
+    status: booking.status,
+    admin_remarks: booking.admin_remarks,
+    reviewed_at: booking.reviewed_at,
+    alternative_venue: booking.venues_venue_bookings_alternative_venue_idTovenues,
+    booked_by: resolveBooker(booking.users_venue_bookings_booked_by_user_idTousers),
+    created_at: booking.created_at,
+  };
+}
 
 @Injectable()
 export class VenuesService {
@@ -125,7 +223,7 @@ export class VenuesService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly notifications: NotificationsService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /** POST /venues (Admin only). */
@@ -189,8 +287,8 @@ export class VenuesService {
           },
         },
       }),
-      this.prisma.venues.count({ where }),
-    ]);
+      this.prisma.venues.count(),
+    ], TRANSACTION_OPTIONS);
 
     return paginate(rows.map(toVenueAvailability), total, query);
   }
@@ -300,6 +398,8 @@ export class VenuesService {
         venue_id: dto.venue_id,
         booked_by_user_id: userId,
         purpose: dto.purpose,
+        description: dto.description,
+        requirements: dto.requirements ?? [],
         from_datetime: fromDatetime,
         to_datetime: toDatetime,
         accommodating_strength: dto.accommodating_strength,
@@ -311,7 +411,7 @@ export class VenuesService {
     this.logger.log(
       `Venue booking requested: id=${booking.id} venue=${dto.venue_id} by user=${userId}`,
     );
-    return booking;
+    return toBookingResponse(booking);
   }
 
   /**
@@ -329,6 +429,37 @@ export class VenuesService {
       where.booked_by_user_id = currentUser.sub;
     }
 
+    if (query.date) {
+      const dayStart = new Date(query.date);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(query.date);
+      dayEnd.setHours(23, 59, 59, 999);
+      where.from_datetime = { lte: dayEnd };
+      where.to_datetime = { gte: dayStart };
+    }
+
+    const bookerConditions: Record<string, unknown>[] = [];
+    if (query.search) {
+      bookerConditions.push({
+        OR: [
+          { email: { contains: query.search, mode: 'insensitive' } },
+          { faculty: { first_name: { contains: query.search, mode: 'insensitive' } } },
+          { faculty: { last_name: { contains: query.search, mode: 'insensitive' } } },
+        ],
+      });
+    }
+    if (query.department_id) {
+      bookerConditions.push({
+        OR: [
+          { faculty: { department_id: query.department_id } },
+          { non_teaching_staff: { some: { department_id: query.department_id } } },
+        ],
+      });
+    }
+    if (bookerConditions.length > 0) {
+      where.users_venue_bookings_booked_by_user_idTousers = { AND: bookerConditions };
+    }
+
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.venue_bookings.findMany({
         where,
@@ -338,9 +469,9 @@ export class VenuesService {
         select: VENUE_BOOKING_SELECT,
       }),
       this.prisma.venue_bookings.count({ where }),
-    ]);
+    ], TRANSACTION_OPTIONS);
 
-    return paginate(rows, total, query);
+    return paginate(rows.map(toBookingResponse), total, query);
   }
 
   /** GET /venue-bookings/:id (IQAC sees any; everyone else only their own). */
@@ -361,7 +492,7 @@ export class VenuesService {
       throw new ForbiddenException('You may only view your own venue bookings');
     }
 
-    return booking;
+    return toBookingResponse(booking);
   }
 
   /**
@@ -417,6 +548,8 @@ export class VenuesService {
       data: {
         status: dto.decision,
         reviewed_by_user_id: userId,
+        reviewed_at: new Date(),
+        admin_remarks: dto.admin_remarks,
         ...(dto.decision === 'alternative_offered' && {
           alternative_venue_id: dto.alternative_venue_id,
         }),
@@ -427,18 +560,96 @@ export class VenuesService {
     this.logger.log(
       `Venue booking ${id} reviewed: decision=${dto.decision} by user=${userId}`,
     );
+    await this.notifyBooker(updated, dto.decision);
+    return toBookingResponse(updated);
+  }
 
-    const venueName = updated.venues_venue_bookings_venue_idTovenues.name;
-    const decisionMessage =
-      dto.decision === 'alternative_offered'
-        ? `An alternative venue has been offered for your booking of "${venueName}".`
-        : `Your booking for "${venueName}" has been ${dto.decision}.`;
-    await this.notifications.create({
-      user_id: booking.booked_by_user_id,
-      title: `Venue booking ${dto.decision}`,
-      message: decisionMessage,
+  /**
+   * PATCH /venue-bookings/:id/reallocate (IQAC only).
+   *
+   * Distinct from reviewBooking's 'alternative_offered' decision (which only
+   * records a suggestion): this reassigns the booking to a different venue
+   * and marks it 'approved' outright, matching the admin portal's
+   * Reallocate drawer ("pick a venue" -> booked). Usable on a 'pending' OR
+   * already-'rejected' booking - never on one already 'approved' or
+   * 'alternative_offered', which have already been decided.
+   */
+  async reallocateBooking(
+    id: number,
+    dto: ReallocateVenueBookingDto,
+    userId: number,
+  ) {
+    const booking = await this.prisma.venue_bookings.findUnique({
+      where: { id },
+    });
+    if (!booking) {
+      throw new NotFoundException({
+        message: 'Venue booking not found',
+        errorCode: 'BOOKING_NOT_FOUND',
+      });
+    }
+
+    if (booking.status !== 'pending' && booking.status !== 'rejected') {
+      throw new ConflictException({
+        message: 'Only a pending or rejected booking can be reallocated',
+        errorCode: 'ALREADY_REVIEWED',
+      });
+    }
+
+    if (dto.venue_id === booking.venue_id) {
+      throw new BadRequestException(
+        'venue_id must differ from the originally requested venue',
+      );
+    }
+
+    const venue = await this.prisma.venues.findUnique({
+      where: { id: dto.venue_id },
+    });
+    if (!venue) {
+      throw new NotFoundException({
+        message: 'Venue not found',
+        errorCode: 'VENUE_NOT_FOUND',
+      });
+    }
+
+    const updated = await this.prisma.venue_bookings.update({
+      where: { id },
+      data: {
+        venue_id: dto.venue_id,
+        status: 'approved',
+        reviewed_by_user_id: userId,
+        reviewed_at: new Date(),
+        admin_remarks: dto.admin_remarks,
+        alternative_venue_id: null,
+      },
+      select: VENUE_BOOKING_SELECT,
     });
 
-    return updated;
+    this.logger.log(
+      `Venue booking ${id} reallocated to venue=${dto.venue_id} by user=${userId}`,
+    );
+    await this.notifyBooker(updated, 'approved');
+    return toBookingResponse(updated);
+  }
+
+  /** Best-effort notification - a delivery failure must never fail the review/reallocate request itself. */
+  private async notifyBooker(booking: VenueBookingRow, decision: string) {
+    const messages: Record<string, string> = {
+      approved: `Your venue booking for "${booking.purpose}" has been approved.`,
+      rejected: `Your venue booking for "${booking.purpose}" has been rejected.`,
+      alternative_offered: `An alternative venue has been offered for your booking "${booking.purpose}".`,
+    };
+
+    try {
+      await this.notificationsService.create({
+        user_id: booking.users_venue_bookings_booked_by_user_idTousers.id,
+        title: 'Venue booking update',
+        message: messages[decision] ?? `Your venue booking "${booking.purpose}" was updated.`,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to notify booker for venue booking ${booking.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }

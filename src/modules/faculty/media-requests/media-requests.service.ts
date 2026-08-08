@@ -64,27 +64,6 @@ interface MediaRequestRow {
     last_name: string;
     designation: string;
   } | null;
-  venues: { id: number; name: string; location: string | null } | null;
-  users: MediaRequestMarkerRow;
-}
-
-/**
- * `requested_by_user_id` (generic — any role) is always present; the direct
- * `faculty` relation (via `requested_by_faculty_id`) is only set when the
- * requester is teaching staff (null for Secretary-submitted requests).
- * Mirrors VenuesService.resolveBookerName's fallback chain.
- */
-function resolveRequesterName(requester: MediaRequestMarkerRow): string {
-  if (requester.faculty) {
-    return `${requester.faculty.first_name} ${requester.faculty.last_name}`;
-  }
-  const staff = requester.non_teaching_staff[0];
-  if (staff) {
-    return staff.last_name
-      ? `${staff.first_name} ${staff.last_name}`
-      : staff.first_name;
-  }
-  return requester.email;
 }
 
 function toResponse(request: MediaRequestRow) {
@@ -144,8 +123,8 @@ export class MediaRequestsService {
 
     const request = await this.prisma.media_requests.create({
       data: {
-        requested_by_faculty_id: faculty?.id,
-        requested_by_user_id: userId,
+        requested_by_faculty_id: faculty.id,
+        requested_by_user_id: faculty.user_id,
         description: dto.description,
         status: 'pending',
         event_name: dto.event_name,
@@ -198,13 +177,13 @@ export class MediaRequestsService {
       throw new NotFoundException('Media request not found');
     }
 
-    if (
-      currentUser.role !== ROLES.MEDIA_ROOM &&
-      request.requested_by_user_id !== currentUser.sub
-    ) {
-      throw new ForbiddenException(
-        'You may only view your own media requests',
-      );
+    if (currentUser.role === ROLES.FACULTY) {
+      const faculty = await this.resolveFacultyByUserId(currentUser.sub);
+      if (request.faculty?.id !== faculty.id) {
+        throw new ForbiddenException(
+          'You may only view your own media requests',
+        );
+      }
     }
 
     return toResponse(request);

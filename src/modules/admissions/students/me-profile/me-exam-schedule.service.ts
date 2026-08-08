@@ -73,8 +73,7 @@ export class MeExamScheduleService {
     try {
       return await this.prisma.exam_timetable.findMany({
         where: {
-          is_published: true,
-          exam_subject_mapping: { class_id: classId },
+          exam_subject_mapping: { class_id: classId, is_published: true },
         },
         select: {
           id: true,
