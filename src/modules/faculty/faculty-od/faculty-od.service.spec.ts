@@ -5,6 +5,8 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/modules/storage/storage.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { FacultyOdService } from './faculty-od.service';
 
 const FACULTY_ROW = {
@@ -12,6 +14,9 @@ const FACULTY_ROW = {
   first_name: 'Deepa',
   last_name: 'Kannan',
   designation: 'Professor',
+  user_id: 42,
+  department_id: 3,
+  departments: { id: 3, name: 'Computer Science' },
 };
 
 describe('FacultyOdService', () => {
@@ -41,6 +46,8 @@ describe('FacultyOdService', () => {
       providers: [
         FacultyOdService,
         { provide: PrismaService, useValue: prisma },
+        { provide: StorageService, useValue: { upload: jest.fn(), remove: jest.fn() } },
+        { provide: NotificationsService, useValue: { create: jest.fn() } },
       ],
     }).compile();
 

@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsISO8601,
   IsInt,
   IsNotEmpty,
@@ -11,12 +12,12 @@ import {
 /**
  * POST /venue-bookings (HoD / Faculty / Placement / IQAC).
  *
- * Only columns that actually exist on `venue_bookings` are accepted here:
- * venue_id, purpose, from_datetime, to_datetime, accommodating_strength.
- * `status` and `booked_by_user_id` are never client-supplied — status
- * always starts 'pending' and booked_by_user_id comes from
- * @CurrentUser().sub. `reviewed_by_user_id`/`alternative_venue_id` belong to
- * the (not implemented here) IQAC review step.
+ * venue_id, purpose, from_datetime, to_datetime, accommodating_strength were
+ * the original accepted columns. `description`/`requirements` are additive
+ * (IQAC admin portal detail drawer displays both). `status` and
+ * `booked_by_user_id` are never client-supplied — status always starts
+ * 'pending' and booked_by_user_id comes from @CurrentUser().sub.
+ * `reviewed_by_user_id`/`alternative_venue_id` belong to the IQAC review step.
  */
 export class CreateVenueBookingDto {
   @IsInt()
@@ -37,4 +38,13 @@ export class CreateVenueBookingDto {
   @IsInt()
   @IsPositive()
   accommodating_strength?: number;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString({ each: true })
+  @ArrayMaxSize(20)
+  requirements?: string[];
 }

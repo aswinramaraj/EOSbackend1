@@ -8,8 +8,11 @@ import {
   Post,
   Put,
   Query,
+  UploadedFiles,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -40,6 +43,8 @@ import { MeOdTeamsService } from './me-od-teams.service';
 import { MeOdTeamsListService } from './me-od-teams-list.service';
 import { MeOdRequestsService } from './me-od-requests.service';
 import { MeOdRequestsListService } from './me-od-requests-list.service';
+import { MeOdAttachmentsService } from './me-od-attachments.service';
+import { UploadOdAttachmentDto } from './dto/upload-od-attachment.dto';
 import { MeHostelOutingsService } from './me-hostel-outings.service';
 import { MeBonafideRequestsService } from './me-bonafide-requests.service';
 import { MeProjectsService } from './me-projects.service';
@@ -65,6 +70,7 @@ export class MeController {
     private readonly meOdTeamsListService: MeOdTeamsListService,
     private readonly meOdRequestsService: MeOdRequestsService,
     private readonly meOdRequestsListService: MeOdRequestsListService,
+    private readonly meOdAttachmentsService: MeOdAttachmentsService,
     private readonly meHostelOutingsService: MeHostelOutingsService,
     private readonly meBonafideRequestsService: MeBonafideRequestsService,
     private readonly meProjectsService: MeProjectsService,
@@ -434,6 +440,38 @@ export class MeController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.meOdRequestsService.getOdRequestStatus(user.sub, id);
+  }
+
+  /**
+   * POST /api/v1/me/od-requests/:id/attachments
+   *
+   * multipart/form-data: an optional single "photo" file, an optional
+   * single "certificate" file, plus optional "latitude"/"longitude" text
+   * fields — the IQAC admin portal's geo-tagged photo + certificate fields,
+   * which had no submission path at all before this. Any member of the
+   * request's team may upload (not creator-only — see
+   * MeOdAttachmentsService.upload).
+   */
+  @Post('od-requests/:id/attachments')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'photo', maxCount: 1 },
+      { name: 'certificate', maxCount: 1 },
+    ]),
+  )
+  uploadOdAttachments(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UploadOdAttachmentDto,
+    @UploadedFiles()
+    files: {
+      photo?: Array<Express.Multer.File>;
+      certificate?: Array<Express.Multer.File>;
+    },
+  ) {
+    return this.meOdAttachmentsService.upload(id, user.sub, dto, files ?? {});
   }
 
   /**

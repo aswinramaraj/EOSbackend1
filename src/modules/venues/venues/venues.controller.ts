@@ -19,11 +19,13 @@ import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { VenuesService } from './venues.service';
+import { VenueDashboardService } from './venue-dashboard.service';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 import { CreateVenueBookingDto } from './dto/create-venue-booking.dto';
 import { ListVenueQueryDto } from './dto/list-venue-query.dto';
 import { ReviewVenueBookingDto } from './dto/review-venue-booking.dto';
+import { ReallocateVenueBookingDto } from './dto/reallocate-venue-booking.dto';
 import { ListVenueBookingQueryDto } from './dto/list-venue-booking-query.dto';
 
 /**
@@ -34,7 +36,26 @@ import { ListVenueBookingQueryDto } from './dto/list-venue-booking-query.dto';
  */
 @Controller()
 export class VenuesController {
-  constructor(private readonly venuesService: VenuesService) {}
+  constructor(
+    private readonly venuesService: VenuesService,
+    private readonly venueDashboardService: VenueDashboardService,
+  ) {}
+
+  /** GET /api/v1/venues/dashboard/summary — IQAC only. */
+  @Get('venues/dashboard/summary')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.IQAC)
+  dashboardSummary() {
+    return this.venueDashboardService.summary();
+  }
+
+  /** GET /api/v1/venues/dashboard/live-status — IQAC only. */
+  @Get('venues/dashboard/live-status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.IQAC)
+  dashboardLiveStatus() {
+    return this.venueDashboardService.liveStatus();
+  }
 
   /** POST /api/v1/venues — Admin only. */
   @Post('venues')
@@ -135,5 +156,21 @@ export class VenuesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.venuesService.reviewBooking(id, dto, user.sub);
+  }
+
+  /**
+   * PATCH /api/v1/venue-bookings/:id/reallocate — IQAC only.
+   * Reassigns a pending or rejected booking to a different venue and
+   * approves it outright (distinct from reviewBooking's 'alternative_offered').
+   */
+  @Patch('venue-bookings/:id/reallocate')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.IQAC)
+  reallocateBooking(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ReallocateVenueBookingDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.venuesService.reallocateBooking(id, dto, user.sub);
   }
 }

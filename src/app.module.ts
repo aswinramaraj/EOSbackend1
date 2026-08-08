@@ -18,6 +18,8 @@ import { BonafideModule } from './modules/admissions/bonafide/bonafide.module';
 import { BonafideReasonsModule } from './modules/admissions/bonafide-reasons/bonafide-reasons.module';
 import { CertificatesModule } from './modules/admissions/certificates/certificates.module';
 import { OdModule } from './modules/admissions/od/od.module';
+import { OdHodApprovalsModule } from './modules/admissions/od-hod-approvals/od-hod-approvals.module';
+import { IqacStudentOdsModule } from './modules/admissions/iqac-student-ods/iqac-student-ods.module';
 import { SoaApplicationsModule } from './modules/admissions/soa-applications/soa-applications.module';
 import { StudentLeavesModule } from './modules/admissions/student-leaves/student-leaves.module';
 import { StudentOdsModule } from './modules/admissions/student-ods/student-ods.module';
@@ -102,6 +104,7 @@ import { VenuesModule } from './modules/venues/venues/venues.module';
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
+import { IqacReportsModule } from './modules/iqac/reports/iqac-reports.module';
 
 import { AlumniModule } from './modules/alumni/alumni.module';
 import { AchievementsModule } from './modules/achievements/achievements.module';
@@ -138,6 +141,8 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     BonafideReasonsModule,
     CertificatesModule,
     OdModule,
+    OdHodApprovalsModule,
+    IqacStudentOdsModule,
     SoaApplicationsModule,
     StudentLeavesModule,
     StudentOdsModule,
@@ -222,6 +227,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     NotificationsModule,
     FeedbackModule,
     HallTicketClearanceModule,
+    IqacReportsModule,
 
     AlumniModule,
     AchievementsModule,
