@@ -1,5 +1,4 @@
 # Module 1 — Auth
-
 **Base URL prefix:** `/api/v1/auth`
 **Rate limit on login:** 5 requests / 60 seconds per IP
 
@@ -23,7 +22,6 @@
 ---
 
 ### 2. Request
-
 **Headers:**
 | Header | Required | Value |
 |--------|----------|-------|
@@ -46,7 +44,6 @@
 ---
 
 ### 3. Success Response — 200 OK
-
 ```json
 {
   "success": true,

@@ -119,6 +119,7 @@ model announcements {
   status                     announcement_status_enum     @default(published)
   file_key                   String?
   announcement_class_mapping announcement_class_mapping[]
+  announcement_role_mapping  announcement_role_mapping[]
   batches                    batches?                     @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   departments                departments?                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                      users                        @relation(fields: [posted_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -411,6 +412,7 @@ model companies {
   id               Int                @id @default(autoincrement())
   name             String             @db.VarChar(200)
   profile_info     String?
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
   placement_drives placement_drives[]
 }
 
@@ -1180,19 +1182,34 @@ model od_request_hod_approvals {
 }
 
 model od_requests {
-  id                       Int                        @id @default(autoincrement())
+  id                       Int                         @id @default(autoincrement())
   team_id                  Int
-  from_date                DateTime                   @db.Date
-  to_date                  DateTime                   @db.Date
-  reason                   String?                    @db.VarChar(255)
-  mentor_approval_status   approval_status_enum       @default(pending)
-  created_at               DateTime                   @default(now()) @db.Timestamptz(6)
-  from_time                DateTime?                  @db.Timetz(6)
-  to_time                  DateTime?                  @db.Timetz(6)
+  from_date                DateTime                    @db.Date
+  to_date                  DateTime                    @db.Date
+  reason                   String?                     @db.VarChar(255)
+  mentor_approval_status   approval_status_enum        @default(pending)
+  created_at               DateTime                    @default(now()) @db.Timestamptz(6)
+  from_time                DateTime?                   @db.Timetz(6)
+  to_time                  DateTime?                   @db.Timetz(6)
   faculty_guide_id         Int?
+  organization             String?                     @db.VarChar(255)
+  location                 String?                     @db.VarChar(255)
+  latitude                 Decimal?                    @db.Decimal(10, 6)
+  longitude                Decimal?                    @db.Decimal(10, 6)
+  photo_url                String?                     @db.VarChar(500)
+  photo_uploaded_at        DateTime?                   @db.Timestamptz(6)
+  certificate_url          String?                     @db.VarChar(500)
+  certificate_uploaded_at  DateTime?                   @db.Timestamptz(6)
+  verification_status      od_verification_status_enum @default(awaiting_documents)
+  email_sender             String?                     @db.VarChar(255)
+  email_receiver           String?                     @db.VarChar(255)
+  email_subject            String?                     @db.VarChar(255)
+  email_sent_at            DateTime?                   @db.Timestamptz(6)
+  email_body               String?
+  admin_remarks            String?
   od_request_hod_approvals od_request_hod_approvals[]
-  faculty                  faculty?                   @relation(fields: [faculty_guide_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  od_teams                 od_teams                   @relation(fields: [team_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty                  faculty?                    @relation(fields: [faculty_guide_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  od_teams                 od_teams                    @relation(fields: [team_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model od_team_members {
@@ -1251,6 +1268,12 @@ model placement_drives {
   status                     String                       @default("scheduled") @db.VarChar(20)
   created_by_user_id         Int?
   notification_sent_at       DateTime?                    @db.Timestamptz(6)
+  job_role                   String?                      @db.VarChar(150)
+  package_lpa                Decimal?                     @db.Decimal(6, 2)
+  eligibility_cgpa           Decimal?                     @db.Decimal(3, 2)
+  venue                      String?                      @db.VarChar(200)
+  registration_start         DateTime?                    @db.Date
+  registration_end           DateTime?                    @db.Date
   companies                  companies                    @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                      users?                       @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_drive_applications student_drive_applications[]
@@ -1338,9 +1361,10 @@ model purchase_indents {
   department_id            Int
   item_name                String                     @db.VarChar(255)
   quantity                 Int
-  purpose                  String?                    @db.VarChar(255)
+  purpose                  String?
   status                   indent_status_enum         @default(submitted)
   created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  needed_by                DateTime?                  @db.Date
   book_borrow_records      book_borrow_records?
   departments              departments                @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                    users                      @relation(fields: [requested_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1358,6 +1382,8 @@ model purchase_order_proposals {
   hod_reviewed_by                                           Int?
   hod_reviewed_at                                           DateTime?            @db.Timestamptz(6)
   status                                                    proposal_status_enum @default(pending)
+  hod_remarks                                               String?
+  finance_remarks                                           String?
   users_purchase_order_proposals_finance_reviewed_byTousers users?               @relation("purchase_order_proposals_finance_reviewed_byTousers", fields: [finance_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_purchase_order_proposals_hod_reviewed_byTousers     users?               @relation("purchase_order_proposals_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   purchase_indents                                          purchase_indents     @relation(fields: [indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1419,10 +1445,11 @@ model revaluation_requests {
 }
 
 model roles {
-  id          Int     @id @default(autoincrement())
-  name        String  @unique @db.VarChar(50)
-  description String? @db.VarChar(255)
-  users       users[]
+  id                        Int                         @id @default(autoincrement())
+  name                      String                      @unique @db.VarChar(50)
+  description               String?                     @db.VarChar(255)
+  announcement_role_mapping announcement_role_mapping[]
+  users                     users[]
 }
 
 model salary_divisions {
@@ -1472,9 +1499,13 @@ model service_indents {
   id                      Int                       @id @default(autoincrement())
   requested_by_user_id    Int
   department_id           Int
-  service_description     String                    @db.VarChar(255)
+  service_description     String
   status                  indent_status_enum        @default(submitted)
   created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  title                   String?                   @db.VarChar(255)
+  needed_by               DateTime?                 @db.Date
+  quantity                String?                   @db.VarChar(100)
+  location                String?                   @db.VarChar(255)
   departments             departments               @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                   users                     @relation(fields: [requested_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   service_order_proposals service_order_proposals[]
@@ -1491,6 +1522,8 @@ model service_order_proposals {
   hod_reviewed_by                                          Int?
   hod_reviewed_at                                          DateTime?            @db.Timestamptz(6)
   status                                                   proposal_status_enum @default(pending)
+  hod_remarks                                              String?
+  finance_remarks                                          String?
   users_service_order_proposals_finance_reviewed_byTousers users?               @relation("service_order_proposals_finance_reviewed_byTousers", fields: [finance_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_service_order_proposals_hod_reviewed_byTousers     users?               @relation("service_order_proposals_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   service_indents                                          service_indents      @relation(fields: [indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1589,6 +1622,8 @@ model student_drive_applications {
   updated_by_user_id Int?
   updated_at         DateTime                      @default(now()) @db.Timestamptz(6)
   last_cleared_round Int?                          @db.SmallInt
+  offer_response     String?                       @db.VarChar(20)
+  offered_package    Decimal?                      @db.Decimal(6, 2)
   placement_drives   placement_drives              @relation(fields: [drive_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   students           students                      @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users              users?                        @relation(fields: [updated_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1990,6 +2025,10 @@ model venue_bookings {
   reviewed_by_user_id                                Int?
   alternative_venue_id                               Int?
   created_at                                         DateTime                  @default(now()) @db.Timestamptz(6)
+  description                                        String?
+  requirements                                       String[]
+  admin_remarks                                      String?
+  reviewed_at                                        DateTime?                 @db.Timestamptz(6)
   venues_venue_bookings_alternative_venue_idTovenues venues?                   @relation("venue_bookings_alternative_venue_idTovenues", fields: [alternative_venue_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_venue_bookings_booked_by_user_idTousers      users                     @relation("venue_bookings_booked_by_user_idTousers", fields: [booked_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_venue_bookings_reviewed_by_user_idTousers    users?                    @relation("venue_bookings_reviewed_by_user_idTousers", fields: [reviewed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -2104,16 +2143,32 @@ model coe_profiles {
 }
 
 model faculty_od_requests {
-  id                  Int                  @id @default(autoincrement())
-  faculty_id          Int
-  from_date           DateTime             @db.Date
-  to_date             DateTime             @db.Date
-  place               String?              @db.VarChar(255)
-  purpose             String?              @db.VarChar(255)
-  hod_approval_status approval_status_enum @default(pending)
-  hr_approval_status  approval_status_enum @default(pending)
-  created_at          DateTime             @default(now()) @db.Timestamptz(6)
-  faculty             faculty              @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                      Int                         @id @default(autoincrement())
+  faculty_id              Int
+  from_date               DateTime                    @db.Date
+  to_date                 DateTime                    @db.Date
+  place                   String?                     @db.VarChar(255)
+  purpose                 String?                     @db.VarChar(255)
+  hod_approval_status     approval_status_enum        @default(pending)
+  hr_approval_status      approval_status_enum        @default(pending)
+  created_at              DateTime                    @default(now()) @db.Timestamptz(6)
+  organization_visited    String?                     @db.VarChar(255)
+  students_guided         Int?
+  sanction_order          String?                     @db.VarChar(100)
+  latitude                Decimal?                    @db.Decimal(10, 6)
+  longitude               Decimal?                    @db.Decimal(10, 6)
+  photo_url               String?                     @db.VarChar(500)
+  photo_uploaded_at       DateTime?                   @db.Timestamptz(6)
+  certificate_url         String?                     @db.VarChar(500)
+  certificate_uploaded_at DateTime?                   @db.Timestamptz(6)
+  verification_status     od_verification_status_enum @default(awaiting_documents)
+  email_sender            String?                     @db.VarChar(255)
+  email_receiver          String?                     @db.VarChar(255)
+  email_subject           String?                     @db.VarChar(255)
+  email_sent_at           DateTime?                   @db.Timestamptz(6)
+  email_body              String?
+  admin_remarks           String?
+  faculty                 faculty                     @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([faculty_id], map: "idx_faculty_od_requests_faculty_id")
 }
@@ -2481,6 +2536,17 @@ model secretary_service_requests {
   @@index([status], map: "idx_secretary_service_requests_status")
 }
 
+model announcement_role_mapping {
+  id              Int           @id @default(autoincrement())
+  announcement_id Int
+  role_id         Int
+  announcements   announcements @relation(fields: [announcement_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_announcement_role")
+  roles           roles         @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_role")
+
+  @@unique([announcement_id, role_id], map: "uq_announcement_role")
+  @@index([role_id], map: "idx_announcement_role_mapping_role")
+}
+
 enum hostel_wing_enum {
   boys
   girls
@@ -2724,6 +2790,7 @@ enum target_audience_enum {
   parents
   teachers
   students
+  roles
 }
 
 enum user_status_enum {
@@ -2891,4 +2958,10 @@ enum timetable_version_status_enum {
 enum vendor_type_enum {
   product
   service
+}
+
+enum od_verification_status_enum {
+  awaiting_documents
+  under_review
+  verified
 }
