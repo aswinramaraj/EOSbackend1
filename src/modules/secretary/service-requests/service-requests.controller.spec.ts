@@ -6,35 +6,31 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications/notifications.service';
-import { VenuesController } from './venues.controller';
-import { VenuesService } from './venues.service';
+import { ServiceRequestsController } from './service-requests.controller';
+import { ServiceRequestsService } from './service-requests.service';
 
-describe('VenuesController', () => {
-  let controller: VenuesController;
+describe('ServiceRequestsController', () => {
+  let controller: ServiceRequestsController;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      controllers: [VenuesController],
+      controllers: [ServiceRequestsController],
       providers: [
-        VenuesService,
+        ServiceRequestsService,
         { provide: NotificationsService, useValue: { create: jest.fn() } },
         {
           provide: PrismaService,
           useValue: {
-            venues: {
+            secretary_service_requests: {
               create: jest.fn(),
-              findUnique: jest.fn(),
               findMany: jest.fn(),
+              count: jest.fn(),
+              findUnique: jest.fn(),
               update: jest.fn(),
               delete: jest.fn(),
-              count: jest.fn(),
             },
-            venue_bookings: {
-              create: jest.fn(),
-              findUnique: jest.fn(),
-              findMany: jest.fn(),
-              update: jest.fn(),
-              count: jest.fn(),
+            secretary_service_request_items: {
+              deleteMany: jest.fn(),
             },
             $transaction: jest.fn(),
           },
@@ -42,7 +38,9 @@ describe('VenuesController', () => {
       ],
     }).compile();
 
-    controller = module.get<VenuesController>(VenuesController);
+    controller = module.get<ServiceRequestsController>(
+      ServiceRequestsController,
+    );
   });
 
   it('should be defined', () => {

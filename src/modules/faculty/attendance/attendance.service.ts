@@ -35,6 +35,14 @@ const ATTENDANCE_SELECT = {
   },
   subjects: { select: { id: true, name: true, subject_code: true } },
   faculty: { select: { id: true, first_name: true, last_name: true } },
+  users: {
+    select: {
+      id: true,
+      email: true,
+      faculty: { select: { first_name: true, last_name: true } },
+      non_teaching_staff: { select: { first_name: true, last_name: true } },
+    },
+  },
   students: {
     select: {
       id: true,
@@ -44,6 +52,13 @@ const ATTENDANCE_SELECT = {
     },
   },
 } as const;
+
+interface AttendanceMarkerRow {
+  id: number;
+  email: string;
+  faculty: { first_name: string; last_name: string } | null;
+  non_teaching_staff: { first_name: string; last_name: string | null }[];
+}
 
 interface AttendanceRow {
   id: number;
@@ -55,13 +70,32 @@ interface AttendanceRow {
     departments: { id: number; name: string; code: string };
   };
   subjects: { id: number; name: string; subject_code: string } | null;
-  faculty: { id: number; first_name: string; last_name: string };
+  faculty: { id: number; first_name: string; last_name: string } | null;
+  users: AttendanceMarkerRow;
   students: {
     id: number;
     student_id_no: string;
     roll_no: string | null;
     soa_applications: { first_name: string; last_name: string | null } | null;
   };
+}
+
+/**
+ * `marked_by_user_id` (generic — any role) is always present; the direct
+ * `faculty` relation (via `marked_by_faculty_id`) is only set when the
+ * marker is teaching staff (null for Secretary-marked rows). Mirrors
+ * VenuesService.resolveBookerName's faculty-then-non_teaching_staff-then-
+ * email fallback for display purposes.
+ */
+function resolveMarkerName(marker: AttendanceMarkerRow): string {
+  if (marker.faculty) {
+    return `${marker.faculty.first_name} ${marker.faculty.last_name}`;
+  }
+  const staff = marker.non_teaching_staff[0];
+  if (staff) {
+    return staff.last_name ? `${staff.first_name} ${staff.last_name}` : staff.first_name;
+  }
+  return marker.email;
 }
 
 function toResponse(record: AttendanceRow) {
@@ -76,6 +110,10 @@ function toResponse(record: AttendanceRow) {
     },
     subject: record.subjects,
     faculty: record.faculty,
+    marked_by: {
+      id: record.users.id,
+      name: resolveMarkerName(record.users),
+    },
     student: {
       id: record.students.id,
       student_id_no: record.students.student_id_no,
@@ -93,14 +131,20 @@ export class AttendanceService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * POST /attendance (Faculty only).
+   * POST /attendance (Faculty / Secretary).
    *
    * Marks attendance for every student in dto.records for one class session
    * (class + optional subject + date), all inside a single transaction —
-   * either every row is inserted or none are.
+   * either every row is inserted or none are. `marked_by_user_id` is always
+   * set from the caller's own id; `marked_by_faculty_id` is only populated
+   * when the caller actually has a faculty profile (Secretary doesn't).
    */
-  async create(dto: CreateAttendanceDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  async create(dto: CreateAttendanceDto, currentUser: JwtPayload) {
+    const userId = currentUser.sub;
+    const faculty =
+      currentUser.role === ROLES.FACULTY
+        ? await this.resolveFacultyByUserId(userId)
+        : null;
 
     const klass = await this.prisma.classes.findUnique({
       where: { id: dto.class_id },
@@ -196,7 +240,8 @@ export class AttendanceService {
                 subject_id: dto.subject_id,
                 attendance_date: attendanceDate,
                 status: r.status,
-                marked_by_faculty_id: faculty.id,
+                marked_by_faculty_id: faculty?.id,
+                marked_by_user_id: userId,
               },
               select: { id: true, student_id: true, status: true },
             }),
@@ -227,14 +272,17 @@ export class AttendanceService {
         department: klass.departments,
       },
       subject,
-      faculty: {
-        id: faculty.id,
-        first_name: faculty.first_name,
-        last_name: faculty.last_name,
-      },
+      faculty: faculty
+        ? {
+            id: faculty.id,
+            first_name: faculty.first_name,
+            last_name: faculty.last_name,
+          }
+        : null,
       date: dto.date,
       total_present: created.filter((r) => r.status === 'present').length,
       total_absent: created.filter((r) => r.status === 'absent').length,
+      total_on_duty: created.filter((r) => r.status === 'on_duty').length,
       records: created,
     };
   }
@@ -360,6 +408,7 @@ export class AttendanceService {
               attendance_date: attendanceDate,
               status: r.status,
               marked_by_faculty_id: faculty.id,
+              marked_by_user_id: userId,
             },
             select: { id: true },
           }),
@@ -437,12 +486,12 @@ export class AttendanceService {
   }
 
   /**
-   * PATCH /attendance/:id (Faculty only — and only the faculty who marked it).
-   * `status` is the only editable field.
+   * PATCH /attendance/:id (Faculty / Secretary — only the one who marked it).
+   * `status` is the only editable field. Ownership is checked against the
+   * generic `marked_by_user_id` rather than the faculty-only column, so it
+   * works the same way regardless of which role created the record.
    */
   async update(id: number, dto: UpdateAttendanceDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
-
     const record = await this.prisma.attendance_records.findUnique({
       where: { id },
     });
@@ -450,7 +499,7 @@ export class AttendanceService {
       throw new NotFoundException('Attendance record not found');
     }
 
-    if (record.marked_by_faculty_id !== faculty.id) {
+    if (record.marked_by_user_id !== userId) {
       throw new ForbiddenException(
         'You may only edit attendance records you marked yourself',
       );
@@ -463,6 +512,47 @@ export class AttendanceService {
     });
 
     return toResponse(updated);
+  }
+
+  /**
+   * GET /me/classes/:class_id/roster (Faculty / Secretary).
+   *
+   * The roster a "mark attendance" screen needs before it can render one row
+   * per student — admissions/students has no working list endpoint of its
+   * own to serve this, so it lives here instead, scoped to exactly what
+   * attendance-marking needs (id, roll number, name), not a general-purpose
+   * student listing. Only active students are included; a student who has
+   * left doesn't need attendance marked against them.
+   */
+  async getClassRoster(classId: number) {
+    const klass = await this.prisma.classes.findUnique({
+      where: { id: classId },
+    });
+    if (!klass) {
+      throw new NotFoundException({
+        message: 'Class not found',
+        errorCode: 'CLASS_NOT_FOUND',
+      });
+    }
+
+    const students = await this.prisma.students.findMany({
+      where: { class_id: classId, status: 'active' },
+      select: {
+        id: true,
+        student_id_no: true,
+        roll_no: true,
+        soa_applications: { select: { first_name: true, last_name: true } },
+      },
+      orderBy: { roll_no: 'asc' },
+    });
+
+    return students.map((s) => ({
+      id: s.id,
+      student_id_no: s.student_id_no,
+      roll_no: s.roll_no,
+      first_name: s.soa_applications?.first_name ?? null,
+      last_name: s.soa_applications?.last_name ?? null,
+    }));
   }
 
   private async resolveFacultyByUserId(userId: number) {
@@ -480,8 +570,9 @@ export class AttendanceService {
   /**
    * STUDENT and PARENT are restricted to their own (or their children's) records —
    * workflow.md scopes both roles to "their own"/"their son/daughter" explicitly.
-   * ADMIN, HOD and FACULTY are unrestricted (staff-tier access, matching how the
-   * Faculty and Faculty Mapping modules treat those roles elsewhere).
+   * ADMIN, HOD, FACULTY and SECRETARY are unrestricted (staff-tier access,
+   * matching how the Faculty and Faculty Mapping modules treat those roles
+   * elsewhere).
    */
   private async applyRoleScoping(
     where: Record<string, unknown>,

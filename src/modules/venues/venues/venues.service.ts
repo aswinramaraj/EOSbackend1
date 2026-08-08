@@ -11,6 +11,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 import { CreateVenueBookingDto } from './dto/create-venue-booking.dto';
@@ -122,7 +123,10 @@ const VENUE_BOOKING_SELECT = {
 export class VenuesService {
   private readonly logger = new Logger(VenuesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /** POST /venues (Admin only). */
   async create(createVenueDto: CreateVenueDto) {
@@ -139,8 +143,9 @@ export class VenuesService {
   }
 
   /**
-   * GET /venues?from=...&to=...&page=...&limit=... — availability check
-   * (any authenticated user; no department/ownership filtering).
+   * GET /venues?from=...&to=...&search=...&page=...&limit=... — availability
+   * check (any authenticated user; no department/ownership filtering).
+   * `search` optionally filters by venue name (contains, case-insensitive).
    *
    * `venues` has no `created_at` column, so results are ordered by `id`
    * (same fallback used by lesson_plans, which has the same limitation).
@@ -157,8 +162,13 @@ export class VenuesService {
       throw new BadRequestException('from must be before to');
     }
 
+    const where = query.search
+      ? { name: { contains: query.search, mode: 'insensitive' as const } }
+      : {};
+
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.venues.findMany({
+        where,
         skip: query.skip,
         take: query.limit,
         orderBy: { id: 'asc' },
@@ -179,7 +189,7 @@ export class VenuesService {
           },
         },
       }),
-      this.prisma.venues.count(),
+      this.prisma.venues.count({ where }),
     ]);
 
     return paginate(rows.map(toVenueAvailability), total, query);
@@ -242,7 +252,7 @@ export class VenuesService {
   }
 
   /**
-   * POST /venue-bookings (HoD / Faculty / Placement / IQAC).
+   * POST /venue-bookings (HoD / Faculty / Placement / IQAC / Secretary).
    *
    * workflow.md: venue reservations are reviewed by IQAC afterwards, which
    * either approves, offers an alternative venue, or denies for no
@@ -264,9 +274,16 @@ export class VenuesService {
     const fromDatetime = new Date(dto.from_datetime);
     const toDatetime = new Date(dto.to_datetime);
 
-    if (fromDatetime <= new Date()) {
+    // A precise instant comparison, not a calendar-date-only one: a booking
+    // for today at a time that has already passed is genuinely in the past
+    // and must be rejected, while a booking later today (or any future day)
+    // must be allowed. `fromDatetime`/`now` are both absolute instants
+    // (parsed from/constructed with full timezone information), so `<` here
+    // is timezone-safe regardless of which zone the server or the caller is
+    // in — the comparison never needs to reason about "local" at all.
+    if (fromDatetime < new Date()) {
       throw new UnprocessableEntityException({
-        message: 'from_datetime must be in the future',
+        message: 'from_datetime must not be in the past',
         errorCode: 'INVALID_TIME_RANGE',
       });
     }
@@ -410,6 +427,18 @@ export class VenuesService {
     this.logger.log(
       `Venue booking ${id} reviewed: decision=${dto.decision} by user=${userId}`,
     );
+
+    const venueName = updated.venues_venue_bookings_venue_idTovenues.name;
+    const decisionMessage =
+      dto.decision === 'alternative_offered'
+        ? `An alternative venue has been offered for your booking of "${venueName}".`
+        : `Your booking for "${venueName}" has been ${dto.decision}.`;
+    await this.notifications.create({
+      user_id: booking.booked_by_user_id,
+      title: `Venue booking ${dto.decision}`,
+      message: decisionMessage,
+    });
+
     return updated;
   }
 }
