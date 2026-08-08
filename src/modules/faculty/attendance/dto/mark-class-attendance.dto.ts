@@ -11,13 +11,19 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-/** One student's status within a POST /me/classes/:class_id/attendance batch. */
+/**
+ * One student's status within a POST /me/classes/:class_id/attendance
+ * batch. attendance_status_enum has three real values (present/absent/
+ * on_duty) — this used to only accept the first two (a stale copy of an
+ * earlier, smaller enum), which silently blocked the "on duty" option the
+ * mobile marking UI's own toggle grid already offered.
+ */
 export class ClassAttendanceRecordItemDto {
   @IsInt()
   student_id: number;
 
-  @IsIn(['present', 'absent'])
-  status: 'present' | 'absent';
+  @IsIn(['present', 'absent', 'on_duty'])
+  status: 'present' | 'absent' | 'on_duty';
 }
 
 /**

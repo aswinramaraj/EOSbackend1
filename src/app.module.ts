@@ -43,6 +43,7 @@ import { SeatingArrangementsModule } from './modules/exams/seating-arrangements/
 import { AppraisalModule } from './modules/faculty/appraisal/appraisal.module';
 import { AssignmentsModule } from './modules/faculty/assignments/assignments.module';
 import { AttendanceModule } from './modules/faculty/attendance/attendance.module';
+import { AttendanceCvModule } from './modules/faculty/attendance-cv/attendance-cv.module';
 import { ClassMentorsModule } from './modules/faculty/class-mentors/class-mentors.module';
 import { ExamMarksModule } from './modules/faculty/exam-marks/exam-marks.module';
 import { FacultyLeavesModule } from './modules/faculty/faculty-leaves/faculty-leaves.module';
@@ -103,6 +104,8 @@ import { VendorsModule } from './modules/procurement/vendors/vendors.module';
 
 import { PurchaseRequestsModule } from './modules/procurement/purchase-requests/purchase-requests.module';
 import { ServiceRequestsModule } from './modules/procurement/service-requests/service-requests.module';
+
+import { WalletModule } from './modules/wallet/wallet.module';
 
 import { VenuesModule } from './modules/venues/venues/venues.module';
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
@@ -169,6 +172,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     AppraisalModule,
     AssignmentsModule,
     AttendanceModule,
+    AttendanceCvModule,
     ClassMentorsModule,
     ExamMarksModule,
     FacultyLeavesModule,
@@ -229,6 +233,8 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
 
     PurchaseRequestsModule,
     ServiceRequestsModule,
+
+    WalletModule,
 
     VenuesModule,
     NotificationsModule,

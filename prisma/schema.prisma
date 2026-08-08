@@ -67,14 +67,16 @@ model alumni_batches {
 }
 
 model alumni_group_messages {
-  id                         Int            @id @default(autoincrement())
+  id                         Int             @id @default(autoincrement())
   alumni_batch_id            Int
-  posted_by_alumni_member_id Int
+  posted_by_alumni_member_id Int?
   content                    String
-  attachment_url             String?        @db.VarChar(500)
-  created_at                 DateTime       @default(now()) @db.Timestamptz(6)
-  alumni_batches             alumni_batches @relation(fields: [alumni_batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  alumni_members             alumni_members @relation(fields: [posted_by_alumni_member_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  attachment_url             String?         @db.VarChar(500)
+  created_at                 DateTime        @default(now()) @db.Timestamptz(6)
+  posted_by_user_id          Int?
+  alumni_batches             alumni_batches  @relation(fields: [alumni_batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  alumni_members             alumni_members? @relation(fields: [posted_by_alumni_member_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                      users?          @relation(fields: [posted_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([alumni_batch_id, created_at], map: "idx_alumni_group_messages_batch")
 }
@@ -119,6 +121,7 @@ model announcements {
   status                     announcement_status_enum     @default(published)
   file_key                   String?
   announcement_class_mapping announcement_class_mapping[]
+  announcement_role_mapping  announcement_role_mapping[]
   batches                    batches?                     @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   departments                departments?                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                      users                        @relation(fields: [posted_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -425,6 +428,7 @@ model companies {
   id               Int                @id @default(autoincrement())
   name             String             @db.VarChar(200)
   profile_info     String?
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
   placement_drives placement_drives[]
 }
 
@@ -664,6 +668,7 @@ model faculty {
   previous_experience_years     Int?
   office_room                   String?                         @db.VarChar(100)
   reports_to_faculty_id         Int?
+  resume_url                    String?                         @db.VarChar(500)
   appraisal_requests            appraisal_requests[]
   assignments                   assignments[]
   attendance_records            attendance_records[]
@@ -1283,6 +1288,9 @@ model placement_drives {
   job_role                   String?                      @db.VarChar(150)
   package_lpa                Decimal?                     @db.Decimal(6, 2)
   eligibility_cgpa           Decimal?                     @db.Decimal(3, 2)
+  venue                      String?                      @db.VarChar(200)
+  registration_start         DateTime?                    @db.Date
+  registration_end           DateTime?                    @db.Date
   companies                  companies                    @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                      users?                       @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_drive_applications student_drive_applications[]
@@ -1454,10 +1462,11 @@ model revaluation_requests {
 }
 
 model roles {
-  id          Int     @id @default(autoincrement())
-  name        String  @unique @db.VarChar(50)
-  description String? @db.VarChar(255)
-  users       users[]
+  id                        Int                         @id @default(autoincrement())
+  name                      String                      @unique @db.VarChar(50)
+  description               String?                     @db.VarChar(255)
+  announcement_role_mapping announcement_role_mapping[]
+  users                     users[]
 }
 
 model salary_divisions {
@@ -1630,6 +1639,8 @@ model student_drive_applications {
   updated_by_user_id Int?
   updated_at         DateTime                      @default(now()) @db.Timestamptz(6)
   last_cleared_round Int?                          @db.SmallInt
+  offer_response     String?                       @db.VarChar(20)
+  offered_package    Decimal?                      @db.Decimal(6, 2)
   placement_drives   placement_drives              @relation(fields: [drive_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   students           students                      @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users              users?                        @relation(fields: [updated_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1755,15 +1766,6 @@ model student_transport_mapping {
   students                                                                          students         @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
-model student_wallets {
-  id                  Int                   @id @default(autoincrement())
-  student_id          Int                   @unique
-  balance             Decimal               @default(0) @db.Decimal(12, 2)
-  updated_at          DateTime              @default(now()) @db.Timestamptz(6)
-  students            students              @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  wallet_transactions wallet_transactions[]
-}
-
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model students {
   id                                                                Int                                @id @default(autoincrement())
@@ -1804,6 +1806,9 @@ model students {
   knew_institution_by                                               String?                            @db.VarChar(100)
   nominee                                                           String?                            @db.VarChar(150)
   created_at                                                        DateTime                           @default(now()) @db.Timestamptz(6)
+  photo_url                                                         String?                            @db.VarChar(500)
+  photo_uploaded_at                                                 DateTime?                          @db.Timestamptz(6)
+  face_enrolled_at                                                  DateTime?                          @db.Timestamptz(6)
   alumni_members                                                    alumni_members?
   attendance_records                                                attendance_records[]
   bonafide_requests                                                 bonafide_requests[]
@@ -1836,8 +1841,10 @@ model students {
   student_certificates                                              student_certificates[]
   student_contacts                                                  student_contacts?
   student_drive_applications                                        student_drive_applications[]
+  student_entrepreneurship                                          student_entrepreneurship?
   student_family_details                                            student_family_details?
   student_fee_demand_mapping                                        student_fee_demand_mapping[]
+  student_higher_education                                          student_higher_education?
   student_hostel_mapping                                            student_hostel_mapping?
   student_identity_marks                                            student_identity_marks[]
   student_leaves                                                    student_leaves[]
@@ -1845,7 +1852,6 @@ model students {
   student_projects                                                  student_projects[]
   student_sensitive_info                                            student_sensitive_info?
   student_transport_mapping                                         student_transport_mapping?
-  student_wallets                                                   student_wallets?
   batches                                                           batches                            @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   classes                                                           classes?                           @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   courses                                                           courses                            @relation(fields: [course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1866,6 +1872,10 @@ model subjects {
   subject_code                  String                          @unique @db.VarChar(30)
   department_id                 Int?
   credits                       Int?                            @db.SmallInt
+  course_type                   subject_course_type_enum?
+  short_code                    String?                         @db.VarChar(20)
+  category                      subject_category_enum?
+  hours                         Int?                            @db.SmallInt
   assignments                   assignments[]
   attendance_records            attendance_records[]
   class_subjects                class_subjects[]
@@ -1928,6 +1938,7 @@ model users {
   academic_calendars                                                                academic_calendars[]
   achievement_comments                                                              achievement_comments[]
   alumni_announcements                                                              alumni_announcements[]
+  alumni_group_messages                                                             alumni_group_messages[]
   announcements                                                                     announcements[]
   appraisal_requests_appraisal_requests_hod_reviewed_byTousers                      appraisal_requests[]               @relation("appraisal_requests_hod_reviewed_byTousers")
   appraisal_requests_appraisal_requests_management_approved_byTousers               appraisal_requests[]               @relation("appraisal_requests_management_approved_byTousers")
@@ -1967,6 +1978,7 @@ model users {
   notifications                                                                     notifications[]
   od_request_hod_approvals                                                          od_request_hod_approvals[]
   parent_student_mapping                                                            parent_student_mapping[]
+  personal_calendar_entries                                                         personal_calendar_entries[]
   placement_drives                                                                  placement_drives[]
   purchase_indents                                                                  purchase_indents[]
   purchase_order_proposals_purchase_order_proposals_finance_reviewed_byTousers      purchase_order_proposals[]         @relation("purchase_order_proposals_finance_reviewed_byTousers")
@@ -1987,11 +1999,13 @@ model users {
   student_drive_applications                                                        student_drive_applications[]
   student_leaves                                                                    student_leaves[]
   students                                                                          students?
+  user_social_links                                                                 user_social_links[]
   roles                                                                             roles                              @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   venue_bookings_venue_bookings_booked_by_user_idTousers                            venue_bookings[]                   @relation("venue_bookings_booked_by_user_idTousers")
   venue_bookings_venue_bookings_reviewed_by_user_idTousers                          venue_bookings[]                   @relation("venue_bookings_reviewed_by_user_idTousers")
   visitor_logs                                                                      visitor_logs[]
   wallet_transactions                                                               wallet_transactions[]
+  wallets                                                                           wallets?
 }
 
 model vendor_quotations {
@@ -2081,25 +2095,31 @@ model wallet_outlets {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model wallet_transactions {
-  id                   Int                    @id @default(autoincrement())
-  wallet_id            Int
-  txn_type             wallet_txn_type_enum
-  source               wallet_txn_source_enum
-  amount               Decimal                @db.Decimal(12, 2)
-  status               wallet_txn_status_enum @default(pending)
-  processed_by_user_id Int?
-  razorpay_order_id    String?                @unique(map: "idx_wallet_txn_razorpay_order", where: raw("(razorpay_order_id IS NOT NULL)")) @db.VarChar(100)
-  razorpay_payment_id  String?                @db.VarChar(100)
-  razorpay_signature   String?                @db.VarChar(255)
-  remarks              String?                @db.VarChar(255)
-  created_at           DateTime               @default(now()) @db.Timestamptz(6)
-  outlet_id            Int?
-  users                users?                 @relation(fields: [processed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "wallet_transactions_collected_by_user_id_fkey")
-  wallet_outlets       wallet_outlets?        @relation(fields: [outlet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  student_wallets      student_wallets        @relation(fields: [wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                     Int                    @id @default(autoincrement())
+  wallet_id              Int
+  txn_type               wallet_txn_type_enum
+  source                 wallet_txn_source_enum
+  amount                 Decimal                @db.Decimal(12, 2)
+  status                 wallet_txn_status_enum @default(pending)
+  processed_by_user_id   Int?
+  razorpay_order_id      String?                @unique(map: "idx_wallet_txn_razorpay_order", where: raw("(razorpay_order_id IS NOT NULL)")) @db.VarChar(100)
+  razorpay_payment_id    String?                @db.VarChar(100)
+  razorpay_signature     String?                @db.VarChar(255)
+  remarks                String?                @db.VarChar(255)
+  created_at             DateTime               @default(now()) @db.Timestamptz(6)
+  outlet_id              Int?
+  counterparty_wallet_id Int?
+  related_transaction_id Int?
+  processed_by           users?                 @relation(fields: [processed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "wallet_transactions_collected_by_user_id_fkey")
+  counterparty_wallet    wallets?               @relation("wallet_transactions_counterparty_wallet_idTowallets", fields: [counterparty_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  wallet_outlets         wallet_outlets?        @relation(fields: [outlet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  related_transaction    wallet_transactions?   @relation("wallet_transactionsTowallet_transactions", fields: [related_transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  linked_transactions    wallet_transactions[]  @relation("wallet_transactionsTowallet_transactions")
+  wallets                wallets                @relation(fields: [wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([outlet_id, created_at], map: "idx_wallet_txn_outlet")
   @@index([wallet_id, created_at], map: "idx_wallet_txn_wallet")
+  @@index([counterparty_wallet_id], map: "idx_wallet_txn_counterparty")
 }
 
 model coe_profiles {
@@ -2528,6 +2548,81 @@ model faculty_id_card_issuances {
   @@index([faculty_id, issued_at], map: "idx_faculty_id_card_issuances_faculty_id")
 }
 
+model announcement_role_mapping {
+  id              Int           @id @default(autoincrement())
+  announcement_id Int
+  role_id         Int
+  announcements   announcements @relation(fields: [announcement_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_announcement_role")
+  roles           roles         @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_role")
+
+  @@unique([announcement_id, role_id], map: "uq_announcement_role")
+  @@index([role_id], map: "idx_announcement_role_mapping_role")
+}
+
+model personal_calendar_entries {
+  id         Int                                   @id @default(autoincrement())
+  user_id    Int
+  entry_date DateTime                              @db.Date
+  title      String                                @db.VarChar(200)
+  category   personal_calendar_entry_category_enum @default(personal)
+  details    String?                               @db.VarChar(255)
+  created_at DateTime                              @default(now()) @db.Timestamptz(6)
+  users      users                                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, entry_date], map: "idx_personal_calendar_entries_user_date")
+}
+
+model student_entrepreneurship {
+  id                   Int      @id @default(autoincrement())
+  student_id           Int      @unique
+  business_name        String   @db.VarChar(255)
+  business_description String?
+  sector               String?  @db.VarChar(150)
+  stage                String?  @db.VarChar(50)
+  funding_required     Decimal? @db.Decimal(12, 2)
+  remarks              String?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  students             students @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model student_higher_education {
+  id                   Int      @id @default(autoincrement())
+  student_id           Int      @unique
+  preferred_course     String   @db.VarChar(255)
+  preferred_country    String   @db.VarChar(100)
+  preferred_university String?  @db.VarChar(255)
+  remarks              String?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  students             students @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model wallets {
+  id                        Int                   @id(map: "student_wallets_pkey") @default(autoincrement())
+  balance                   Decimal               @default(0) @db.Decimal(12, 2)
+  updated_at                DateTime              @default(now()) @db.Timestamptz(6)
+  user_id                   Int                   @unique
+  qr_token                  String                @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pin_hash                  String?               @db.VarChar(255)
+  pin_set_at                DateTime?             @db.Timestamptz(6)
+  failed_pin_attempts       Int                   @default(0) @db.SmallInt
+  pin_locked_until          DateTime?             @db.Timestamptz(6)
+  counterparty_transactions wallet_transactions[] @relation("wallet_transactions_counterparty_wallet_idTowallets")
+  wallet_transactions       wallet_transactions[]
+  users                     users                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model user_social_links {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  title         String   @db.VarChar(100)
+  url           String   @db.VarChar(500)
+  display_order Int      @default(0) @db.SmallInt
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  users         users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id], map: "idx_user_social_links_user_id")
+}
+
 enum hostel_wing_enum {
   boys
   girls
@@ -2771,6 +2866,7 @@ enum target_audience_enum {
   parents
   teachers
   students
+  roles
 }
 
 enum user_status_enum {
@@ -2796,6 +2892,7 @@ enum wallet_txn_source_enum {
   razorpay
   adjustment
   purchase
+  transfer
 }
 
 enum wallet_txn_status_enum {
@@ -2944,4 +3041,27 @@ enum od_verification_status_enum {
   awaiting_documents
   under_review
   verified
+}
+
+enum personal_calendar_entry_category_enum {
+  personal
+  reminder
+  meeting
+}
+
+enum subject_category_enum {
+  CORE
+  ELECTIVE
+  OPEN_ELECTIVE
+  MANDATORY
+  VALUE_ADDED
+}
+
+enum subject_course_type_enum {
+  THEORY
+  PRACTICAL
+  THEORY_WITH_PRACTICAL
+  PROJECT
+  MANDATORY
+  AUDIT
 }

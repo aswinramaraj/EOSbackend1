@@ -47,12 +47,17 @@ export class AssignmentsController {
   }
 
   /**
-   * GET /api/v1/me/handled-classes — Faculty only. Every (class, subject)
+   * GET /api/v1/me/handled-classes — Faculty/HoD. Every (class, subject)
    * the caller is mapped to teach - the first step of the No-Due tile's
-   * "select the class you're handling" flow.
+   * "select the class you're handling" flow, and also the Student
+   * Attendance tile's fallback class picker when today's timetable has no
+   * matching slot (makeup classes etc.) - see AttendanceCvController.
+   * HOD included since that tile is reachable from the HoD dashboard too
+   * and getHandledClasses resolves the caller via faculty.user_id, same as
+   * every other role.
    */
   @Get('handled-classes')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   getHandledClasses(@CurrentUser() user: JwtPayload) {
     return this.assignmentsService.getHandledClasses(user.sub);
   }
