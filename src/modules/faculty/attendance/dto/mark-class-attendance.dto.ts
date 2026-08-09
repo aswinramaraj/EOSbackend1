@@ -7,17 +7,24 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
   Matches,
   ValidateNested,
 } from 'class-validator';
 
-/** One student's status within a POST /me/classes/:class_id/attendance batch. */
+/**
+ * One student's status within a POST /me/classes/:class_id/attendance
+ * batch. attendance_status_enum has three real values (present/absent/
+ * on_duty) — this used to only accept the first two (a stale copy of an
+ * earlier, smaller enum), which silently blocked the "on duty" option the
+ * mobile marking UI's own toggle grid already offered.
+ */
 export class ClassAttendanceRecordItemDto {
   @IsInt()
   student_id: number;
 
-  @IsIn(['present', 'absent'])
-  status: 'present' | 'absent';
+  @IsIn(['present', 'absent', 'on_duty'])
+  status: 'present' | 'absent' | 'on_duty';
 }
 
 /**
@@ -48,6 +55,18 @@ export class MarkClassAttendanceDto {
 
   @IsDateString({}, { message: 'attendance_date must be a valid ISO date' })
   attendance_date: string;
+
+  /**
+   * The Cloudinary URL returned by POST …/attendance/recognize's response
+   * (see RecognizeAttendanceDto) — this endpoint never accepts a raw photo
+   * itself, only the already-uploaded evidence URL from that prior call,
+   * so committing never re-uploads or re-analyzes anything. Optional:
+   * classes marked without ever taking a photo (fully manual) have nothing
+   * to attach.
+   */
+  @IsOptional()
+  @IsUrl()
+  photo_url?: string;
 
   @IsArray()
   @ArrayMinSize(1)

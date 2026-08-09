@@ -41,6 +41,8 @@ import { PrincipalTransportModule } from './modules/principal-transport/principa
 import { PrincipalLibraryModule } from './modules/principal-library/principal-library.module';
 import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
+import { ProfileModule } from './modules/profile/profile.module';
+import { LmsModule } from './modules/lms/lms.module';
 
 import { ExamsModule } from './modules/exams/exams/exams.module';
 import { ExamSubjectMappingModule } from './modules/exams/exam-subject-mapping/exam-subject-mapping.module';
@@ -58,11 +60,16 @@ import { SeatingArrangementsModule } from './modules/exams/seating-arrangements/
 import { AppraisalModule } from './modules/faculty/appraisal/appraisal.module';
 import { AssignmentsModule } from './modules/faculty/assignments/assignments.module';
 import { AttendanceModule } from './modules/faculty/attendance/attendance.module';
+import { AttendanceCvModule } from './modules/faculty/attendance-cv/attendance-cv.module';
 import { ClassMentorsModule } from './modules/faculty/class-mentors/class-mentors.module';
 import { ExamMarksModule } from './modules/faculty/exam-marks/exam-marks.module';
+import { FacultyAttendanceModule } from './modules/faculty/faculty-attendance/faculty-attendance.module';
+import { FacultyFilesModule } from './modules/faculty/faculty-files/faculty-files.module';
+import { FacultyIdCardModule } from './modules/faculty/faculty-id-card/faculty-id-card.module';
 import { FacultyLeavesModule } from './modules/faculty/faculty-leaves/faculty-leaves.module';
 import { FacultyOdModule } from './modules/faculty/faculty-od/faculty-od.module';
 import { FacultyMappingModule } from './modules/faculty/faculty-mapping/faculty-mapping.module';
+import { FacultyVerificationModule } from './modules/faculty/faculty-verification/faculty-verification.module';
 import { FacultyModule } from './modules/faculty/faculty/faculty.module';
 import { HolidaySlotsModule } from './modules/faculty/holiday-slots/holiday-slots.module';
 import { HrPayrollModule } from './modules/faculty/hr-payroll/hr-payroll.module';
@@ -118,6 +125,8 @@ import { VendorsModule } from './modules/procurement/vendors/vendors.module';
 
 import { PurchaseRequestsModule } from './modules/procurement/purchase-requests/purchase-requests.module';
 import { ServiceRequestsModule } from './modules/procurement/service-requests/service-requests.module';
+
+import { WalletModule } from './modules/wallet/wallet.module';
 
 import { VenuesModule } from './modules/venues/venues/venues.module';
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
@@ -180,6 +189,8 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     PrincipalMedicalModule,
     PrincipalSportsModule,
     StudentEntrepreneurshipModule,
+    ProfileModule,
+    LmsModule,
 
     AnnouncementsModule,
 
@@ -199,11 +210,16 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     AppraisalModule,
     AssignmentsModule,
     AttendanceModule,
+    AttendanceCvModule,
     ClassMentorsModule,
     ExamMarksModule,
+    FacultyAttendanceModule,
+    FacultyFilesModule,
+    FacultyIdCardModule,
     FacultyLeavesModule,
     FacultyOdModule,
     FacultyMappingModule,
+    FacultyVerificationModule,
     FacultyModule,
     HolidaySlotsModule,
     HrPayrollModule,
@@ -259,6 +275,8 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
 
     PurchaseRequestsModule,
     ServiceRequestsModule,
+
+    WalletModule,
 
     VenuesModule,
     NotificationsModule,
