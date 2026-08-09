@@ -7,6 +7,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
   Matches,
   ValidateNested,
 } from 'class-validator';
@@ -54,6 +55,18 @@ export class MarkClassAttendanceDto {
 
   @IsDateString({}, { message: 'attendance_date must be a valid ISO date' })
   attendance_date: string;
+
+  /**
+   * The Cloudinary URL returned by POST …/attendance/recognize's response
+   * (see RecognizeAttendanceDto) — this endpoint never accepts a raw photo
+   * itself, only the already-uploaded evidence URL from that prior call,
+   * so committing never re-uploads or re-analyzes anything. Optional:
+   * classes marked without ever taking a photo (fully manual) have nothing
+   * to attach.
+   */
+  @IsOptional()
+  @IsUrl()
+  photo_url?: string;
 
   @IsArray()
   @ArrayMinSize(1)

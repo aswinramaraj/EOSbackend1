@@ -362,6 +362,7 @@ export class AttendanceService {
               status: r.status,
               marked_by_faculty_id: faculty.id,
               marked_by_user_id: userId,
+              photo_url: dto.photo_url,
             },
             select: { id: true },
           }),

@@ -220,6 +220,7 @@ model attendance_records {
   status               attendance_status_enum
   marked_by_faculty_id Int?
   marked_by_user_id    Int
+  photo_url            String?                @db.VarChar(500)
   classes              classes                @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   faculty              faculty?               @relation(fields: [marked_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   subjects             subjects?              @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)

@@ -138,5 +138,55 @@ describe('AttendanceService', () => {
         }),
       );
     });
+
+    it('attaches photo_url (from a prior recognize call) to every created row when given', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 9 });
+      prisma.classes.findUnique.mockResolvedValue({ id: 5 });
+      prisma.subjects.findUnique.mockResolvedValue({ id: 75 });
+      prisma.faculty_subject_class_mapping.findFirst.mockResolvedValue({ id: 1 });
+      prisma.students.findMany.mockResolvedValue([{ id: 121, class_id: 5 }]);
+      prisma.attendance_records.findFirst.mockResolvedValue(null);
+      prisma.$transaction.mockImplementation((calls: Promise<unknown>[]) => Promise.all(calls));
+      prisma.attendance_records.create.mockResolvedValue({ id: 1 });
+
+      await service.markForClass(
+        5,
+        {
+          subject_id: 75,
+          attendance_date: '2026-08-08',
+          photo_url: 'https://res.cloudinary.com/demo/image/upload/attendance/class-5.jpg',
+          records: [{ student_id: 121, status: 'present' }],
+        },
+        42,
+      );
+
+      expect(prisma.attendance_records.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            photo_url: 'https://res.cloudinary.com/demo/image/upload/attendance/class-5.jpg',
+          }),
+        }),
+      );
+    });
+
+    it('leaves photo_url unset for a fully manual marking (no prior recognize call)', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 9 });
+      prisma.classes.findUnique.mockResolvedValue({ id: 5 });
+      prisma.subjects.findUnique.mockResolvedValue({ id: 75 });
+      prisma.faculty_subject_class_mapping.findFirst.mockResolvedValue({ id: 1 });
+      prisma.students.findMany.mockResolvedValue([{ id: 121, class_id: 5 }]);
+      prisma.attendance_records.findFirst.mockResolvedValue(null);
+      prisma.$transaction.mockImplementation((calls: Promise<unknown>[]) => Promise.all(calls));
+      prisma.attendance_records.create.mockResolvedValue({ id: 1 });
+
+      await service.markForClass(
+        5,
+        { subject_id: 75, attendance_date: '2026-08-08', records: [{ student_id: 121, status: 'present' }] },
+        42,
+      );
+
+      const [[call]] = prisma.attendance_records.create.mock.calls;
+      expect(call.data.photo_url).toBeUndefined();
+    });
   });
 });

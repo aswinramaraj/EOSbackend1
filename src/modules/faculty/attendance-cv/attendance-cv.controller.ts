@@ -66,8 +66,17 @@ export class AttendanceCvController {
   /**
    * POST /api/v1/me/classes/:class_id/attendance/recognize — any faculty
    * mapped to teach dto.subject_id for :class_id (same check as
-   * POST /me/classes/:class_id/attendance). Read-only: returns a draft,
-   * persists nothing - see AttendanceCvService.recognizeAttendance.
+   * POST /me/classes/:class_id/attendance). Read-only as far as
+   * attendance_records is concerned - writes nothing there, only a draft
+   * is returned - see AttendanceCvService.recognizeAttendance.
+   *
+   * When images are sent, the first one is also uploaded to Cloudinary as
+   * the attendance evidence photo, and its URL comes back as
+   * `photo_url` (null if no images were sent, or if the upload itself
+   * failed - that never blocks the draft). Pass that same URL back as
+   * `photo_url` on the eventual POST …/attendance (markForClass) call to
+   * attach it to the committed records - this endpoint never re-uploads on
+   * commit.
    *
    * dto.images is optional - omit it (or send subject_id alone) to fetch
    * the plain class roster with no AI suggestions (suggested_status: null

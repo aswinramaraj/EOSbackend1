@@ -5,6 +5,7 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { CloudinaryStorageProvider } from 'src/modules/storage/providers/cloudinary-storage.provider';
 import { AttendanceCvService } from './attendance-cv.service';
 
 describe('AttendanceCvService', () => {
@@ -16,6 +17,7 @@ describe('AttendanceCvService', () => {
     students: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
   };
   let fetchMock: jest.Mock;
+  let cloudinary: { upload: jest.Mock; getSignedUrl: jest.Mock; delete: jest.Mock };
 
   function studentRow(overrides: Record<string, unknown> = {}) {
     return {
@@ -43,8 +45,14 @@ describe('AttendanceCvService', () => {
     fetchMock = jest.fn();
     (global as unknown as { fetch: jest.Mock }).fetch = fetchMock;
 
+    cloudinary = { upload: jest.fn(), getSignedUrl: jest.fn(), delete: jest.fn() };
+
     const module: TestingModule = await Test.createTestingModule({
-      providers: [AttendanceCvService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        AttendanceCvService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: CloudinaryStorageProvider, useValue: cloudinary },
+      ],
     }).compile();
 
     service = module.get<AttendanceCvService>(AttendanceCvService);
@@ -233,6 +241,11 @@ describe('AttendanceCvService', () => {
 
       expect(result.analyzed).toBe(true);
       expect(result.spoofed).toBe(1);
+      // 'x' isn't a real "data:...;base64,..." image, so there's nothing
+      // decodable to upload — Cloudinary is never even attempted, and the
+      // draft still comes back fine with no photo attached.
+      expect(cloudinary.upload).not.toHaveBeenCalled();
+      expect(result.photo_url).toBeNull();
       expect(result.students).toEqual([
         {
           student_id: 42,
@@ -258,6 +271,60 @@ describe('AttendanceCvService', () => {
       ]);
     });
 
+    it('uploads the first image to Cloudinary and returns its URL as photo_url', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 9 });
+      prisma.faculty_subject_class_mapping.findFirst.mockResolvedValue({ id: 1 });
+      prisma.students.findMany.mockResolvedValue([]);
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ results: [], banked: 0, spoofed: 0 }),
+      });
+      cloudinary.upload.mockResolvedValue({
+        path: 'attendance/class-5-subject-3-123',
+        url: 'https://res.cloudinary.com/demo/image/upload/attendance/class-5-subject-3-123.jpg',
+      });
+
+      const result = await service.recognizeAttendance(
+        5,
+        { subject_id: 3, images: ['data:image/jpeg;base64,Zm9v', 'data:image/jpeg;base64,YmFy'] },
+        1,
+      );
+
+      // Only the FIRST image is uploaded — the rest exist purely to help
+      // the CV service's own matching accuracy, not as extra evidence photos.
+      expect(cloudinary.upload).toHaveBeenCalledTimes(1);
+      const [bucket, path, buffer, contentType] = cloudinary.upload.mock.calls[0];
+      expect(bucket).toBe('attendance');
+      expect(path).toMatch(/^class-5-subject-3-\d+\.jpg$/);
+      expect(buffer).toEqual(Buffer.from('Zm9v', 'base64'));
+      expect(contentType).toBe('image/jpeg');
+      expect(result.photo_url).toBe(
+        'https://res.cloudinary.com/demo/image/upload/attendance/class-5-subject-3-123.jpg',
+      );
+    });
+
+    it('returns photo_url: null (without failing the draft) when the Cloudinary upload throws', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 9 });
+      prisma.faculty_subject_class_mapping.findFirst.mockResolvedValue({ id: 1 });
+      prisma.students.findMany.mockResolvedValue([]);
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ results: [], banked: 0, spoofed: 0 }),
+      });
+      cloudinary.upload.mockRejectedValue(new Error('Cloudinary is down'));
+
+      const result = await service.recognizeAttendance(
+        5,
+        { subject_id: 3, images: ['data:image/jpeg;base64,Zm9v'] },
+        1,
+      );
+
+      expect(result.analyzed).toBe(true);
+      expect(result.photo_url).toBeNull();
+    });
+
     it('returns the plain roster with no suggestions and never calls the CV service when no images are given', async () => {
       prisma.faculty.findUnique.mockResolvedValue({ id: 9 });
       prisma.faculty_subject_class_mapping.findFirst.mockResolvedValue({ id: 1 });
@@ -269,8 +336,10 @@ describe('AttendanceCvService', () => {
       const result = await service.recognizeAttendance(5, { subject_id: 3 }, 1);
 
       expect(fetchMock).not.toHaveBeenCalled();
+      expect(cloudinary.upload).not.toHaveBeenCalled();
       expect(result.analyzed).toBe(false);
       expect(result.spoofed).toBe(0);
+      expect(result.photo_url).toBeNull();
       expect(result.students).toEqual([
         {
           student_id: 42,

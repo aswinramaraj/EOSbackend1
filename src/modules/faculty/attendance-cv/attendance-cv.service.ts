@@ -8,8 +8,20 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { CloudinaryStorageProvider } from 'src/modules/storage/providers/cloudinary-storage.provider';
 import { EnrollFaceDto } from './dto/enroll-face.dto';
 import { RecognizeAttendanceDto } from './dto/recognize-attendance.dto';
+
+/** "data:image/jpeg;base64,…" -> a Buffer + its content type, for upload. Returns null for anything not decodable. */
+function decodeDataUrl(dataUrl: string): { buffer: Buffer; contentType: string } | null {
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) return null;
+  try {
+    return { contentType: match[1], buffer: Buffer.from(match[2], 'base64') };
+  } catch {
+    return null;
+  }
+}
 
 interface CvEnrollResponse {
   student_id: string;
@@ -43,7 +55,10 @@ interface CvMarkResponse {
 export class AttendanceCvService {
   private readonly logger = new Logger(AttendanceCvService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cloudinary: CloudinaryStorageProvider,
+  ) {}
 
   private getBaseUrl(): string {
     return process.env.ATTENDANCE_CV_BASE_URL || 'http://127.0.0.1:5000';
@@ -161,9 +176,17 @@ export class AttendanceCvService {
    * Forwards the classroom photos to the CV service's /api/mark, which
    * returns Present/Absent for its ENTIRE enrolled roster (it has no
    * concept of "class") - this filters that down to just this class's
-   * students and returns a draft. Nothing is persisted here; the caller
-   * reviews/corrects the draft, then commits via the existing
-   * POST /me/classes/:class_id/attendance (markForClass), unchanged.
+   * students and returns a draft. Nothing is written to attendance_records
+   * here; the caller reviews/corrects the draft, then commits via the
+   * existing POST /me/classes/:class_id/attendance (markForClass).
+   *
+   * The one side effect: when images are sent, the first one is uploaded
+   * to Cloudinary as the evidence photo and its URL is returned as
+   * `photo_url`, so the eventual commit can attach it without re-sending
+   * or re-uploading the image. Done here (at draft time) rather than at
+   * markForClass, since the photo already exists in memory from the CV
+   * call above - committing shouldn't need the raw image resent just to
+   * attach a URL that's already known.
    *
    * dto.images is optional - with none given, this skips the CV call
    * entirely and doubles as the plain roster fetch the mobile marking
@@ -193,11 +216,37 @@ export class AttendanceCvService {
       : null;
     const byStudentIdNo = new Map((cvResponse?.results ?? []).map((r) => [r.student_id, r]));
 
+    // Evidence photo: only the first image (the primary classroom snapshot,
+    // not every retry/angle sent for recognition accuracy) is kept, and
+    // only after the CV service has already accepted it above - no point
+    // uploading a photo the recognition step itself rejected. Cloudinary
+    // failing here degrades gracefully: the draft below is still useful
+    // without a photo, so this never blocks recognizeAttendance() itself -
+    // the faculty can still review/commit, just without evidence attached.
+    let photoUrl: string | undefined;
+    if (hasPhotos) {
+      const decoded = decodeDataUrl(dto.images![0]);
+      if (decoded) {
+        try {
+          const uploaded = await this.cloudinary.upload(
+            'attendance',
+            `class-${classId}-subject-${dto.subject_id}-${Date.now()}.jpg`,
+            decoded.buffer,
+            decoded.contentType,
+          );
+          photoUrl = uploaded.url;
+        } catch (err) {
+          this.logger.warn(`Failed to upload attendance evidence photo to Cloudinary: ${err}`);
+        }
+      }
+    }
+
     return {
       class_id: classId,
       subject_id: dto.subject_id,
       analyzed: hasPhotos,
       spoofed: cvResponse?.spoofed ?? 0,
+      photo_url: photoUrl ?? null,
       students: roster.map((s) => {
         const match = byStudentIdNo.get(s.student_id_no);
         return {
