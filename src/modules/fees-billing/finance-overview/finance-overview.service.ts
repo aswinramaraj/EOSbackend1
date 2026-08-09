@@ -142,6 +142,7 @@ export class FinanceOverviewService {
         monthlyCollectionTrend: this.buildMonthlyCollectionTrend(mappings),
         departmentOutstanding: this.buildDepartmentOutstanding(perMapping),
         paymentStatusDistribution: this.buildPaymentStatusDistribution(perMapping),
+        collectionByPaymentMode: this.buildCollectionByPaymentMode(mappings),
       },
       operationalInsights: {
         recentPayments: this.buildRecentPayments(mappings),
@@ -392,6 +393,36 @@ export class FinanceOverviewService {
       status,
       count: counts[status],
     }));
+  }
+
+  /**
+   * Real per-payment-mode composition of every fee_payments row in scope —
+   * mode names are the actual payment_mode_enum values (cash/card/upi/dd/
+   * netbanking); a null mode (legacy rows recorded before this field
+   * existed) is grouped under "unspecified" rather than dropped or guessed.
+   */
+  private buildCollectionByPaymentMode(
+    mappings: Awaited<ReturnType<typeof this.queryMappings>>,
+  ): { mode: string; totalAmount: string; count: number }[] {
+    const totals = new Map<string, { amount: Prisma.Decimal; count: number }>();
+
+    for (const mapping of mappings) {
+      for (const payment of mapping.fee_payments) {
+        const mode = payment.payment_mode ?? 'unspecified';
+        const entry = totals.get(mode) ?? { amount: new Prisma.Decimal(0), count: 0 };
+        entry.amount = entry.amount.plus(payment.amount_paid);
+        entry.count += 1;
+        totals.set(mode, entry);
+      }
+    }
+
+    return [...totals.entries()]
+      .map(([mode, { amount, count }]) => ({
+        mode,
+        totalAmount: amount.toString(),
+        count,
+      }))
+      .sort((a, b) => Number(b.totalAmount) - Number(a.totalAmount));
   }
 
   private buildRecentPayments(
