@@ -44,11 +44,16 @@ export class CreateAnnouncementDto {
   target_audience?: target_audience_enum;
 
   /**
-   * Required for every target_audience except 'teachers' - that's the
-   * class-targeted flow, persisted via announcement_class_mapping. Never
-   * required for a draft.
+   * Required for every target_audience except 'teachers' and 'roles' -
+   * that's the class-targeted flow, persisted via announcement_class_mapping.
+   * Never required for a draft.
    */
-  @ValidateIf((dto) => dto.status !== 'draft' && dto.target_audience !== 'teachers')
+  @ValidateIf(
+    (dto) =>
+      dto.status !== 'draft' &&
+      dto.target_audience !== 'teachers' &&
+      dto.target_audience !== 'roles',
+  )
   @IsArray()
   @ArrayNotEmpty()
   @ArrayUnique()
@@ -66,6 +71,20 @@ export class CreateAnnouncementDto {
   @IsOptional()
   @IsInt()
   department_id?: number;
+
+  /**
+   * Required when target_audience === 'roles' - a Principal/Admin-only
+   * capability that targets specific backend roles directly (e.g. HOD,
+   * Placement, Library), persisted via announcement_role_mapping. A
+   * "broadcast to everyone" is just every role id from GET
+   * /announcements/lookup/roles, not a distinct value.
+   */
+  @ValidateIf((dto) => dto.status !== 'draft' && dto.target_audience === 'roles')
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @IsInt({ each: true })
+  role_ids?: number[];
 
   /** From POST /announcements/attachments' response — never uploaded here. */
   @IsOptional()

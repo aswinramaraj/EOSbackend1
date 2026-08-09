@@ -26,6 +26,21 @@ import { MeProfileModule } from './modules/admissions/students/me-profile/me-pro
 
 import { AnnouncementsModule } from './modules/announcements/announcements/announcements.module';
 import { ParentsModule } from './modules/parents/parents.module';
+import { PersonalCalendarModule } from './modules/personal-calendar/personal-calendar.module';
+import { StudentHigherEducationModule } from './modules/student-higher-education/student-higher-education.module';
+import { StudentEntrepreneurshipModule } from './modules/student-entrepreneurship/student-entrepreneurship.module';
+import { PrincipalStudentsModule } from './modules/principal-students/principal-students.module';
+import { PrincipalFacultyModule } from './modules/principal-faculty/principal-faculty.module';
+import { PrincipalDepartmentsModule } from './modules/principal-departments/principal-departments.module';
+import { PrincipalExamsModule } from './modules/principal-exams/principal-exams.module';
+import { PrincipalFinanceModule } from './modules/principal-finance/principal-finance.module';
+import { PrincipalPlacementsModule } from './modules/principal-placements/principal-placements.module';
+import { PrincipalHostelModule } from './modules/principal-hostel/principal-hostel.module';
+import { PrincipalApprovalsModule } from './modules/principal-approvals/principal-approvals.module';
+import { PrincipalTransportModule } from './modules/principal-transport/principal-transport.module';
+import { PrincipalLibraryModule } from './modules/principal-library/principal-library.module';
+import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
+import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { LmsModule } from './modules/lms/lms.module';
 
@@ -159,6 +174,21 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     StudentsModule,
     MeProfileModule,
     ParentsModule,
+    PersonalCalendarModule,
+    StudentHigherEducationModule,
+    PrincipalStudentsModule,
+    PrincipalFacultyModule,
+    PrincipalDepartmentsModule,
+    PrincipalExamsModule,
+    PrincipalFinanceModule,
+    PrincipalPlacementsModule,
+    PrincipalHostelModule,
+    PrincipalApprovalsModule,
+    PrincipalTransportModule,
+    PrincipalLibraryModule,
+    PrincipalMedicalModule,
+    PrincipalSportsModule,
+    StudentEntrepreneurshipModule,
     ProfileModule,
     LmsModule,
 

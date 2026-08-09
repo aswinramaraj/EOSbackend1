@@ -27,7 +27,7 @@ export class AcademicCalendarEventsController {
   ) {}
 
   @Post()
-  @Roles(ROLES.ACADEMIC_COORDINATOR)
+  @Roles(ROLES.ACADEMIC_COORDINATOR, ROLES.PRINCIPAL)
   create(
     @Body() createAcademicCalendarEventDto: CreateAcademicCalendarEventDto,
     @CurrentUser() user: JwtPayload,
@@ -51,7 +51,7 @@ export class AcademicCalendarEventsController {
   }
 
   @Patch(':id')
-  @Roles(ROLES.ACADEMIC_COORDINATOR)
+  @Roles(ROLES.ACADEMIC_COORDINATOR, ROLES.PRINCIPAL)
   update(
     @Param('id') id: string,
     @Body() updateAcademicCalendarEventDto: UpdateAcademicCalendarEventDto,
@@ -63,7 +63,7 @@ export class AcademicCalendarEventsController {
   }
 
   @Delete(':id')
-  @Roles(ROLES.ACADEMIC_COORDINATOR)
+  @Roles(ROLES.ACADEMIC_COORDINATOR, ROLES.PRINCIPAL)
   remove(@Param('id') id: string) {
     return this.academicCalendarEventsService.remove(+id);
   }

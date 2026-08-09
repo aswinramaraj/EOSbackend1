@@ -66,14 +66,21 @@ model alumni_batches {
   alumni_members        alumni_members[]
 }
 
+// posted_by_alumni_member_id is nullable because a message can now come
+// from either a real alumnus (self-service group chat, see
+// MeAlumniMessagesService) OR a non-alumnus staff member like Principal
+// (see AdminAlumniGroupsService) - posted_by_user_id covers that second
+// case. Exactly one of the two is ever set; enforced at the service layer,
+// not a DB constraint, matching this codebase's existing convention for
+// this kind of invariant.
 model alumni_group_messages {
   id                         Int             @id @default(autoincrement())
   alumni_batch_id            Int
   posted_by_alumni_member_id Int?
+  posted_by_user_id          Int?
   content                    String
   attachment_url             String?         @db.VarChar(500)
   created_at                 DateTime        @default(now()) @db.Timestamptz(6)
-  posted_by_user_id          Int?
   alumni_batches             alumni_batches  @relation(fields: [alumni_batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   alumni_members             alumni_members? @relation(fields: [posted_by_alumni_member_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                      users?          @relation(fields: [posted_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -105,6 +112,17 @@ model announcement_class_mapping {
 
   @@unique([announcement_id, class_id], map: "uq_announcement_class")
   @@index([class_id], map: "idx_announcement_class_mapping_class")
+}
+
+model announcement_role_mapping {
+  id              Int           @id @default(autoincrement())
+  announcement_id Int
+  role_id         Int
+  announcements   announcements @relation(fields: [announcement_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_announcement_role")
+  roles           roles         @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_role")
+
+  @@unique([announcement_id, role_id], map: "uq_announcement_role")
+  @@index([role_id], map: "idx_announcement_role_mapping_role")
 }
 
 model announcements {
@@ -492,6 +510,7 @@ model departments {
   seating_plan_venue_departments seating_plan_venue_departments[]
   service_indents                service_indents[]
   subjects                       subjects[]
+  sports_teams                   sports_teams[]
 }
 
 model e_resources {
@@ -703,6 +722,8 @@ model faculty {
   lms_notes                     lms_notes[]
   malpractice_incidents         malpractice_incidents[]
   media_requests                media_requests[]
+  medical_visits                medical_visits[]
+  sports_equipment_issues       sports_equipment_issues[]
   od_requests                   od_requests[]
   payslip_requests              payslip_requests[]
   revaluation_requests          revaluation_requests[]
@@ -1284,6 +1305,19 @@ model payslip_requests {
   faculty      faculty             @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
+model personal_calendar_entries {
+  id         Int                                   @id @default(autoincrement())
+  user_id    Int
+  entry_date DateTime                              @db.Date
+  title      String                                @db.VarChar(200)
+  category   personal_calendar_entry_category_enum @default(personal)
+  details    String?                               @db.VarChar(255)
+  created_at DateTime                              @default(now()) @db.Timestamptz(6)
+  users      users                                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, entry_date], map: "idx_personal_calendar_entries_user_date")
+}
+
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model placement_drives {
   id                         Int                          @id @default(autoincrement())
@@ -1400,21 +1434,24 @@ model purchase_indents {
 }
 
 model purchase_order_proposals {
-  id                                                        Int                  @id @default(autoincrement())
-  indent_id                                                 Int
-  vendor_id                                                 Int?
-  finance_reviewed_by                                       Int?
-  finance_reviewed_at                                       DateTime?            @db.Timestamptz(6)
-  hod_reviewed_by                                           Int?
-  hod_reviewed_at                                           DateTime?            @db.Timestamptz(6)
-  status                                                    proposal_status_enum @default(pending)
-  hod_remarks                                               String?
-  finance_remarks                                           String?
-  users_purchase_order_proposals_finance_reviewed_byTousers users?               @relation("purchase_order_proposals_finance_reviewed_byTousers", fields: [finance_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_purchase_order_proposals_hod_reviewed_byTousers     users?               @relation("purchase_order_proposals_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  purchase_indents                                          purchase_indents     @relation(fields: [indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  vendors                                                   vendors?             @relation(fields: [vendor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  purchase_orders                                           purchase_orders?
+  id                                                          Int                  @id @default(autoincrement())
+  indent_id                                                   Int
+  vendor_id                                                   Int?
+  finance_reviewed_by                                         Int?
+  finance_reviewed_at                                         DateTime?            @db.Timestamptz(6)
+  hod_reviewed_by                                             Int?
+  hod_reviewed_at                                             DateTime?            @db.Timestamptz(6)
+  principal_reviewed_by                                       Int?
+  principal_reviewed_at                                       DateTime?            @db.Timestamptz(6)
+  status                                                      proposal_status_enum @default(pending)
+  hod_remarks                                                 String?
+  finance_remarks                                             String?
+  users_purchase_order_proposals_finance_reviewed_byTousers   users?               @relation("purchase_order_proposals_finance_reviewed_byTousers", fields: [finance_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_order_proposals_hod_reviewed_byTousers       users?               @relation("purchase_order_proposals_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_order_proposals_principal_reviewed_byTousers users?               @relation("purchase_order_proposals_principal_reviewed_byTousers", fields: [principal_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_indents                                            purchase_indents     @relation(fields: [indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vendors                                                     vendors?             @relation(fields: [vendor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_orders                                             purchase_orders?
 }
 
 model purchase_orders {
@@ -1540,21 +1577,24 @@ model service_indents {
 }
 
 model service_order_proposals {
-  id                                                       Int                  @id @default(autoincrement())
-  indent_id                                                Int
-  vendor_id                                                Int?
-  finance_reviewed_by                                      Int?
-  finance_reviewed_at                                      DateTime?            @db.Timestamptz(6)
-  hod_reviewed_by                                          Int?
-  hod_reviewed_at                                          DateTime?            @db.Timestamptz(6)
-  status                                                   proposal_status_enum @default(pending)
-  hod_remarks                                              String?
-  finance_remarks                                          String?
-  users_service_order_proposals_finance_reviewed_byTousers users?               @relation("service_order_proposals_finance_reviewed_byTousers", fields: [finance_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_service_order_proposals_hod_reviewed_byTousers     users?               @relation("service_order_proposals_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  service_indents                                          service_indents      @relation(fields: [indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  vendors                                                  vendors?             @relation(fields: [vendor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  service_orders                                           service_orders?
+  id                                                         Int                  @id @default(autoincrement())
+  indent_id                                                  Int
+  vendor_id                                                  Int?
+  finance_reviewed_by                                        Int?
+  finance_reviewed_at                                        DateTime?            @db.Timestamptz(6)
+  hod_reviewed_by                                            Int?
+  hod_reviewed_at                                            DateTime?            @db.Timestamptz(6)
+  principal_reviewed_by                                      Int?
+  principal_reviewed_at                                      DateTime?            @db.Timestamptz(6)
+  status                                                     proposal_status_enum @default(pending)
+  hod_remarks                                                String?
+  finance_remarks                                            String?
+  users_service_order_proposals_finance_reviewed_byTousers   users?               @relation("service_order_proposals_finance_reviewed_byTousers", fields: [finance_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_service_order_proposals_hod_reviewed_byTousers       users?               @relation("service_order_proposals_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_service_order_proposals_principal_reviewed_byTousers users?               @relation("service_order_proposals_principal_reviewed_byTousers", fields: [principal_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  service_indents                                            service_indents      @relation(fields: [indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vendors                                                    vendors?             @relation(fields: [vendor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  service_orders                                             service_orders?
 }
 
 model service_orders {
@@ -1837,6 +1877,9 @@ model students {
   main_gate_in_out_ledger                                           main_gate_in_out_ledger[]
   malpractice_incidents                                             malpractice_incidents[]
   marksheets                                                        marksheets[]
+  medical_visits                                                    medical_visits[]
+  sports_equipment_issues                                           sports_equipment_issues[]
+  student_sports_team_mapping                                       student_sports_team_mapping[]
   od_request_hod_approvals                                          od_request_hod_approvals[]
   od_team_members                                                   od_team_members[]
   od_teams                                                          od_teams[]
@@ -1988,6 +2031,7 @@ model users {
   main_gate_in_out_ledger                                                           main_gate_in_out_ledger[]
   malpractice_incidents                                                             malpractice_incidents[]
   media_requests                                                                    media_requests[]
+  medical_staff                                                                     medical_staff[]
   non_teaching_staff                                                                non_teaching_staff[]
   notifications                                                                     notifications[]
   od_request_hod_approvals                                                          od_request_hod_approvals[]
@@ -1997,6 +2041,7 @@ model users {
   purchase_indents                                                                  purchase_indents[]
   purchase_order_proposals_purchase_order_proposals_finance_reviewed_byTousers      purchase_order_proposals[]         @relation("purchase_order_proposals_finance_reviewed_byTousers")
   purchase_order_proposals_purchase_order_proposals_hod_reviewed_byTousers          purchase_order_proposals[]         @relation("purchase_order_proposals_hod_reviewed_byTousers")
+  purchase_order_proposals_purchase_order_proposals_principal_reviewed_byTousers    purchase_order_proposals[]         @relation("purchase_order_proposals_principal_reviewed_byTousers")
   purchase_orders                                                                   purchase_orders[]
   result_publications                                                               result_publications[]
   salary_payments                                                                   salary_payments[]
@@ -2009,6 +2054,7 @@ model users {
   service_indents                                                                   service_indents[]
   service_order_proposals_service_order_proposals_finance_reviewed_byTousers        service_order_proposals[]          @relation("service_order_proposals_finance_reviewed_byTousers")
   service_order_proposals_service_order_proposals_hod_reviewed_byTousers            service_order_proposals[]          @relation("service_order_proposals_hod_reviewed_byTousers")
+  service_order_proposals_service_order_proposals_principal_reviewed_byTousers      service_order_proposals[]          @relation("service_order_proposals_principal_reviewed_byTousers")
   service_orders                                                                    service_orders[]
   student_drive_applications                                                        student_drive_applications[]
   student_leaves                                                                    student_leaves[]
@@ -2466,6 +2512,84 @@ model hostel_wardens {
   @@index([block_id], map: "idx_hostel_wardens_block")
 }
 
+model medical_staff {
+  id             Int              @id @default(autoincrement())
+  user_id        Int?
+  name           String           @db.VarChar(150)
+  designation    String?          @db.VarChar(100)
+  shift_time     String?          @db.VarChar(50)
+  phone          String?          @db.VarChar(20)
+  created_at     DateTime         @default(now()) @db.Timestamptz(6)
+  users          users?           @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  medical_visits medical_visits[]
+}
+
+model medical_visits {
+  id                   Int                @id @default(autoincrement())
+  visitor_type         borrower_type_enum
+  student_id           Int?
+  faculty_id           Int?
+  visit_date           DateTime           @default(dbgenerated("CURRENT_DATE")) @db.Date
+  reason               String?            @db.VarChar(255)
+  diagnosis            String?
+  treatment_given      String?
+  referred_to_hospital Boolean            @default(false)
+  attended_by_staff_id Int?
+  created_at           DateTime           @default(now()) @db.Timestamptz(6)
+  students             students?          @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty              faculty?           @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  medical_staff        medical_staff?     @relation(fields: [attended_by_staff_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([student_id], map: "idx_medical_visits_student")
+}
+
+model sports_teams {
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique @db.VarChar(150)
+  coach_name                  String?                       @db.VarChar(150)
+  department_id               Int?
+  created_at                  DateTime                      @default(now()) @db.Timestamptz(6)
+  departments                 departments?                  @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  student_sports_team_mapping student_sports_team_mapping[]
+}
+
+model student_sports_team_mapping {
+  id           Int          @id @default(autoincrement())
+  student_id   Int
+  team_id      Int
+  joined_at    DateTime     @default(now()) @db.Timestamptz(6)
+  students     students     @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sports_teams sports_teams @relation(fields: [team_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([student_id, team_id])
+}
+
+model sports_equipment {
+  id                      Int                       @id @default(autoincrement())
+  name                    String                    @db.VarChar(150)
+  category                String?                   @db.VarChar(100)
+  total_quantity          Int                       @default(1)
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  sports_equipment_issues sports_equipment_issues[]
+}
+
+model sports_equipment_issues {
+  id               Int                @id @default(autoincrement())
+  equipment_id     Int
+  issued_to_type   borrower_type_enum
+  student_id       Int?
+  faculty_id       Int?
+  issued_date      DateTime           @default(dbgenerated("CURRENT_DATE")) @db.Date
+  returned_date    DateTime?          @db.Date
+  status           borrow_status_enum @default(borrowed)
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
+  sports_equipment sports_equipment   @relation(fields: [equipment_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students         students?          @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty          faculty?           @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([equipment_id], map: "idx_sports_issues_equipment")
+}
+
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model secretary_product_request_items {
   id                         Int                        @id @default(autoincrement())
@@ -2560,30 +2684,6 @@ model faculty_id_card_issuances {
   users             users?   @relation(fields: [issued_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([faculty_id, issued_at], map: "idx_faculty_id_card_issuances_faculty_id")
-}
-
-model announcement_role_mapping {
-  id              Int           @id @default(autoincrement())
-  announcement_id Int
-  role_id         Int
-  announcements   announcements @relation(fields: [announcement_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_announcement_role")
-  roles           roles         @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_role")
-
-  @@unique([announcement_id, role_id], map: "uq_announcement_role")
-  @@index([role_id], map: "idx_announcement_role_mapping_role")
-}
-
-model personal_calendar_entries {
-  id         Int                                   @id @default(autoincrement())
-  user_id    Int
-  entry_date DateTime                              @db.Date
-  title      String                                @db.VarChar(200)
-  category   personal_calendar_entry_category_enum @default(personal)
-  details    String?                               @db.VarChar(255)
-  created_at DateTime                              @default(now()) @db.Timestamptz(6)
-  users      users                                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@index([user_id, entry_date], map: "idx_personal_calendar_entries_user_date")
 }
 
 model student_entrepreneurship {
@@ -2886,11 +2986,18 @@ enum payslip_status_enum {
   rejected
 }
 
+enum personal_calendar_entry_category_enum {
+  personal
+  reminder
+  meeting
+}
+
 enum proposal_status_enum {
   pending
   finance_approved
   hod_approved
   rejected
+  principal_approved
 }
 
 enum publication_type_enum {
@@ -3113,12 +3220,6 @@ enum od_verification_status_enum {
   awaiting_documents
   under_review
   verified
-}
-
-enum personal_calendar_entry_category_enum {
-  personal
-  reminder
-  meeting
 }
 
 enum lms_resource_type_enum {
