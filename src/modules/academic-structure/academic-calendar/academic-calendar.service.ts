@@ -71,8 +71,12 @@ export class AcademicCalendarService {
       });
     }
   }
-  findAll() {
+  findAll(filters?: { batchId?: number; semester?: number }) {
     return this.prisma.academic_calendars.findMany({
+      where: {
+        batch_id: filters?.batchId,
+        semester: filters?.semester,
+      },
       orderBy: [{ batch_id: 'asc' }, { semester: 'asc' }],
     });
   }

@@ -22,6 +22,7 @@ import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 interface UserContext {
   role: string;
   userId: number;
+  roleId: number;
   departmentId?: number;
   assignedClassIds?: number[];
   studentClassId?: number | null;
@@ -82,6 +83,10 @@ export class AnnouncementsService {
       if (dto.class_ids !== undefined) {
         await this.assertClassesValid(dto.class_ids, context);
       }
+      if (dto.role_ids !== undefined) {
+        await this.assertRoleTargetingPermitted(context);
+        await this.assertRolesValid(dto.role_ids);
+      }
 
       try {
         return await this.prisma.$transaction(async (tx) => {
@@ -108,13 +113,67 @@ export class AnnouncementsService {
             });
           }
 
+          if (dto.role_ids && dto.role_ids.length > 0) {
+            await tx.announcement_role_mapping.createMany({
+              data: dto.role_ids.map((role_id) => ({
+                announcement_id: announcement.id,
+                role_id,
+              })),
+            });
+          }
+
           return this.toResponseShape({
             ...announcement,
             announcement_class_mapping: (dto.class_ids ?? []).map((class_id) => ({ class_id })),
+            announcement_role_mapping: (dto.role_ids ?? []).map((role_id) => ({ role_id })),
           });
         });
       } catch (err) {
         this.logger.error('DB error while creating draft announcement', err);
+        throw new InternalServerErrorException({
+          message: 'Something went wrong. Please try again.',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
+    }
+
+    // 'roles' is a Principal/Admin-only broadcast to one or more specific
+    // backend roles (announcement_role_mapping), never a class/department
+    // broadcast - mutually exclusive with the 'students'/'teachers' branches
+    // below, matching the DTO's own ValidateIf split.
+    if (dto.target_audience === 'roles') {
+      await this.assertRoleTargetingPermitted(context);
+      await this.assertRolesValid(dto.role_ids!);
+
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const announcement = await tx.announcements.create({
+            data: {
+              posted_by_user_id: user.sub,
+              title: dto.title,
+              content: dto.content,
+              target_audience: dto.target_audience!,
+              status,
+              file_key: dto.file_key,
+              file_name: dto.file_name,
+            },
+          });
+
+          await tx.announcement_role_mapping.createMany({
+            data: dto.role_ids!.map((role_id) => ({
+              announcement_id: announcement.id,
+              role_id,
+            })),
+          });
+
+          return this.toResponseShape({
+            ...announcement,
+            announcement_class_mapping: [],
+            announcement_role_mapping: dto.role_ids!.map((role_id) => ({ role_id })),
+          });
+        });
+      } catch (err) {
+        this.logger.error('DB error while creating announcement', err);
         throw new InternalServerErrorException({
           message: 'Something went wrong. Please try again.',
           errorCode: 'INTERNAL_ERROR',
@@ -223,7 +282,7 @@ export class AnnouncementsService {
       return context.departmentId;
     }
 
-    if (context.role === ROLES.ADMIN) {
+    if (context.role === ROLES.ADMIN || context.role === ROLES.PRINCIPAL) {
       if (requestedDepartmentId === undefined) {
         return null;
       }
@@ -260,7 +319,10 @@ export class AnnouncementsService {
     try {
       announcements = await this.prisma.announcements.findMany({
         where,
-        include: { announcement_class_mapping: { select: { class_id: true } } },
+        include: {
+          announcement_class_mapping: { select: { class_id: true } },
+          announcement_role_mapping: { select: { role_id: true } },
+        },
         orderBy: { created_at: 'desc' },
       });
     } catch (err) {
@@ -294,7 +356,10 @@ export class AnnouncementsService {
     try {
       announcement = await this.prisma.announcements.findFirst({
         where: { AND: [{ id }, where] },
-        include: { announcement_class_mapping: { select: { class_id: true } } },
+        include: {
+          announcement_class_mapping: { select: { class_id: true } },
+          announcement_role_mapping: { select: { role_id: true } },
+        },
       });
     } catch (err) {
       this.logger.error('DB error during announcement lookup', err);
@@ -377,7 +442,8 @@ export class AnnouncementsService {
     } else if (
       resultStatus === 'published' &&
       existingStatus === 'draft' &&
-      effectiveTargetAudience !== 'teachers'
+      effectiveTargetAudience !== 'teachers' &&
+      effectiveTargetAudience !== 'roles'
     ) {
       const currentMappingCount = await this.prisma.announcement_class_mapping.count({
         where: { announcement_id: id },
@@ -386,6 +452,25 @@ export class AnnouncementsService {
         throw new BadRequestException({
           message: 'class_ids is required to publish this draft',
           errorCode: 'CLASS_IDS_REQUIRED',
+        });
+      }
+    }
+
+    if (dto.role_ids !== undefined) {
+      await this.assertRoleTargetingPermitted(context);
+      await this.assertRolesValid(dto.role_ids);
+    } else if (
+      resultStatus === 'published' &&
+      existingStatus === 'draft' &&
+      effectiveTargetAudience === 'roles'
+    ) {
+      const currentRoleMappingCount = await this.prisma.announcement_role_mapping.count({
+        where: { announcement_id: id },
+      });
+      if (currentRoleMappingCount === 0) {
+        throw new BadRequestException({
+          message: 'role_ids is required to publish this draft',
+          errorCode: 'ROLE_IDS_REQUIRED',
         });
       }
     }
@@ -428,12 +513,26 @@ export class AnnouncementsService {
           classIds = currentMappings.map((m) => m.class_id);
         }
 
+        let roleIds: number[];
+
+        if (dto.role_ids !== undefined) {
+          await this.syncRoleMapping(tx, id, dto.role_ids);
+          roleIds = dto.role_ids;
+        } else {
+          const currentRoleMappings = await tx.announcement_role_mapping.findMany({
+            where: { announcement_id: id },
+            select: { role_id: true },
+          });
+          roleIds = currentRoleMappings.map((m) => m.role_id);
+        }
+
         const updated = await tx.announcements.findUniqueOrThrow({
           where: { id },
         });
         return this.toResponseShape({
           ...updated,
           announcement_class_mapping: classIds.map((class_id) => ({ class_id })),
+          announcement_role_mapping: roleIds.map((role_id) => ({ role_id })),
         });
       });
     } catch (err) {
@@ -490,7 +589,10 @@ export class AnnouncementsService {
   private async resolveUserContext(user: JwtPayload): Promise<UserContext> {
     switch (user.role) {
       case ROLES.ADMIN:
-        return { role: ROLES.ADMIN, userId: user.sub };
+        return { role: ROLES.ADMIN, userId: user.sub, roleId: user.roleId };
+
+      case ROLES.PRINCIPAL:
+        return { role: ROLES.PRINCIPAL, userId: user.sub, roleId: user.roleId };
 
       case ROLES.HOD: {
         const faculty = await this.getFacultyByUserId(user.sub);
@@ -510,6 +612,7 @@ export class AnnouncementsService {
         return {
           role: ROLES.HOD,
           userId: user.sub,
+          roleId: user.roleId,
           assignedClassIds,
           departmentId: faculty.department_id,
         };
@@ -529,6 +632,7 @@ export class AnnouncementsService {
         return {
           role: ROLES.FACULTY,
           userId: user.sub,
+          roleId: user.roleId,
           assignedClassIds,
           departmentId: faculty.department_id,
         };
@@ -547,6 +651,7 @@ export class AnnouncementsService {
         return {
           role: ROLES.STUDENT,
           userId: user.sub,
+          roleId: user.roleId,
           studentClassId: student.class_id,
         };
       }
@@ -555,11 +660,16 @@ export class AnnouncementsService {
         const linkedStudentClassIds = await this.getLinkedStudentClassIds(
           user.sub,
         );
-        return { role: ROLES.PARENT, userId: user.sub, linkedStudentClassIds };
+        return {
+          role: ROLES.PARENT,
+          userId: user.sub,
+          roleId: user.roleId,
+          linkedStudentClassIds,
+        };
       }
 
       default:
-        return { role: user.role, userId: user.sub };
+        return { role: user.role, userId: user.sub, roleId: user.roleId };
     }
   }
 
@@ -582,11 +692,25 @@ export class AnnouncementsService {
     };
   }
 
+  /**
+   * Every role-specific branch below is additionally OR'd with "an
+   * announcement_role_mapping row exists for my role_id" - a Principal (or
+   * Admin) can address any of the 18 backend roles directly via
+   * target_audience: 'roles', orthogonal to the class/department scoping
+   * each branch otherwise applies. See assertRoleTargetingPermitted.
+   */
   private buildRoleVisibilityQuery(
     context: UserContext,
   ): Prisma.announcementsWhereInput {
+    const roleTargeted: Prisma.announcementsWhereInput = {
+      announcement_role_mapping: { some: { role_id: context.roleId } },
+    };
+
     switch (context.role) {
       case ROLES.ADMIN:
+        return {};
+
+      case ROLES.PRINCIPAL:
         return {};
 
       case ROLES.HOD:
@@ -597,6 +721,7 @@ export class AnnouncementsService {
             // Admin's org-wide faculty broadcasts (department_id: null) —
             // an HOD is also faculty and should see those.
             { target_audience: 'teachers', department_id: null },
+            roleTargeted,
           ],
         };
 
@@ -631,26 +756,37 @@ export class AnnouncementsService {
                 { department_id: null },
               ],
             },
+            roleTargeted,
           ],
         };
       }
 
       case ROLES.STUDENT: {
         const classId = context.studentClassId ?? -1;
-        return { announcement_class_mapping: { some: { class_id: classId } } };
+        return {
+          OR: [
+            { announcement_class_mapping: { some: { class_id: classId } } },
+            roleTargeted,
+          ],
+        };
       }
 
       case ROLES.PARENT: {
         const classIds = context.linkedStudentClassIds ?? [];
         return {
-          announcement_class_mapping: {
-            some: { class_id: { in: classIds.length ? classIds : [-1] } },
-          },
+          OR: [
+            {
+              announcement_class_mapping: {
+                some: { class_id: { in: classIds.length ? classIds : [-1] } },
+              },
+            },
+            roleTargeted,
+          ],
         };
       }
 
       default:
-        return { id: -1 };
+        return roleTargeted;
     }
   }
 
@@ -694,7 +830,7 @@ export class AnnouncementsService {
       return;
     }
 
-    if (context.role === ROLES.ADMIN) {
+    if (context.role === ROLES.ADMIN || context.role === ROLES.PRINCIPAL) {
       return;
     }
 
@@ -702,6 +838,76 @@ export class AnnouncementsService {
       message: 'You are not permitted to create or update announcements',
       errorCode: 'ROLE_NOT_PERMITTED',
     });
+  }
+
+  // ── Role-set validation (shared by create and update) ───────────────────
+
+  private async assertRoleTargetingPermitted(context: UserContext) {
+    if (context.role !== ROLES.ADMIN && context.role !== ROLES.PRINCIPAL) {
+      throw new ForbiddenException({
+        message: 'You are not permitted to target announcements by role',
+        errorCode: 'ROLE_NOT_PERMITTED',
+      });
+    }
+  }
+
+  private async assertRolesValid(roleIds: number[]) {
+    const existing = await this.prisma.roles.findMany({
+      where: { id: { in: roleIds } },
+      select: { id: true },
+    });
+    const foundIds = new Set(existing.map((r) => r.id));
+    const missing = roleIds.filter((id) => !foundIds.has(id));
+    if (missing.length > 0) {
+      throw new NotFoundException({
+        message: 'One or more roles were not found',
+        errorCode: 'ROLE_NOT_FOUND',
+      });
+    }
+  }
+
+  // ── Role-mapping synchronization (update only) ──────────────────────────
+
+  private async syncRoleMapping(
+    tx: Prisma.TransactionClient,
+    announcementId: number,
+    newRoleIds: number[],
+  ) {
+    const currentMappings = await tx.announcement_role_mapping.findMany({
+      where: { announcement_id: announcementId },
+      select: { role_id: true },
+    });
+
+    const currentIds = new Set(currentMappings.map((m) => m.role_id));
+    const newIds = new Set(newRoleIds);
+
+    const toDelete = [...currentIds].filter((id) => !newIds.has(id));
+    const toInsert = [...newIds].filter((id) => !currentIds.has(id));
+
+    if (toDelete.length > 0) {
+      await tx.announcement_role_mapping.deleteMany({
+        where: { announcement_id: announcementId, role_id: { in: toDelete } },
+      });
+    }
+
+    if (toInsert.length > 0) {
+      await tx.announcement_role_mapping.createMany({
+        data: toInsert.map((role_id) => ({
+          announcement_id: announcementId,
+          role_id,
+        })),
+      });
+    }
+  }
+
+  /**
+   * GET /announcements/lookup/roles
+   * Admin/Principal only — every backend role, for the "Target roles"
+   * checkbox grid. "Broadcast to everyone" is just the composer selecting
+   * every row here, not a distinct backend value.
+   */
+  lookupRoles() {
+    return this.prisma.roles.findMany({ orderBy: { name: 'asc' } });
   }
 
   // ── Mapping synchronization (update only) ───────────────────────────────
@@ -1032,15 +1238,19 @@ export class AnnouncementsService {
   private toResponseShape(
     announcement: { id: number } & Record<string, unknown>,
   ) {
-    const mappings = (announcement.announcement_class_mapping ?? []) as {
+    const classMappings = (announcement.announcement_class_mapping ?? []) as {
       class_id: number;
     }[];
-    const { announcement_class_mapping, ...rest } = announcement;
+    const roleMappings = (announcement.announcement_role_mapping ?? []) as {
+      role_id: number;
+    }[];
+    const { announcement_class_mapping, announcement_role_mapping, ...rest } = announcement;
     const fileKey = announcement.file_key as string | null | undefined;
     return {
       ...rest,
       file_url: fileKey ? this.storage.getPublicUrl(fileKey) : null,
-      class_ids: mappings.map((m) => m.class_id),
+      class_ids: classMappings.map((m) => m.class_id),
+      role_ids: roleMappings.map((m) => m.role_id),
     };
   }
 }

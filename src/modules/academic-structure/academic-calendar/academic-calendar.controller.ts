@@ -4,8 +4,10 @@ import {
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AcademicCalendarService } from './academic-calendar.service';
@@ -26,7 +28,7 @@ export class AcademicCalendarController {
   ) {}
 
   @Post()
-  @Roles(ROLES.ACADEMIC_COORDINATOR)
+  @Roles(ROLES.ACADEMIC_COORDINATOR, ROLES.PRINCIPAL)
   create(
     @Body() createAcademicCalendarDto: CreateAcademicCalendarDto,
     @CurrentUser() user: JwtPayload,
@@ -37,9 +39,18 @@ export class AcademicCalendarController {
     );
   }
 
+  /**
+   * GET /academic-calendar?batch_id=&semester=
+   * Both filters are optional and independent - used by the Principal's
+   * batch/semester picker to find the one calendar it's managing without
+   * fetching every calendar institution-wide.
+   */
   @Get()
-  findAll() {
-    return this.academicCalendarService.findAll();
+  findAll(
+    @Query('batch_id', new ParseIntPipe({ optional: true })) batchId?: number,
+    @Query('semester', new ParseIntPipe({ optional: true })) semester?: number,
+  ) {
+    return this.academicCalendarService.findAll({ batchId, semester });
   }
 
   @Get(':id')
@@ -48,7 +59,7 @@ export class AcademicCalendarController {
   }
 
   @Patch(':id')
-  @Roles(ROLES.ACADEMIC_COORDINATOR)
+  @Roles(ROLES.ACADEMIC_COORDINATOR, ROLES.PRINCIPAL)
   update(
     @Param('id') id: string,
     @Body() updateAcademicCalendarDto: UpdateAcademicCalendarDto,
@@ -57,7 +68,7 @@ export class AcademicCalendarController {
   }
 
   @Delete(':id')
-  @Roles(ROLES.ACADEMIC_COORDINATOR)
+  @Roles(ROLES.ACADEMIC_COORDINATOR, ROLES.PRINCIPAL)
   remove(@Param('id') id: string) {
     return this.academicCalendarService.remove(+id);
   }

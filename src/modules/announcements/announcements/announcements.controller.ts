@@ -36,21 +36,35 @@ export class AnnouncementsController {
   constructor(private readonly announcementsService: AnnouncementsService) {}
 
   /**
+   * GET /api/v1/announcements/lookup/roles
+   * Admin/Principal only — every backend role, for the "Target roles"
+   * checkbox grid (target_audience: 'roles').
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
+   */
+  @Get('lookup/roles')
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL)
+  lookupRoles() {
+    return this.announcementsService.lookupRoles();
+  }
+
+  /**
    * GET /api/v1/announcements/lookup/departments
-   * Admin only — departments that have at least one class in the given batch.
+   * Admin/Principal only — departments that have at least one class in the given batch.
    *
    * Error responses:
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
    */
   @Get('lookup/departments')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL)
   lookupDepartments(@Query('batch_id', ParseIntPipe) batchId: number) {
     return this.announcementsService.lookupDepartmentsForBatch(batchId);
   }
 
   /**
    * GET /api/v1/announcements/lookup/classes
-   * Admin: batch_id + department_id required, used as supplied.
+   * Admin/Principal: batch_id + department_id required, used as supplied.
    * HOD: batch_id required; department_id must NOT be supplied — it is always
    * resolved from the HOD's own department.
    *
@@ -59,7 +73,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 404 HOD_FACULTY_RECORD_NOT_FOUND, 500 INTERNAL_ERROR
    */
   @Get('lookup/classes')
-  @Roles(ROLES.ADMIN, ROLES.HOD)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD)
   lookupClasses(
     @Query('batch_id', ParseIntPipe) batchId: number,
     @Query('department_id', new ParseIntPipe({ optional: true }))
@@ -110,7 +124,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
    */
   @Post('attachments')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
   uploadAttachment(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
@@ -134,7 +148,7 @@ export class AnnouncementsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
   create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     return this.announcementsService.create(dto, user);
   }
@@ -186,7 +200,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Put(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -204,7 +218,7 @@ export class AnnouncementsController {
    * Error responses: see PUT /api/v1/announcements/:id
    */
   @Patch(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -223,7 +237,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Delete(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

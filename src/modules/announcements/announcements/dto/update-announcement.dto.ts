@@ -53,6 +53,13 @@ export class UpdateAnnouncementDto {
   @IsInt()
   department_id?: number;
 
+  @ValidateIf((dto) => dto.role_ids !== undefined)
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @IsInt({ each: true })
+  role_ids?: number[];
+
   @ValidateIf((dto) => dto.file_key !== undefined)
   @IsString()
   file_key?: string;

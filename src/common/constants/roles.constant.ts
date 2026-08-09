@@ -9,6 +9,7 @@
  */
 export const ROLES = {
   ADMIN: 'admin',
+  PRINCIPAL: 'principal',
   HOD: 'hod',
   FACULTY: 'faculty',
   STUDENT: 'student',
