@@ -23,6 +23,7 @@ import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { AdminUpdateStudentDto } from './dto/admin-update-student.dto';
 import { AdminAttendanceSummaryQueryDto } from './dto/admin-attendance-summary-query.dto';
 import { ResetStudentPasswordDto } from './dto/reset-student-password.dto';
+import { UpdateStudentAddressesDto } from './dto/update-student-addresses.dto';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
@@ -110,6 +111,15 @@ export class StudentsController {
   @Get(':id/edit-profile')
   getEditProfile(@Param('id', ParseIntPipe) id: number) {
     return this.studentsService.getEditProfile(id);
+  }
+
+  /** PATCH /students/:id/addresses — fix an address after admission (see StudentsService.updateAddresses). */
+  @Patch(':id/addresses')
+  updateAddresses(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateStudentAddressesDto,
+  ) {
+    return this.studentsService.updateAddresses(id, dto);
   }
 
   /** POST /students/:id/photo (multipart, field "file") — change/replace an existing student's photo. */

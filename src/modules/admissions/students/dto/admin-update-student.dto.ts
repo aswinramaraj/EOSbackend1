@@ -9,9 +9,10 @@ import {
 
 /**
  * Scoped to the `students` table's own columns only. Updating nested
- * student_contacts/student_family_details/student_sensitive_info/
- * student_addresses is a separate concern — no generic admin endpoint
- * touches those today either.
+ * student_contacts/student_family_details/student_sensitive_info is a
+ * separate concern — no generic admin endpoint touches those today.
+ * student_addresses is the one exception: see PATCH /students/:id/addresses
+ * (StudentsService.updateAddresses) for editing those after admission.
  */
 export class AdminUpdateStudentDto {
   @IsOptional() @MaxLength(30) roll_no?: string;
@@ -22,8 +23,10 @@ export class AdminUpdateStudentDto {
   @IsOptional() @MaxLength(20) joined_academic_year?: string;
   @IsOptional() @MaxLength(20) gender?: string;
   @IsOptional() @IsDateString() date_of_birth?: string;
-  @IsOptional() @IsIn(['hosteller', 'dayscholar']) student_type?: 'hosteller' | 'dayscholar';
-  @IsOptional() @IsIn(['transport', 'own_vehicle']) dayscholar_mode?: 'transport' | 'own_vehicle';
+  @IsOptional() @IsIn(['hosteller', 'dayscholar']) student_type?:
+    'hosteller' | 'dayscholar';
+  @IsOptional() @IsIn(['transport', 'own_vehicle']) dayscholar_mode?:
+    'transport' | 'own_vehicle';
   @IsOptional() @MaxLength(30) vehicle_number?: string;
   @IsOptional() @IsInt() course_id?: number;
   @IsOptional() @IsInt() quota_id?: number;

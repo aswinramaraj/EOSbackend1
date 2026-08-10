@@ -6,9 +6,10 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import crypto from 'node:crypto';
-import { Prisma } from '../../../../generated/prisma/client';
+import { Prisma, address_type_enum } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/common/storage/storage.service';
 import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
@@ -17,8 +18,10 @@ import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { AdminUpdateStudentDto } from './dto/admin-update-student.dto';
 import { AdminAttendanceSummaryQueryDto } from './dto/admin-attendance-summary-query.dto';
 import { ResetStudentPasswordDto } from './dto/reset-student-password.dto';
+import { UpdateStudentAddressesDto } from './dto/update-student-addresses.dto';
 
 const PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const VALID_ADDRESS_TYPES = Object.values(address_type_enum);
 
 /** Same charset faculty.service.ts's generateTemporaryPassword() uses — excludes visually ambiguous chars (0/O, 1/l/I). */
 const TEMP_PASSWORD_CHARSET =
@@ -1039,7 +1042,10 @@ export class StudentsService {
    * current value of every field it's about to let someone overwrite.
    * Deliberately separate from STUDENT_LIST_SELECT/toStudentDto (used by the
    * paginated list too) rather than widening that shared select with a dozen
-   * edit-only columns it doesn't need.
+   * edit-only columns it doesn't need. `addresses` is the one relation
+   * included here — the Edit Profile modal's Addresses section reads it
+   * directly rather than the modal doing a second fetch against
+   * getProfileDetails just for this one field.
    */
   async getEditProfile(id: number) {
     const row = await this.prisma.students.findUnique({
@@ -1073,6 +1079,15 @@ export class StudentsService {
         is_diff_abled: true,
         diff_abled_info: true,
         photo_url: true,
+        student_addresses: {
+          select: {
+            address_type: true,
+            address_line: true,
+            city: true,
+            state: true,
+            pincode: true,
+          },
+        },
       },
     });
     if (!row) {
@@ -1081,7 +1096,91 @@ export class StudentsService {
         errorCode: 'STUDENT_NOT_FOUND',
       });
     }
-    return row;
+    const { student_addresses, ...rest } = row;
+    return { ...rest, addresses: student_addresses };
+  }
+
+  /**
+   * PATCH /students/:id/addresses (Admin only) — upserts one or both
+   * addresses by (student_id, address_type). This is the only way to fix an
+   * address after admission: perfect-entry's own address fields (see
+   * SoaApplicationsService.perfectEntry) can only ever be set once, at
+   * creation — see UpdateStudentAddressesDto's own docblock.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR       – addresses repeats the same address_type
+   *  404 STUDENT_NOT_FOUND
+   *  422 INVALID_ADDRESS_TYPE   – address_type isn't permanent/temporary
+   */
+  async updateAddresses(id: number, dto: UpdateStudentAddressesDto) {
+    const student = await this.prisma.students.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const types = dto.addresses.map((a) => a.address_type);
+    if (new Set(types).size !== types.length) {
+      throw new BadRequestException({
+        message: 'addresses cannot repeat the same address_type',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    for (const address of dto.addresses) {
+      if (
+        !VALID_ADDRESS_TYPES.includes(address.address_type as address_type_enum)
+      ) {
+        throw new UnprocessableEntityException({
+          message: `address_type must be one of: ${VALID_ADDRESS_TYPES.join(', ')}`,
+          errorCode: 'INVALID_ADDRESS_TYPE',
+        });
+      }
+    }
+
+    await this.prisma.$transaction(
+      dto.addresses.map((address) => {
+        const addressType = address.address_type as address_type_enum;
+        return this.prisma.student_addresses.upsert({
+          where: {
+            student_id_address_type: {
+              student_id: id,
+              address_type: addressType,
+            },
+          },
+          create: {
+            student_id: id,
+            address_type: addressType,
+            address_line: address.address_line,
+            city: address.city,
+            state: address.state,
+            pincode: address.pincode,
+          },
+          update: {
+            address_line: address.address_line,
+            city: address.city,
+            state: address.state,
+            pincode: address.pincode,
+          },
+        });
+      }),
+    );
+
+    const rows = await this.prisma.student_addresses.findMany({
+      where: { student_id: id },
+      select: {
+        address_type: true,
+        address_line: true,
+        city: true,
+        state: true,
+        pincode: true,
+      },
+    });
+    return { addresses: rows };
   }
 
   /**
