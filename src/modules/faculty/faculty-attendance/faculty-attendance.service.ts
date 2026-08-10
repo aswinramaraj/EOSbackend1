@@ -169,7 +169,9 @@ export class FacultyAttendanceService {
         first_name: true,
         last_name: true,
         profile_url: true,
-        departments: { select: { id: true, name: true, code: true } },
+        departments_faculty_department_idTodepartments: {
+          select: { id: true, name: true, code: true },
+        },
       },
       orderBy: { id: 'asc' },
     });
@@ -203,7 +205,7 @@ export class FacultyAttendanceService {
       first_name: f.first_name,
       last_name: f.last_name,
       profile_url: f.profile_url,
-      department: f.departments,
+      department: f.departments_faculty_department_idTodepartments,
       ...computeStats(byFaculty.get(f.id) ?? []),
     }));
 

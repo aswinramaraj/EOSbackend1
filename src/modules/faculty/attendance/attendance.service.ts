@@ -93,7 +93,9 @@ function resolveMarkerName(marker: AttendanceMarkerRow): string {
   }
   const staff = marker.non_teaching_staff[0];
   if (staff) {
-    return staff.last_name ? `${staff.first_name} ${staff.last_name}` : staff.first_name;
+    return staff.last_name
+      ? `${staff.first_name} ${staff.last_name}`
+      : staff.first_name;
   }
   return marker.email;
 }
@@ -242,8 +244,6 @@ export class AttendanceService {
                 status: r.status,
                 marked_by_faculty_id: faculty?.id,
                 marked_by_user_id: userId,
-                marked_by_faculty_id: faculty.id,
-                marked_by_user_id: faculty.user_id,
               },
               select: { id: true, student_id: true, status: true },
             }),
@@ -410,7 +410,7 @@ export class AttendanceService {
               attendance_date: attendanceDate,
               status: r.status,
               marked_by_faculty_id: faculty.id,
-              marked_by_user_id: faculty.user_id,
+              marked_by_user_id: userId,
             },
             select: { id: true },
           }),

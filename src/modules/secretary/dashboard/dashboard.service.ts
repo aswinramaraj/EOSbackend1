@@ -13,7 +13,7 @@ interface FacultyDailyAttendanceRow {
     first_name: string;
     last_name: string;
     designation: string;
-    departments: { name: string };
+    departments_faculty_department_idTodepartments: { name: string };
   };
 }
 
@@ -21,7 +21,7 @@ function toFacultyEntry(row: FacultyDailyAttendanceRow) {
   return {
     id: row.faculty.id,
     name: `${row.faculty.first_name} ${row.faculty.last_name}`,
-    department: row.faculty.departments.name,
+    department: row.faculty.departments_faculty_department_idTodepartments.name,
     designation: row.faculty.designation,
   };
 }
@@ -90,7 +90,7 @@ export class SecretaryDashboardService {
               first_name: true,
               last_name: true,
               designation: true,
-              departments: { select: { name: true } },
+              departments_faculty_department_idTodepartments: { select: { name: true } },
             },
           },
         },

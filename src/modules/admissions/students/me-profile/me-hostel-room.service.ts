@@ -106,7 +106,10 @@ export class MeHostelRoomService {
         },
       });
     } catch (err) {
-      this.logger.error(`Failed to fetch hostel mapping for user ${userId}`, err);
+      this.logger.error(
+        `Failed to fetch hostel mapping for user ${userId}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

@@ -34,6 +34,8 @@ import { CreateBonafideRequestDto } from './dto/create-bonafide-request.dto';
 import { GetBonafideRequestsDto } from './dto/get-bonafide-requests.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { GetProjectsDto } from './dto/get-projects.dto';
+import { CreateMyHostelComplaintDto } from './dto/create-my-hostel-complaint.dto';
+import { CreateMyMessFeedbackDto } from './dto/create-my-mess-feedback.dto';
 import { MeProfileService } from './me-profile.service';
 import { MeAttendanceService } from './me-attendance.service';
 import { MeExamResultsService } from './me-exam-results.service';
@@ -55,8 +57,6 @@ import { MeHostelRoomService } from './me-hostel-room.service';
 import { MeHostelComplaintsService } from './me-hostel-complaints.service';
 import { MeMessFeedbackService } from './me-mess-feedback.service';
 import { MeAcademicCalendarService } from './me-academic-calendar.service';
-import { CreateMyHostelComplaintDto } from './dto/create-my-hostel-complaint.dto';
-import { CreateMyMessFeedbackDto } from './dto/create-my-mess-feedback.dto';
 
 @Controller('me')
 export class MeController {
@@ -393,10 +393,10 @@ export class MeController {
   /**
    * GET /api/v1/me/od-requests?page=&page_size=
    *
-   * Self-scoped: lists every od_request for a team the caller is (or was)
-   * a member of, most-recent-first — the History tab's data source. See
-   * MeOdRequestsListService for why this stays lighter than the
-   * per-request GET (approval counts, not every teammate's name).
+   * Self-scoped: lists every OD request across every team the caller
+   * belongs to, most-recently-created first. See MeOdRequestsListService
+   * for the overall_status precedence decision (shared with the
+   * single-request GET below).
    *
    * Error responses:
    *  400 VALIDATION_ERROR   – page/page_size out of range

@@ -149,6 +149,15 @@ export class DrivesController {
     return this.drivesService.findOne(id);
   }
 
+  // Admin-facing counterpart to the student/parent/mentor/HoD placement-history
+  // views (self, /me/children/:id, /me/mentored-students/:id, /me/department-students/:id)
+  // — the admin student-profile "Placements" panel calls this exact path, which
+  // never existed before (every request 404'd).
+  @Get('students/:studentId/history')
+  getHistoryForStudentId(@Param('studentId', ParseIntPipe) studentId: number) {
+    return this.drivesService.getHistoryForStudentId(studentId);
+  }
+
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateDriveDto) {
     return this.drivesService.update(id, dto);

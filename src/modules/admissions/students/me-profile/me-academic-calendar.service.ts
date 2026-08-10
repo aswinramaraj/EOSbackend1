@@ -52,17 +52,43 @@ export class MeAcademicCalendarService {
       });
     }
 
-    if (student.class_id === null) {
+    return this.computeCalendarForClass(userId, student.class_id);
+  }
+
+  /**
+   * Same computation as getMyAcademicCalendar, but for a student chosen by
+   * id rather than resolved from the caller's own JWT - used by
+   * ParentsService once it has verified (via parent_student_mapping) that
+   * the caller is actually this student's parent.
+   */
+  async getAcademicCalendarForStudentId(studentId: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { class_id: true },
+    });
+
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    return this.computeCalendarForClass(studentId, student.class_id);
+  }
+
+  private async computeCalendarForClass(
+    idForLogging: number,
+    classId: number | null,
+  ) {
+    if (classId === null) {
       return { semester: null, start_date: null, end_date: null, events: [] };
     }
 
-    const klass = await this.fetchClass(userId, student.class_id);
+    const klass = await this.fetchClass(idForLogging, classId);
     if (!klass || klass.current_semester === null) {
       return { semester: null, start_date: null, end_date: null, events: [] };
     }
 
     const calendar = await this.fetchCalendar(
-      userId,
+      idForLogging,
       klass.batch_id,
       klass.current_semester,
     );

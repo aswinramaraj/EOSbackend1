@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import type { ReportTable } from 'src/modules/library/reports/report-export.util';
+import type { ReportTable } from 'src/common/utils/report-export.util';
 
 /** Shared `{gte, lte}` builder — same shape used by every findAll() in this codebase. */
 function dateRangeWhere(

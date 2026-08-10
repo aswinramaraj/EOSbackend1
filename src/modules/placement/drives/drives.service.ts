@@ -63,8 +63,12 @@ export class DrivesService {
         package_lpa: dto.package_lpa,
         eligibility_cgpa: dto.eligibility_cgpa,
         venue: dto.venue,
-        registration_start: dto.registration_start ? new Date(dto.registration_start) : undefined,
-        registration_end: dto.registration_end ? new Date(dto.registration_end) : undefined,
+        registration_start: dto.registration_start
+          ? new Date(dto.registration_start)
+          : undefined,
+        registration_end: dto.registration_end
+          ? new Date(dto.registration_end)
+          : undefined,
       },
       include: { companies: true },
     });
@@ -126,8 +130,12 @@ export class DrivesService {
         package_lpa: dto.package_lpa,
         eligibility_cgpa: dto.eligibility_cgpa,
         venue: dto.venue,
-        registration_start: dto.registration_start ? new Date(dto.registration_start) : undefined,
-        registration_end: dto.registration_end ? new Date(dto.registration_end) : undefined,
+        registration_start: dto.registration_start
+          ? new Date(dto.registration_start)
+          : undefined,
+        registration_end: dto.registration_end
+          ? new Date(dto.registration_end)
+          : undefined,
       },
       include: { companies: true },
     });
@@ -300,13 +308,18 @@ export class DrivesService {
     dto: UpdateDriveApplicationStatusDto,
   ) {
     const application = await this.findApplicationOrThrow(driveId, studentId);
-    const roundReached = DrivesService.ROUND_REACHED_BY_STATUS[dto.status];
+    const roundReached =
+      dto.status !== undefined
+        ? DrivesService.ROUND_REACHED_BY_STATUS[dto.status]
+        : undefined;
 
     return this.prisma.student_drive_applications.update({
       where: { id: application.id },
       data: {
         status: dto.status,
-        ...(roundReached !== undefined ? { last_cleared_round: roundReached } : {}),
+        ...(roundReached !== undefined
+          ? { last_cleared_round: roundReached }
+          : {}),
         updated_by_user_id: user.sub,
         updated_at: new Date(),
       },
@@ -384,7 +397,7 @@ export class DrivesService {
     }
 
     const progressRank = (a: (typeof applications)[number]) =>
-      a.status === 'placed' ? 100 : a.last_cleared_round ?? 0;
+      a.status === 'placed' ? 100 : (a.last_cleared_round ?? 0);
 
     return students.map((s) => {
       const apps = appsByStudent.get(s.id) ?? [];
@@ -676,7 +689,12 @@ export class DrivesService {
 
     const classMap = new Map<
       string,
-      { students: number; placed: number; highestLpa: number; departmentName: string }
+      {
+        students: number;
+        placed: number;
+        highestLpa: number;
+        departmentName: string;
+      }
     >();
     const deptMap = new Map<
       string,
@@ -714,9 +732,10 @@ export class DrivesService {
       deptMap.set(deptLabel, d);
     }
 
-    const classWise = Array.from(classMap.entries()).map(
-      ([className, v]) => ({ className, ...v }),
-    );
+    const classWise = Array.from(classMap.entries()).map(([className, v]) => ({
+      className,
+      ...v,
+    }));
     const departmentWise = Array.from(deptMap.entries()).map(
       ([department, v]) => ({ department, ...v }),
     );
@@ -826,7 +845,10 @@ export class DrivesService {
           : 'Department-wise Placement Report',
       subtitle,
       summary: [
-        { label: 'Eligible students', value: String(stats.eligibleStudentsTotal) },
+        {
+          label: 'Eligible students',
+          value: String(stats.eligibleStudentsTotal),
+        },
         { label: 'Placed', value: String(stats.studentsPlaced) },
         { label: 'Placement rate', value: `${stats.placementRate}%` },
         {
@@ -888,7 +910,9 @@ export class DrivesService {
           ? [soa.first_name, soa.last_name].filter(Boolean).join(' ')
           : null,
         department_name: classes?.departments.name ?? null,
-        class_label: classes ? `${classes.departments.code} - ${classes.section}` : null,
+        class_label: classes
+          ? `${classes.departments.code} - ${classes.section}`
+          : null,
         company_name: a.placement_drives.companies.name,
         job_role: a.placement_drives.job_role,
         package_lpa: a.placement_drives.package_lpa,
@@ -919,16 +943,14 @@ export class DrivesService {
   async getUpcomingForStudent(user: JwtPayload) {
     const student = await this.findStudentOrThrow(user.sub);
 
-    const applications = await this.prisma.student_drive_applications.findMany(
-      {
-        where: {
-          student_id: student.id,
-          status: { notIn: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
-        },
-        include: { placement_drives: { include: { companies: true } } },
-        orderBy: { placement_drives: { scheduled_date: 'asc' } },
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: {
+        student_id: student.id,
+        status: { notIn: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
       },
-    );
+      include: { placement_drives: { include: { companies: true } } },
+      orderBy: { placement_drives: { scheduled_date: 'asc' } },
+    });
 
     return applications.map((app) => this.toUpcomingDrive(app));
   }
@@ -940,16 +962,14 @@ export class DrivesService {
   }
 
   private async buildHistoryForStudentId(studentId: number) {
-    const applications = await this.prisma.student_drive_applications.findMany(
-      {
-        where: {
-          student_id: studentId,
-          status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
-        },
-        include: { placement_drives: { include: { companies: true } } },
-        orderBy: { updated_at: 'desc' },
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: {
+        student_id: studentId,
+        status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
       },
-    );
+      include: { placement_drives: { include: { companies: true } } },
+      orderBy: { updated_at: 'desc' },
+    });
 
     return applications.map((app) => {
       const drive = app.placement_drives;
@@ -984,10 +1004,14 @@ export class DrivesService {
     return drives.map((drive) => ({
       drive_id: drive.id,
       company_name: this.resolveCompanyName(drive),
-      company_profile_info: drive.is_disclosed ? drive.companies.profile_info : null,
+      company_profile_info: drive.is_disclosed
+        ? drive.companies.profile_info
+        : null,
       scheduled_date: drive.scheduled_date,
       is_disclosed: drive.is_disclosed,
-      disclosed_reveal_date: drive.is_disclosed ? null : drive.disclosed_reveal_date,
+      disclosed_reveal_date: drive.is_disclosed
+        ? null
+        : drive.disclosed_reveal_date,
     }));
   }
 
@@ -1101,10 +1125,14 @@ export class DrivesService {
     return {
       drive_id: drive.id,
       company_name: this.resolveCompanyName(drive),
-      company_profile_info: drive.is_disclosed ? drive.companies.profile_info : null,
+      company_profile_info: drive.is_disclosed
+        ? drive.companies.profile_info
+        : null,
       scheduled_date: drive.scheduled_date,
       is_disclosed: drive.is_disclosed,
-      disclosed_reveal_date: drive.is_disclosed ? null : drive.disclosed_reveal_date,
+      disclosed_reveal_date: drive.is_disclosed
+        ? null
+        : drive.disclosed_reveal_date,
       application_status: app.status,
     };
   }
@@ -1126,6 +1154,30 @@ export class DrivesService {
       );
     }
     return student;
+  }
+
+  /**
+   * GET /drives/students/:studentId/history (Admin/Placement).
+   * Same query as the student-self-service history above, keyed by an
+   * explicit student id instead of the caller's own JWT.
+   */
+  async getHistoryForStudentId(studentId: number) {
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: { student_id: studentId },
+      include: { placement_drives: { include: { companies: true } } },
+      orderBy: { updated_at: 'desc' },
+    });
+
+    return applications.map((app) => {
+      const drive = app.placement_drives;
+      return {
+        drive_id: drive.id,
+        company_name: drive.is_disclosed ? drive.companies.name : 'Undisclosed',
+        scheduled_date: drive.scheduled_date,
+        drive_status: drive.status,
+        application_status: app.status,
+      };
+    });
   }
 
   // ───────────────────────────── Automation ─────────────────────────────

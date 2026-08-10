@@ -48,7 +48,21 @@ export class MeFeesService {
       });
     }
 
-    const mappings = await this.fetchDemandMappings(userId, student.id);
+    return this.computeFees(student.id);
+  }
+
+  /**
+   * Same computation as getMyFees, but for a student chosen by id rather
+   * than resolved from the caller's own JWT - used by ParentsService once
+   * it has verified (via parent_student_mapping) that the caller is
+   * actually this student's parent.
+   */
+  async getFeesForStudentId(studentId: number) {
+    return this.computeFees(studentId);
+  }
+
+  private async computeFees(studentId: number) {
+    const mappings = await this.fetchDemandMappings(studentId);
 
     const demands = mappings.map((mapping) => {
       const total = Number(mapping.total_amount);
@@ -88,7 +102,7 @@ export class MeFeesService {
     return { demands, payments };
   }
 
-  private async fetchDemandMappings(userId: number, studentId: number) {
+  private async fetchDemandMappings(studentId: number) {
     try {
       return await this.prisma.student_fee_demand_mapping.findMany({
         where: { student_id: studentId },
@@ -113,7 +127,7 @@ export class MeFeesService {
         orderBy: [{ academic_year: 'desc' }, { semester: 'desc' }],
       });
     } catch (err) {
-      this.logger.error(`Failed to fetch fees for user ${userId}`, err);
+      this.logger.error(`Failed to fetch fees for student ${studentId}`, err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

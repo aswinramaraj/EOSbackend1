@@ -10,7 +10,7 @@ import {
   renderExcel,
   renderPdf,
   type ReportTable,
-} from 'src/modules/library/reports/report-export.util';
+} from 'src/common/utils/report-export.util';
 import { SecretaryReportsService } from './reports.service';
 import {
   SecretaryReportFormat,

@@ -64,7 +64,11 @@ export class IqacReportsService {
           select: {
             email: true,
             faculty: {
-              select: { first_name: true, last_name: true, departments: { select: { name: true } } },
+              select: {
+                first_name: true,
+                last_name: true,
+                departments_faculty_department_idTodepartments: { select: { name: true } },
+              },
             },
             non_teaching_staff: {
               select: { first_name: true, last_name: true, departments: { select: { name: true } } },
@@ -87,10 +91,13 @@ export class IqacReportsService {
       ],
       rows: rows.map((r) => {
         const booker = r.users_venue_bookings_booked_by_user_idTousers;
-        const profile = booker.faculty ?? booker.non_teaching_staff[0] ?? null;
+        const staff = booker.non_teaching_staff[0];
+        const profile = booker.faculty ?? staff ?? null;
         return {
           faculty: profile ? `${profile.first_name} ${profile.last_name ?? ''}`.trim() : booker.email,
-          department: profile?.departments?.name ?? '',
+          department: booker.faculty
+            ? (booker.faculty.departments_faculty_department_idTodepartments?.name ?? '')
+            : (staff?.departments?.name ?? ''),
           venue: r.venues_venue_bookings_venue_idTovenues.name,
           purpose: r.purpose,
           from: r.from_datetime.toISOString(),
@@ -168,7 +175,11 @@ export class IqacReportsService {
         hr_approval_status: true,
         verification_status: true,
         faculty: {
-          select: { first_name: true, last_name: true, departments: { select: { name: true } } },
+          select: {
+            first_name: true,
+            last_name: true,
+            departments_faculty_department_idTodepartments: { select: { name: true } },
+          },
         },
       },
     });
@@ -187,7 +198,7 @@ export class IqacReportsService {
       ],
       rows: rows.map((r) => ({
         faculty: `${r.faculty.first_name} ${r.faculty.last_name}`.trim(),
-        department: r.faculty.departments.name,
+        department: r.faculty.departments_faculty_department_idTodepartments.name,
         from: r.from_date.toISOString().slice(0, 10),
         to: r.to_date.toISOString().slice(0, 10),
         purpose: r.purpose ?? '',

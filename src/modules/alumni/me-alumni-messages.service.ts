@@ -58,14 +58,21 @@ export class MeAlumniMessagesService {
               },
             },
           },
+          users: { select: { email: true } },
         },
       }),
       this.prisma.alumni_group_messages.count({ where }),
     ]);
 
-    const data = rows.map(({ alumni_members, ...message }) => ({
+    // alumni_members is null for messages posted directly via posted_by_user_id
+    // (see the model comment on alumni_group_messages) rather than through the
+    // poster's own alumni_members row — fall back to that user's email, same
+    // convention resolveStudentName already uses when soa_applications is missing.
+    const data = rows.map(({ alumni_members, users, ...message }) => ({
       ...message,
-      posted_by_name: resolveStudentName(alumni_members.students),
+      posted_by_name: alumni_members
+        ? resolveStudentName(alumni_members.students)
+        : (users?.email ?? 'Unknown'),
     }));
 
     return paginate(data, total, dto);

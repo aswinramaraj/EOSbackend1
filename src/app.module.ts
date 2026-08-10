@@ -25,6 +25,7 @@ import { StudentLeavesModule } from './modules/admissions/student-leaves/student
 import { StudentOdsModule } from './modules/admissions/student-ods/student-ods.module';
 import { StudentsModule } from './modules/admissions/students/students.module';
 import { MeProfileModule } from './modules/admissions/students/me-profile/me-profile.module';
+import { ProfileModule } from './modules/profile/profile.module';
 
 import { AnnouncementsModule } from './modules/announcements/announcements/announcements.module';
 
@@ -156,6 +157,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     StudentOdsModule,
     StudentsModule,
     MeProfileModule,
+    ProfileModule,
 
     AnnouncementsModule,
 

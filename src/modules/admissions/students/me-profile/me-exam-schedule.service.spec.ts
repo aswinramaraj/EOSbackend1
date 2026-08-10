@@ -57,8 +57,7 @@ describe('MeExamScheduleService', () => {
       { where: Record<string, unknown> },
     ];
     expect(findManyArgs.where).toMatchObject({
-      is_published: true,
-      exam_subject_mapping: { class_id: 7 },
+      exam_subject_mapping: { class_id: 7, is_published: true },
     });
   });
 
@@ -100,7 +99,9 @@ describe('MeExamScheduleService', () => {
 
   it('wraps a DB failure as 500 INTERNAL_ERROR', async () => {
     prisma.students.findUnique.mockResolvedValue({ class_id: 7 });
-    prisma.exam_timetable.findMany.mockRejectedValue(new Error('connection lost'));
+    prisma.exam_timetable.findMany.mockRejectedValue(
+      new Error('connection lost'),
+    );
 
     await expect(service.getMyExamSchedule(1)).rejects.toMatchObject({
       status: 500,

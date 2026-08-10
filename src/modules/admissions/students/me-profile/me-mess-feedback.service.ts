@@ -71,7 +71,10 @@ export class MeMessFeedbackService {
         created_at: feedback.created_at.toISOString(),
       };
     } catch (err) {
-      this.logger.error(`Failed to create mess feedback for user ${userId}`, err);
+      this.logger.error(
+        `Failed to create mess feedback for user ${userId}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

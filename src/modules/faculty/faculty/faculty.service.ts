@@ -235,33 +235,40 @@ export class FacultyService {
         : undefined,
     };
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.faculty.findMany({
-        where,
-        skip: query.skip,
-        take: query.limit,
-        orderBy: { id: 'asc' },
-        select: {
-          id: true,
-          first_name: true,
-          last_name: true,
-          designation: true,
-          date_of_joining: true,
-          status: true,
-          profile_url: true,
-          departments: { select: { id: true, name: true, code: true } },
-          users: { select: { email: true, phone: true } },
-        },
-      }),
-      this.prisma.faculty.count({ where }),
-    ]);
+    const [rows, total] = await this.prisma.$transaction(
+      [
+        this.prisma.faculty.findMany({
+          where,
+          skip: query.skip,
+          take: query.limit,
+          orderBy: { id: 'asc' },
+          select: {
+            id: true,
+            first_name: true,
+            last_name: true,
+            designation: true,
+            date_of_joining: true,
+            status: true,
+            profile_url: true,
+            departments_faculty_department_idTodepartments: {
+              select: { id: true, name: true, code: true },
+            },
+            users: { select: { email: true, phone: true } },
+          },
+        }),
+        this.prisma.faculty.count({ where }),
+      ],
+      // See finance-overview.service.ts getOverview() for why timeout/maxWait
+      // are both raised above their defaults.
+      { timeout: 20_000, maxWait: 20_000 },
+    );
 
     const data = rows.map((faculty) => ({
       id: faculty.id,
       first_name: faculty.first_name,
       last_name: faculty.last_name,
       designation: faculty.designation,
-      department: faculty.departments,
+      department: faculty.departments_faculty_department_idTodepartments,
       date_of_joining: faculty.date_of_joining,
       status: faculty.status,
       profile_url: faculty.profile_url,
@@ -282,7 +289,9 @@ export class FacultyService {
         designation: true,
         date_of_joining: true,
         status: true,
-        departments: { select: { id: true, name: true, code: true } },
+        departments_faculty_department_idTodepartments: {
+          select: { id: true, name: true, code: true },
+        },
         users: { select: { email: true, phone: true } },
       },
     });
@@ -295,7 +304,7 @@ export class FacultyService {
       first_name: faculty.first_name,
       last_name: faculty.last_name,
       designation: faculty.designation,
-      department: faculty.departments,
+      department: faculty.departments_faculty_department_idTodepartments,
       date_of_joining: faculty.date_of_joining,
       status: faculty.status,
       email: faculty.users.email,
@@ -341,7 +350,9 @@ export class FacultyService {
         date_of_joining: true,
         status: true,
         created_at: true,
-        departments: { select: { id: true, name: true, code: true } },
+        departments_faculty_department_idTodepartments: {
+          select: { id: true, name: true, code: true },
+        },
         users: { select: { id: true, email: true, phone: true, status: true } },
         ...EXTENDED_SELECT_FIELDS,
       },
@@ -356,7 +367,7 @@ export class FacultyService {
       first_name: faculty.first_name,
       last_name: faculty.last_name,
       designation: faculty.designation,
-      department: faculty.departments,
+      department: faculty.departments_faculty_department_idTodepartments,
       date_of_joining: faculty.date_of_joining,
       status: faculty.status,
       created_at: faculty.created_at,
@@ -415,7 +426,9 @@ export class FacultyService {
             designation: true,
             date_of_joining: true,
             status: true,
-            departments: { select: { id: true, name: true, code: true } },
+            departments_faculty_department_idTodepartments: {
+              select: { id: true, name: true, code: true },
+            },
           },
         });
 
@@ -444,7 +457,7 @@ export class FacultyService {
           first_name: faculty.first_name,
           last_name: faculty.last_name,
           designation: faculty.designation,
-          department: faculty.departments,
+          department: faculty.departments_faculty_department_idTodepartments,
           date_of_joining: faculty.date_of_joining,
           status: faculty.status,
         };

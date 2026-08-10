@@ -19,7 +19,9 @@ const BORROW_RECORD_REPORT_INCLUDE = {
       first_name: true,
       last_name: true,
       department_id: true,
-      departments: { select: { name: true } },
+      departments_faculty_department_idTodepartments: {
+        select: { name: true },
+      },
     },
   },
 } satisfies Prisma.book_borrow_recordsInclude;
@@ -53,7 +55,7 @@ function borrowerDepartment(record: BorrowRecordForReport): {
   if (record.faculty) {
     return {
       id: record.faculty.department_id,
-      name: record.faculty.departments.name,
+      name: record.faculty.departments_faculty_department_idTodepartments.name,
     };
   }
   return { id: null, name: '—' };

@@ -83,8 +83,7 @@ export class MeOdRequestsListService {
             .length,
           rejected_count: approvalStatuses.filter((s) => s === 'rejected')
             .length,
-          pending_count: approvalStatuses.filter((s) => s === 'pending')
-            .length,
+          pending_count: approvalStatuses.filter((s) => s === 'pending').length,
           created_at: row.created_at.toISOString(),
         };
       }),

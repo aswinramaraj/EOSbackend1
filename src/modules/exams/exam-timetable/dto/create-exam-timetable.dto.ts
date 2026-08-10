@@ -10,7 +10,7 @@ import {
   Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { exam_session_enum } from '../../../../../generated/prisma/enums';
+import { exam_session_enum } from 'generated/prisma/client';
 
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/;
 
@@ -36,7 +36,9 @@ export class CreateExamTimetableDto {
   })
   end_time!: string;
 
-  @IsEnum(exam_session_enum, { message: 'session must be one of FN, AN' })
+  @IsEnum(exam_session_enum, {
+    message: `session must be one of: ${Object.values(exam_session_enum).join(', ')}`,
+  })
   session!: exam_session_enum;
 
   @IsOptional()
