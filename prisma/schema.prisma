@@ -154,14 +154,29 @@ model appraisal_attachments {
   @@index([appraisal_request_id, division_id], map: "idx_appraisal_attachments_request_division")
 }
 
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model appraisal_criteria {
   id                  Int                 @id @default(autoincrement())
   division_id         Int
   criteria_name       String              @db.VarChar(150)
   max_score           Decimal             @db.Decimal(6, 2)
   academic_year       String              @db.VarChar(20)
+  weightage_percent   Decimal?            @db.Decimal(5, 2)
+  created_by_user_id  Int?
+  status              String              @default("active") @db.VarChar(10)
+  users               users?              @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "appraisal_criteria_created_by_fkey")
   appraisal_divisions appraisal_divisions @relation(fields: [division_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   appraisal_entries   appraisal_entries[]
+}
+
+model appraisal_cycles {
+  id                 Int      @id @default(autoincrement())
+  academic_year      String   @db.VarChar(20)
+  start_date         DateTime @db.Date
+  end_date           DateTime @db.Date
+  is_active          Boolean  @default(true)
+  created_by_user_id Int
+  users              users    @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "appraisal_cycles_creator_fkey")
 }
 
 model appraisal_divisions {
@@ -241,6 +256,22 @@ model attendance_records {
   @@index([class_id, attendance_date], map: "idx_attendance_class_date")
   @@index([marked_by_user_id], map: "idx_attendance_marked_by_user")
   @@index([student_id, attendance_date], map: "idx_attendance_student_date")
+}
+
+model audit_logs {
+  id                   Int      @id @default(autoincrement())
+  entity_type          String   @db.VarChar(50)
+  entity_id            Int
+  action               String   @db.VarChar(30)
+  performed_by_user_id Int
+  performed_at         DateTime @default(now()) @db.Timestamptz(6)
+  old_value            Json?
+  new_value            Json?
+  reason               String?
+  users                users    @relation(fields: [performed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "audit_logs_user_fkey")
+
+  @@index([entity_type, entity_id], map: "idx_audit_logs_entity")
+  @@index([performed_by_user_id], map: "idx_audit_logs_performed_by")
 }
 
 model batches {
@@ -517,25 +548,37 @@ model department_achievements {
 }
 
 model departments {
-  id                             Int                              @id @default(autoincrement())
-  name                           String                           @db.VarChar(150)
-  code                           String                           @unique @db.VarChar(20)
-  created_at                     DateTime                         @default(now()) @db.Timestamptz(6)
-  announcements                  announcements[]
-  books                          books[]
-  classes                        classes[]
-  courses                        courses[]
-  department_achievements        department_achievements[]
-  exam_timetable_versions        exam_timetable_versions[]
-  faculty                        faculty[]
-  marks_entry_locks              marks_entry_locks[]
-  non_teaching_staff             non_teaching_staff[]
-  od_request_hod_approvals       od_request_hod_approvals[]
-  project_teams                  project_teams[]
-  purchase_indents               purchase_indents[]
-  seating_plan_venue_departments seating_plan_venue_departments[]
-  service_indents                service_indents[]
-  subjects                       subjects[]
+  id                                                         Int                              @id @default(autoincrement())
+  name                                                       String                           @db.VarChar(150)
+  code                                                       String                           @unique @db.VarChar(20)
+  created_at                                                 DateTime                         @default(now()) @db.Timestamptz(6)
+  head_of_department_faculty_id                              Int?
+  announcements                                              announcements[]
+  books                                                      books[]
+  classes                                                    classes[]
+  courses                                                    courses[]
+  department_achievements                                    department_achievements[]
+  faculty_departments_head_of_department_faculty_idTofaculty faculty?                         @relation("departments_head_of_department_faculty_idTofaculty", fields: [head_of_department_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "departments_hod_fkey")
+  exam_timetable_versions                                    exam_timetable_versions[]
+  faculty_faculty_department_idTodepartments                 faculty[]                        @relation("faculty_department_idTodepartments")
+  marks_entry_locks                                          marks_entry_locks[]
+  non_teaching_staff                                         non_teaching_staff[]
+  od_request_hod_approvals                                   od_request_hod_approvals[]
+  project_teams                                              project_teams[]
+  purchase_indents                                           purchase_indents[]
+  seating_plan_venue_departments                             seating_plan_venue_departments[]
+  service_indents                                            service_indents[]
+  sports_teams                                               sports_teams[]
+  subjects                                                   subjects[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model designations {
+  id        Int       @id @default(autoincrement())
+  title     String    @unique @db.VarChar(100)
+  category  String    @db.VarChar(20)
+  is_active Boolean   @default(true)
+  faculty   faculty[]
 }
 
 model e_resources {
@@ -714,78 +757,85 @@ model expenses {
 }
 
 model faculty {
-  id                            Int                             @id @default(autoincrement())
-  user_id                       Int                             @unique
-  first_name                    String                          @db.VarChar(100)
-  last_name                     String                          @db.VarChar(100)
-  designation                   String                          @db.VarChar(100)
-  department_id                 Int
-  date_of_joining               DateTime?                       @db.Date
-  status                        user_status_enum                @default(active)
-  created_at                    DateTime                        @default(now()) @db.Timestamptz(6)
-  profile_url                   String?
-  is_mentor                     Boolean                         @default(false)
-  phone_verified                Boolean                         @default(false)
-  whatsapp_verified             Boolean                         @default(false)
-  prefix                        String?                         @db.VarChar(10)
-  gender                        String?                         @db.VarChar(20)
-  date_of_birth                 DateTime?                       @db.Date
-  personal_email                String?                         @db.VarChar(255)
-  whatsapp_number               String?                         @db.VarChar(20)
-  alternate_phone               String?                         @db.VarChar(20)
-  address_line                  String?                         @db.VarChar(255)
-  city                          String?                         @db.VarChar(100)
-  state                         String?                         @db.VarChar(100)
-  postal_code                   String?                         @db.VarChar(10)
-  academic_role                 String?                         @db.VarChar(50)
-  employment_status             faculty_employment_status_enum?
-  employment_type               faculty_employment_type_enum?
-  confirmation_date             DateTime?                       @db.Date
-  probation_end_date            DateTime?                       @db.Date
-  work_location                 String?                         @db.VarChar(255)
-  qualification                 String?                         @db.VarChar(100)
-  specialization                String?                         @db.VarChar(255)
-  previous_institution          String?                         @db.VarChar(255)
-  previous_experience_years     Int?
-  office_room                   String?                         @db.VarChar(100)
-  reports_to_faculty_id         Int?
-  resume_url                    String?                         @db.VarChar(500)
-  appraisal_requests            appraisal_requests[]
-  assignments                   assignments[]
-  attendance_records            attendance_records[]
-  bonafide_requests             bonafide_requests[]
-  book_borrow_records           book_borrow_records[]
-  class_mentors                 class_mentors[]
-  exam_marks                    exam_marks[]
-  departments                   departments                     @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  faculty                       faculty?                        @relation("facultyTofaculty", fields: [reports_to_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  other_faculty                 faculty[]                       @relation("facultyTofaculty")
-  users                         users                           @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  faculty_activity_log          faculty_activity_log[]
-  faculty_daily_attendance      faculty_daily_attendance[]
-  faculty_documents             faculty_documents[]
-  faculty_holiday_mapping       faculty_holiday_mapping[]
-  faculty_hostel_mapping        faculty_hostel_mapping?
-  faculty_id_card_issuances     faculty_id_card_issuances[]
-  faculty_leaves                faculty_leaves[]
-  faculty_od_requests           faculty_od_requests[]
-  faculty_sensitive_info        faculty_sensitive_info?
-  faculty_subject_class_mapping faculty_subject_class_mapping[]
-  invigilation_duties           invigilation_duties[]
-  lesson_plans                  lesson_plans[]
-  lms_folders                   lms_folders[]
-  lms_notes                     lms_notes[]
-  malpractice_incidents         malpractice_incidents[]
-  media_requests                media_requests[]
-  od_requests                   od_requests[]
-  payslip_requests              payslip_requests[]
-  revaluation_requests          revaluation_requests[]
-  salary_divisions              salary_divisions[]
-  salary_payments               salary_payments[]
-  student_assignment_status     student_assignment_status[]
-  student_leaves                student_leaves[]
-  student_projects              student_projects[]
-  timetable_slots               timetable_slots[]
+  id                                                             Int                              @id @default(autoincrement())
+  user_id                                                        Int                              @unique
+  first_name                                                     String                           @db.VarChar(100)
+  last_name                                                      String                           @db.VarChar(100)
+  designation                                                    String                           @db.VarChar(100)
+  department_id                                                  Int
+  date_of_joining                                                DateTime?                        @db.Date
+  status                                                         user_status_enum                 @default(active)
+  created_at                                                     DateTime                         @default(now()) @db.Timestamptz(6)
+  profile_url                                                    String?
+  is_mentor                                                      Boolean                          @default(false)
+  phone_verified                                                 Boolean                          @default(false)
+  whatsapp_verified                                              Boolean                          @default(false)
+  prefix                                                         String?                          @db.VarChar(10)
+  gender                                                         String?                          @db.VarChar(20)
+  date_of_birth                                                  DateTime?                        @db.Date
+  personal_email                                                 String?                          @db.VarChar(255)
+  whatsapp_number                                                String?                          @db.VarChar(20)
+  alternate_phone                                                String?                          @db.VarChar(20)
+  address_line                                                   String?                          @db.VarChar(255)
+  city                                                           String?                          @db.VarChar(100)
+  state                                                          String?                          @db.VarChar(100)
+  postal_code                                                    String?                          @db.VarChar(10)
+  academic_role                                                  String?                          @db.VarChar(50)
+  employment_status                                              faculty_employment_status_enum?
+  employment_type                                                faculty_employment_type_enum?
+  confirmation_date                                              DateTime?                        @db.Date
+  probation_end_date                                             DateTime?                        @db.Date
+  work_location                                                  String?                          @db.VarChar(255)
+  qualification                                                  String?                          @db.VarChar(100)
+  specialization                                                 String?                          @db.VarChar(255)
+  previous_institution                                           String?                          @db.VarChar(255)
+  previous_experience_years                                      Int?
+  office_room                                                    String?                          @db.VarChar(100)
+  reports_to_faculty_id                                          Int?
+  resume_url                                                     String?                          @db.VarChar(500)
+  designation_id                                                 Int?
+  appraisal_requests                                             appraisal_requests[]
+  assignments                                                    assignments[]
+  attendance_records                                             attendance_records[]
+  bonafide_requests                                              bonafide_requests[]
+  book_borrow_records                                            book_borrow_records[]
+  class_mentors                                                  class_mentors[]
+  departments_departments_head_of_department_faculty_idTofaculty departments[]                    @relation("departments_head_of_department_faculty_idTofaculty")
+  exam_marks                                                     exam_marks[]
+  departments_faculty_department_idTodepartments                 departments                      @relation("faculty_department_idTodepartments", fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  designations                                                   designations?                    @relation(fields: [designation_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_designation_fkey")
+  faculty                                                        faculty?                         @relation("facultyTofaculty", fields: [reports_to_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  other_faculty                                                  faculty[]                        @relation("facultyTofaculty")
+  users                                                          users                            @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty_activity_log                                           faculty_activity_log[]
+  faculty_attendance_corrections                                 faculty_attendance_corrections[]
+  faculty_daily_attendance                                       faculty_daily_attendance[]
+  faculty_documents                                              faculty_documents[]
+  faculty_holiday_mapping                                        faculty_holiday_mapping[]
+  faculty_hostel_mapping                                         faculty_hostel_mapping?
+  faculty_id_card_issuances                                      faculty_id_card_issuances[]
+  faculty_leave_balances                                         faculty_leave_balances[]
+  faculty_leaves                                                 faculty_leaves[]
+  faculty_od_requests                                            faculty_od_requests[]
+  faculty_sensitive_info                                         faculty_sensitive_info?
+  faculty_subject_class_mapping                                  faculty_subject_class_mapping[]
+  invigilation_duties                                            invigilation_duties[]
+  lesson_plans                                                   lesson_plans[]
+  lms_folders                                                    lms_folders[]
+  lms_notes                                                      lms_notes[]
+  malpractice_incidents                                          malpractice_incidents[]
+  media_requests                                                 media_requests[]
+  medical_visits                                                 medical_visits[]
+  od_requests                                                    od_requests[]
+  payslip_requests                                               payslip_requests[]
+  revaluation_requests                                           revaluation_requests[]
+  salary_divisions                                               salary_divisions[]
+  salary_payments                                                salary_payments[]
+  sports_equipment_issues                                        sports_equipment_issues[]
+  student_assignment_status                                      student_assignment_status[]
+  student_leaves                                                 student_leaves[]
+  student_projects                                               student_projects[]
+  timetable_slots                                                timetable_slots[]
 
   @@index([department_id], map: "idx_faculty_department")
 }
@@ -798,6 +848,24 @@ model faculty_activity_log {
   created_by_user_id Int?
   users              users?   @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   faculty            faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_attendance_corrections {
+  id                   Int                             @id @default(autoincrement())
+  faculty_id           Int
+  attendance_date      DateTime                        @db.Date
+  old_status           String                          @db.VarChar(20)
+  requested_status     String                          @db.VarChar(20)
+  reason               String                          @db.VarChar(255)
+  requested_by_user_id Int
+  hod_approval_status  correction_approval_status_enum @default(pending)
+  hr_approval_status   correction_approval_status_enum @default(pending)
+  created_at           DateTime                        @default(now()) @db.Timestamptz(6)
+  decided_at           DateTime?                       @db.Timestamptz(6)
+  faculty              faculty                         @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fac_att_corr_faculty_fkey")
+  users                users                           @relation(fields: [requested_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fac_att_corr_requester_fkey")
+
+  @@index([faculty_id, attendance_date], map: "idx_fac_att_corr_faculty_date")
 }
 
 model faculty_daily_attendance {
@@ -817,15 +885,21 @@ model faculty_daily_attendance {
 }
 
 model faculty_documents {
-  id                  Int      @id @default(autoincrement())
-  faculty_id          Int
-  document_type       String   @db.VarChar(100)
-  file_name           String   @db.VarChar(255)
-  file_url            String
-  uploaded_at         DateTime @default(now()) @db.Timestamptz(6)
-  uploaded_by_user_id Int?
-  faculty             faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users               users?   @relation(fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                                                 Int                               @id @default(autoincrement())
+  faculty_id                                         Int
+  document_type                                      String                            @db.VarChar(100)
+  file_name                                          String                            @db.VarChar(255)
+  file_url                                           String
+  uploaded_at                                        DateTime                          @default(now()) @db.Timestamptz(6)
+  uploaded_by_user_id                                Int?
+  verification_status                                document_verification_status_enum @default(pending)
+  verified_by_user_id                                Int?
+  verified_at                                        DateTime?                         @db.Timestamptz(6)
+  expiry_date                                        DateTime?                         @db.Date
+  rejection_reason                                   String?                           @db.VarChar(255)
+  faculty                                            faculty                           @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_faculty_documents_uploaded_by_user_idTousers users?                            @relation("faculty_documents_uploaded_by_user_idTousers", fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_faculty_documents_verified_by_user_idTousers users?                            @relation("faculty_documents_verified_by_user_idTousers", fields: [verified_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_documents_verified_by_fkey")
 }
 
 model faculty_holiday_mapping {
@@ -860,16 +934,40 @@ model faculty_id_card_issuances {
   @@index([faculty_id, issued_at], map: "idx_faculty_id_card_issuances_faculty_id")
 }
 
+model faculty_leave_balances {
+  id            Int         @id @default(autoincrement())
+  faculty_id    Int
+  leave_type_id Int
+  academic_year String      @db.VarChar(20)
+  allocated     Int         @db.SmallInt
+  used          Int         @default(0) @db.SmallInt
+  faculty       faculty     @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leave_balances_faculty_fkey")
+  leave_types   leave_types @relation(fields: [leave_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leave_balances_leave_type_fkey")
+
+  @@unique([faculty_id, leave_type_id, academic_year], map: "faculty_leave_balances_unique")
+}
+
 model faculty_leaves {
-  id                  Int                  @id @default(autoincrement())
-  faculty_id          Int
-  from_date           DateTime             @db.Date
-  to_date             DateTime             @db.Date
-  reason              String?              @db.VarChar(255)
-  hod_approval_status approval_status_enum @default(pending)
-  hr_approval_status  approval_status_enum @default(pending)
-  created_at          DateTime             @default(now()) @db.Timestamptz(6)
-  faculty             faculty              @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                                                 Int                  @id @default(autoincrement())
+  faculty_id                                         Int
+  from_date                                          DateTime             @db.Date
+  to_date                                            DateTime             @db.Date
+  reason                                             String?              @db.VarChar(255)
+  hod_approval_status                                approval_status_enum @default(pending)
+  hr_approval_status                                 approval_status_enum @default(pending)
+  created_at                                         DateTime             @default(now()) @db.Timestamptz(6)
+  leave_type_id                                      Int?
+  hod_remarks                                        String?              @db.VarChar(255)
+  hr_remarks                                         String?              @db.VarChar(255)
+  hod_decided_at                                     DateTime?            @db.Timestamptz(6)
+  hr_decided_at                                      DateTime?            @db.Timestamptz(6)
+  hod_decided_by_user_id                             Int?
+  hr_decided_by_user_id                              Int?
+  attachment_url                                     String?              @db.VarChar(500)
+  faculty                                            faculty              @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_faculty_leaves_hod_decided_by_user_idTousers users?               @relation("faculty_leaves_hod_decided_by_user_idTousers", fields: [hod_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_hod_decider_fkey")
+  users_faculty_leaves_hr_decided_by_user_idTousers  users?               @relation("faculty_leaves_hr_decided_by_user_idTousers", fields: [hr_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_hr_decider_fkey")
+  leave_types                                        leave_types?         @relation(fields: [leave_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_leave_type_fkey")
 }
 
 model faculty_od_requests {
@@ -1315,6 +1413,15 @@ model invigilation_duties {
   hall_plans                      hall_plans                       @relation(fields: [hall_plan_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
+model leave_types {
+  id                     Int                      @id @default(autoincrement())
+  name                   String                   @unique @db.VarChar(50)
+  default_annual_quota   Int                      @default(0) @db.SmallInt
+  is_active              Boolean                  @default(true)
+  faculty_leave_balances faculty_leave_balances[]
+  faculty_leaves         faculty_leaves[]
+}
+
 model lesson_plan_sessions {
   id             Int          @id @default(autoincrement())
   lesson_plan_id Int
@@ -1513,6 +1620,37 @@ model media_requests {
 
   @@index([requested_by_user_id], map: "idx_media_requests_requested_by_user")
   @@index([venue_id], map: "idx_media_requests_venue")
+}
+
+model medical_staff {
+  id             Int              @id @default(autoincrement())
+  user_id        Int?
+  name           String           @db.VarChar(150)
+  designation    String?          @db.VarChar(100)
+  shift_time     String?          @db.VarChar(50)
+  phone          String?          @db.VarChar(20)
+  created_at     DateTime         @default(now()) @db.Timestamptz(6)
+  users          users?           @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  medical_visits medical_visits[]
+}
+
+model medical_visits {
+  id                   Int                @id @default(autoincrement())
+  visitor_type         borrower_type_enum
+  student_id           Int?
+  faculty_id           Int?
+  visit_date           DateTime           @default(dbgenerated("CURRENT_DATE")) @db.Date
+  reason               String?            @db.VarChar(255)
+  diagnosis            String?
+  treatment_given      String?
+  referred_to_hospital Boolean            @default(false)
+  attended_by_staff_id Int?
+  created_at           DateTime           @default(now()) @db.Timestamptz(6)
+  medical_staff        medical_staff?     @relation(fields: [attended_by_staff_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty              faculty?           @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students             students?          @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([student_id], map: "idx_medical_visits_student")
 }
 
 model non_teaching_staff {
@@ -1883,20 +2021,25 @@ model salary_divisions {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model salary_payments {
-  id                   Int                 @id @default(autoincrement())
+  id                   Int                        @id @default(autoincrement())
   payee_type           payee_type_enum
   faculty_id           Int?
   staff_id             Int?
-  month                Int                 @db.SmallInt
-  year                 Int                 @db.SmallInt
-  gross_amount         Decimal             @db.Decimal(12, 2)
-  net_amount           Decimal             @db.Decimal(12, 2)
-  paid_at              DateTime?           @db.Timestamptz(6)
+  month                Int                        @db.SmallInt
+  year                 Int                        @db.SmallInt
+  gross_amount         Decimal                    @db.Decimal(12, 2)
+  net_amount           Decimal                    @db.Decimal(12, 2)
+  paid_at              DateTime?                  @db.Timestamptz(6)
   processed_by_user_id Int?
-  faculty              faculty?            @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users                users?              @relation(fields: [processed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  non_teaching_staff   non_teaching_staff? @relation(fields: [staff_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  status               salary_payment_status_enum @default(pending)
+  deductions_amount    Decimal?                   @db.Decimal(12, 2)
+  lop_days             Int?                       @db.SmallInt
+  lop_amount           Decimal?                   @db.Decimal(12, 2)
+  faculty              faculty?                   @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                users?                     @relation(fields: [processed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  non_teaching_staff   non_teaching_staff?        @relation(fields: [staff_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  @@unique([faculty_id, year, month], map: "salary_payments_faculty_period_unique")
   @@index([faculty_id, year, month], map: "idx_salary_payments_faculty")
   @@index([staff_id, year, month], map: "idx_salary_payments_staff")
 }
@@ -2089,6 +2232,42 @@ model soa_applications {
   created_at       DateTime        @default(now()) @db.Timestamptz(6)
   students         students?
   admission_profile_drafts admission_profile_drafts?
+}
+
+model sports_equipment {
+  id                      Int                       @id @default(autoincrement())
+  name                    String                    @db.VarChar(150)
+  category                String?                   @db.VarChar(100)
+  total_quantity          Int                       @default(1)
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  sports_equipment_issues sports_equipment_issues[]
+}
+
+model sports_equipment_issues {
+  id               Int                @id @default(autoincrement())
+  equipment_id     Int
+  issued_to_type   borrower_type_enum
+  student_id       Int?
+  faculty_id       Int?
+  issued_date      DateTime           @default(dbgenerated("CURRENT_DATE")) @db.Date
+  returned_date    DateTime?          @db.Date
+  status           borrow_status_enum @default(borrowed)
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
+  sports_equipment sports_equipment   @relation(fields: [equipment_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty          faculty?           @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students         students?          @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([equipment_id], map: "idx_sports_issues_equipment")
+}
+
+model sports_teams {
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique @db.VarChar(150)
+  coach_name                  String?                       @db.VarChar(150)
+  department_id               Int?
+  created_at                  DateTime                      @default(now()) @db.Timestamptz(6)
+  departments                 departments?                  @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  student_sports_team_mapping student_sports_team_mapping[]
 }
 
 model student_addresses {
@@ -2289,6 +2468,17 @@ model student_sensitive_info {
   students      students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
+model student_sports_team_mapping {
+  id           Int          @id @default(autoincrement())
+  student_id   Int
+  team_id      Int
+  joined_at    DateTime     @default(now()) @db.Timestamptz(6)
+  students     students     @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sports_teams sports_teams @relation(fields: [team_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([student_id, team_id])
+}
+
 model student_transport_mapping {
   id                                                                                Int              @id @default(autoincrement())
   student_id                                                                        Int              @unique
@@ -2362,6 +2552,7 @@ model students {
   main_gate_in_out_ledger                                           main_gate_in_out_ledger[]
   malpractice_incidents                                             malpractice_incidents[]
   marksheets                                                        marksheets[]
+  medical_visits                                                    medical_visits[]
   od_request_hod_approvals                                          od_request_hod_approvals[]
   od_team_members                                                   od_team_members[]
   od_teams                                                          od_teams[]
@@ -2373,6 +2564,7 @@ model students {
   project_teams                                                     project_teams[]
   revaluation_requests                                              revaluation_requests[]
   seating_arrangements                                              seating_arrangements[]
+  sports_equipment_issues                                           sports_equipment_issues[]
   student_addresses                                                 student_addresses[]
   student_assignment_status                                         student_assignment_status[]
   student_certificates                                              student_certificates[]
@@ -2388,6 +2580,7 @@ model students {
   student_profiles                                                  student_profiles?
   student_projects                                                  student_projects[]
   student_sensitive_info                                            student_sensitive_info?
+  student_sports_team_mapping                                       student_sports_team_mapping[]
   student_transport_mapping                                         student_transport_mapping?
   batches                                                           batches                            @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   classes                                                           classes?                           @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -2491,9 +2684,12 @@ model users {
   alumni_announcements                                                              alumni_announcements[]
   alumni_group_messages                                                             alumni_group_messages[]
   announcements                                                                     announcements[]
+  appraisal_criteria                                                                appraisal_criteria[]
+  appraisal_cycles                                                                  appraisal_cycles[]
   appraisal_requests_appraisal_requests_hod_reviewed_byTousers                      appraisal_requests[]               @relation("appraisal_requests_hod_reviewed_byTousers")
   appraisal_requests_appraisal_requests_management_approved_byTousers               appraisal_requests[]               @relation("appraisal_requests_management_approved_byTousers")
   attendance_records                                                                attendance_records[]
+  audit_logs                                                                        audit_logs[]
   bills                                                                             bills[]
   bonafide_requests                                                                 bonafide_requests[]
   book_borrow_records_book_borrow_records_damage_lost_collected_by_user_idTousers   book_borrow_records[]              @relation("book_borrow_records_damage_lost_collected_by_user_idTousers")
@@ -2510,8 +2706,12 @@ model users {
   expenses                                                                          expenses[]
   faculty                                                                           faculty?
   faculty_activity_log                                                              faculty_activity_log[]
-  faculty_documents                                                                 faculty_documents[]
+  faculty_attendance_corrections                                                    faculty_attendance_corrections[]
+  faculty_documents_faculty_documents_uploaded_by_user_idTousers                    faculty_documents[]                @relation("faculty_documents_uploaded_by_user_idTousers")
+  faculty_documents_faculty_documents_verified_by_user_idTousers                    faculty_documents[]                @relation("faculty_documents_verified_by_user_idTousers")
   faculty_id_card_issuances                                                         faculty_id_card_issuances[]
+  faculty_leaves_faculty_leaves_hod_decided_by_user_idTousers                       faculty_leaves[]                   @relation("faculty_leaves_hod_decided_by_user_idTousers")
+  faculty_leaves_faculty_leaves_hr_decided_by_user_idTousers                        faculty_leaves[]                   @relation("faculty_leaves_hr_decided_by_user_idTousers")
   faculty_subject_class_mapping                                                     faculty_subject_class_mapping[]
   fee_payments                                                                      fee_payments[]
   feedback_forms                                                                    feedback_forms[]
@@ -2526,6 +2726,7 @@ model users {
   main_gate_in_out_ledger                                                           main_gate_in_out_ledger[]
   malpractice_incidents                                                             malpractice_incidents[]
   media_requests                                                                    media_requests[]
+  medical_staff                                                                     medical_staff[]
   non_teaching_staff                                                                non_teaching_staff[]
   notifications                                                                     notifications[]
   od_request_hod_approvals                                                          od_request_hod_approvals[]
@@ -2771,6 +2972,12 @@ enum clearance_type_enum {
   library_due
 }
 
+enum correction_approval_status_enum {
+  pending
+  approved
+  rejected
+}
+
 enum dayscholar_mode_enum {
   transport
   own_vehicle
@@ -2780,6 +2987,12 @@ enum dd_status_enum {
   received
   cleared
   bounced
+}
+
+enum document_verification_status_enum {
+  pending
+  verified
+  rejected
 }
 
 enum drive_application_status_enum {
@@ -3013,6 +3226,12 @@ enum revaluation_status_enum {
   no_change
   approved
   rejected
+}
+
+enum salary_payment_status_enum {
+  processed
+  pending
+  hold
 }
 
 enum seating_allocation_mode_enum {

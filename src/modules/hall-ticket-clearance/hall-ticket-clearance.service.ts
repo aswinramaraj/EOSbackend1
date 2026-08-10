@@ -169,9 +169,9 @@ export class HallTicketClearanceService {
       where: { exam_id: dto.exam_id },
       select: { exam_timetable: { select: { exam_date: true } } },
     });
-    const scheduledDates = mappings
-      .map((m) => m.exam_timetable?.exam_date)
-      .filter((d): d is Date => d !== undefined && d !== null);
+    const scheduledDates = mappings.flatMap((m) =>
+      m.exam_timetable.map((t) => t.exam_date),
+    );
     if (scheduledDates.length > 0) {
       const earliest = new Date(
         Math.min(...scheduledDates.map((d) => d.getTime())),

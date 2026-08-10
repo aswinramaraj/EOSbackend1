@@ -11,6 +11,12 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateExamTimetableDto } from './dto/create-exam-timetable.dto';
 import { UpdateExamTimetableDto } from './dto/update-exam-timetable.dto';
 
+function prismaErrorCode(err: unknown): string | undefined {
+  return typeof err === 'object' && err !== null && 'code' in err
+    ? (err as { code?: string }).code
+    : undefined;
+}
+
 @Injectable()
 export class ExamTimetableService {
   private readonly logger = new Logger(ExamTimetableService.name);
@@ -31,12 +37,42 @@ export class ExamTimetableService {
     }
   }
 
+  /**
+   * exam_timetable now belongs to a specific exam_timetable_versions row
+   * (@@unique([version_id, exam_subject_mapping_id]) lets the same mapping
+   * appear in more than one version's draft), and publication moved to
+   * exam_subject_mapping.is_published/published_at rather than a per-slot
+   * flag. This module has no version-management API of its own, so every
+   * exam gets exactly one implicit, exam-wide (department_id: null) version,
+   * lazily created on first use — same getOrCreateRow() convention as
+   * library_settings/hostel_settings elsewhere in this codebase.
+   *
+   * Note: like the advisory-lock comment in attendance.service.ts, Postgres
+   * treats NULL <> NULL in unique indexes, so @@unique([exam_id,
+   * department_id, version_number]) does not by itself stop two concurrent
+   * calls from both creating a default version for the same exam. Left
+   * unlocked here since exam-timetable authoring is a rare, single-admin
+   * action, not a high-concurrency path.
+   */
+  private async getOrCreateDefaultVersion(examId: number) {
+    const existing = await this.prisma.exam_timetable_versions.findFirst({
+      where: { exam_id: examId, department_id: null },
+    });
+    if (existing) {
+      return existing;
+    }
+    return this.prisma.exam_timetable_versions.create({
+      data: { exam_id: examId, version_number: 1, status: 'draft' },
+    });
+  }
+
   async create(createExamTimetableDto: CreateExamTimetableDto) {
     const {
       exam_subject_mapping_id,
       exam_date,
       start_time,
       end_time,
+      session,
       is_published,
     } = createExamTimetableDto;
 
@@ -51,8 +87,15 @@ export class ExamTimetableService {
       });
     }
 
+    const version = await this.getOrCreateDefaultVersion(mapping.exam_id);
+
     const existing = await this.prisma.exam_timetable.findUnique({
-      where: { exam_subject_mapping_id },
+      where: {
+        version_id_exam_subject_mapping_id: {
+          version_id: version.id,
+          exam_subject_mapping_id,
+        },
+      },
     });
 
     if (existing) {
@@ -67,24 +110,36 @@ export class ExamTimetableService {
     this.assertValidTimeRange(startTime, endTime);
 
     try {
-      return await this.prisma.exam_timetable.create({
-        data: {
-          exam_subject_mapping_id,
-          exam_date: new Date(exam_date),
-          start_time: startTime,
-          end_time: endTime,
-          is_published: is_published ?? false,
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        const timetable = await tx.exam_timetable.create({
+          data: {
+            exam_subject_mapping_id,
+            exam_date: new Date(exam_date),
+            start_time: startTime,
+            end_time: endTime,
+            session,
+            version_id: version.id,
+          },
+        });
+
+        if (is_published) {
+          await tx.exam_subject_mapping.update({
+            where: { id: exam_subject_mapping_id },
+            data: { is_published: true, published_at: new Date() },
+          });
+        }
+
+        return timetable;
       });
-    } catch (err: any) {
-      if (err?.code === 'P2002') {
+    } catch (err: unknown) {
+      if (prismaErrorCode(err) === 'P2002') {
         throw new ConflictException({
           message: 'Exam timetable already exists.',
           errorCode: 'EXAM_TIMETABLE_EXISTS',
         });
       }
 
-      if (err?.code === 'P2003') {
+      if (prismaErrorCode(err) === 'P2003') {
         throw new NotFoundException({
           message: 'Exam subject mapping not found.',
           errorCode: 'EXAM_SUBJECT_MAPPING_NOT_FOUND',
@@ -104,7 +159,7 @@ export class ExamTimetableService {
       return await this.prisma.exam_timetable.findMany({
         include: { exam_subject_mapping: true },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.logger.error('DB error while fetching exam timetables', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
@@ -114,14 +169,16 @@ export class ExamTimetableService {
   }
 
   async findOne(id: number) {
-    let timetable: any;
+    let timetable: Awaited<
+      ReturnType<typeof this.prisma.exam_timetable.findUnique>
+    >;
 
     try {
       timetable = await this.prisma.exam_timetable.findUnique({
         where: { id },
         include: { exam_subject_mapping: true },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.logger.error('DB error while fetching exam timetable', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
@@ -172,7 +229,12 @@ export class ExamTimetableService {
       }
 
       const duplicate = await this.prisma.exam_timetable.findUnique({
-        where: { exam_subject_mapping_id },
+        where: {
+          version_id_exam_subject_mapping_id: {
+            version_id: existing.version_id,
+            exam_subject_mapping_id,
+          },
+        },
       });
 
       if (duplicate && duplicate.id !== id) {
@@ -193,35 +255,53 @@ export class ExamTimetableService {
     this.assertValidTimeRange(startTime, endTime);
 
     try {
-      return await this.prisma.exam_timetable.update({
-        where: { id },
-        data: {
-          exam_subject_mapping_id:
-            updateExamTimetableDto.exam_subject_mapping_id,
-          exam_date: updateExamTimetableDto.exam_date
-            ? new Date(updateExamTimetableDto.exam_date)
-            : undefined,
-          start_time: updateExamTimetableDto.start_time ? startTime : undefined,
-          end_time: updateExamTimetableDto.end_time ? endTime : undefined,
-          is_published: updateExamTimetableDto.is_published,
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        const timetable = await tx.exam_timetable.update({
+          where: { id },
+          data: {
+            exam_subject_mapping_id:
+              updateExamTimetableDto.exam_subject_mapping_id,
+            exam_date: updateExamTimetableDto.exam_date
+              ? new Date(updateExamTimetableDto.exam_date)
+              : undefined,
+            start_time: updateExamTimetableDto.start_time
+              ? startTime
+              : undefined,
+            end_time: updateExamTimetableDto.end_time ? endTime : undefined,
+            session: updateExamTimetableDto.session,
+          },
+        });
+
+        if (updateExamTimetableDto.is_published !== undefined) {
+          await tx.exam_subject_mapping.update({
+            where: { id: exam_subject_mapping_id },
+            data: {
+              is_published: updateExamTimetableDto.is_published,
+              published_at: updateExamTimetableDto.is_published
+                ? new Date()
+                : null,
+            },
+          });
+        }
+
+        return timetable;
       });
-    } catch (err: any) {
-      if (err?.code === 'P2002') {
+    } catch (err: unknown) {
+      if (prismaErrorCode(err) === 'P2002') {
         throw new ConflictException({
           message: 'Exam timetable already exists.',
           errorCode: 'EXAM_TIMETABLE_EXISTS',
         });
       }
 
-      if (err?.code === 'P2003') {
+      if (prismaErrorCode(err) === 'P2003') {
         throw new NotFoundException({
           message: 'Exam subject mapping not found.',
           errorCode: 'EXAM_SUBJECT_MAPPING_NOT_FOUND',
         });
       }
 
-      if (err?.code === 'P2025') {
+      if (prismaErrorCode(err) === 'P2025') {
         throw new NotFoundException({
           message: 'Exam timetable not found.',
           errorCode: 'EXAM_TIMETABLE_NOT_FOUND',
@@ -239,8 +319,8 @@ export class ExamTimetableService {
   async remove(id: number) {
     try {
       await this.prisma.exam_timetable.delete({ where: { id } });
-    } catch (err: any) {
-      if (err?.code === 'P2025') {
+    } catch (err: unknown) {
+      if (prismaErrorCode(err) === 'P2025') {
         throw new NotFoundException({
           message: 'Exam timetable not found.',
           errorCode: 'EXAM_TIMETABLE_NOT_FOUND',

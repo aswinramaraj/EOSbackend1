@@ -21,6 +21,7 @@ import { SoaApplicationsModule } from './modules/admissions/soa-applications/soa
 import { StudentLeavesModule } from './modules/admissions/student-leaves/student-leaves.module';
 import { StudentsModule } from './modules/admissions/students/students.module';
 import { MeProfileModule } from './modules/admissions/students/me-profile/me-profile.module';
+import { ProfileModule } from './modules/profile/profile.module';
 
 import { AnnouncementsModule } from './modules/announcements/announcements/announcements.module';
 
@@ -42,6 +43,7 @@ import { AssignmentsModule } from './modules/faculty/assignments/assignments.mod
 import { AttendanceModule } from './modules/faculty/attendance/attendance.module';
 import { ClassMentorsModule } from './modules/faculty/class-mentors/class-mentors.module';
 import { ExamMarksModule } from './modules/faculty/exam-marks/exam-marks.module';
+import { FacultyAttendanceModule } from './modules/faculty/faculty-attendance/faculty-attendance.module';
 import { FacultyLeavesModule } from './modules/faculty/faculty-leaves/faculty-leaves.module';
 import { FacultyMappingModule } from './modules/faculty/faculty-mapping/faculty-mapping.module';
 import { FacultyModule } from './modules/faculty/faculty/faculty.module';
@@ -138,6 +140,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     StudentLeavesModule,
     StudentsModule,
     MeProfileModule,
+    ProfileModule,
 
     AnnouncementsModule,
 
@@ -159,6 +162,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     AttendanceModule,
     ClassMentorsModule,
     ExamMarksModule,
+    FacultyAttendanceModule,
     FacultyLeavesModule,
     FacultyMappingModule,
     FacultyModule,

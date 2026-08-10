@@ -121,6 +121,10 @@ export class ResidentsService {
         : { isNot: null },
     };
 
+    if (student_id) {
+      where.id = student_id;
+    }
+
     if (q) {
       where.OR = [
         { student_id_no: { contains: q, mode: 'insensitive' } },

@@ -9,7 +9,10 @@ import {
 } from '@nestjs/common';
 import crypto from 'node:crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/common/storage/storage.service';
+import { SmsService } from 'src/common/sms/sms.service';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import {
   address_type_enum,
   dayscholar_mode_enum,
@@ -21,7 +24,9 @@ import { UpdateSoaApplicationDto } from './dto/update-soa-application.dto';
 import { UpdateSoaStatusDto } from './dto/update-soa-status.dto';
 import { CreatePerfectEntryDto } from './dto/create-perfect-entry.dto';
 import { ListSoaApplicationsQueryDto } from './dto/list-soa-applications-query.dto';
+import { SaveProfileDraftDto } from './dto/save-profile-draft.dto';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { Prisma } from 'generated/prisma/client';
 
 /**
  * Statuses in which the draft application fields (name, contacts, cutoffs)
@@ -34,6 +39,16 @@ const EDITABLE_STATUSES: soa_status_enum[] = [
 ];
 
 const VALID_ADDRESS_TYPES = Object.values(address_type_enum);
+
+const PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const DOCUMENT_MIME_TYPES = [
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+];
+const DOCUMENT_MAX_BYTES = 5 * 1024 * 1024; // matches the reference admission form's own limit
 
 const CUTOFF_FIELDS = [
   'cutoff_physics',
@@ -81,7 +96,11 @@ const PERFECT_ENTRY_ELIGIBLE_STATUS = soa_status_enum.admission_confirmed;
 export class SoaApplicationsService {
   private readonly logger = new Logger(SoaApplicationsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+    private readonly sms: SmsService,
+  ) {}
 
   /**
    * POST /soa-applications
@@ -233,6 +252,7 @@ export class SoaApplicationsService {
     this.validateConditionalFields(dto);
     this.validateIdentityMarks(dto.identity_marks);
     this.validateAddresses(dto.addresses);
+    this.validateCertificates(dto.certificates);
     this.validateDateOfBirth(dto.date_of_birth);
 
     const [course, quota, batch] = await Promise.all([
@@ -257,6 +277,21 @@ export class SoaApplicationsService {
         message: 'batch_id does not reference an existing batch',
         errorCode: 'BATCH_NOT_FOUND',
       });
+    }
+
+    if (dto.certificates?.length) {
+      const typeIds = dto.certificates.map((c) => c.certificate_type_id);
+      const foundTypes = await this.prisma.certificate_types.findMany({
+        where: { id: { in: typeIds } },
+        select: { id: true },
+      });
+      if (foundTypes.length !== new Set(typeIds).size) {
+        throw new NotFoundException({
+          message:
+            'One or more certificate_type_id values do not reference an existing certificate type',
+          errorCode: 'CERTIFICATE_TYPE_NOT_FOUND',
+        });
+      }
     }
 
     const isDayscholar = dto.student_type === student_type_enum.dayscholar;
@@ -335,25 +370,60 @@ export class SoaApplicationsService {
       });
     }
 
-    // Temp password: same unsalted-SHA-256 scheme as AuthService/seed.ts (see
-    // brain/SECURITY.md — a pre-existing, separately-tracked weakness, not
-    // something to silently change mid-endpoint). Delivery mechanism to the
-    // new student is undefined per the spec's own "Known Limitations" — not
-    // returned in this response, so a follow-up (e.g. a reset-link email) is
-    // still needed before the account is actually usable.
-    const tempPassword = crypto.randomBytes(16).toString('hex');
-    const tempPasswordHash = crypto
-      .createHash('sha256')
-      .update(tempPassword)
-      .digest('hex');
+    // Either the admin typed one (dto.password present — the wizard's
+    // "Auto-generate" toggle was off), or it was off... the toggle was ON,
+    // in which case the field is omitted entirely and a random 6-digit
+    // numeric code is generated here instead. Either way it's hashed with
+    // the same unsalted-SHA-256 scheme AuthService's login check compares
+    // against (see brain/SECURITY.md — a pre-existing, separately-tracked
+    // weakness, not something to silently change mid-endpoint), and the
+    // plaintext is kept only long enough to (a) return it once in this
+    // response and (b) best-effort SMS it to the student below.
+    const plainPassword = dto.password ?? this.generateNumericPassword();
+    const passwordHash = this.hashPassword(plainPassword);
 
+    const createdStudent = await this.runPerfectEntryTransaction(
+      id,
+      dto,
+      passwordHash,
+      studentRole.id,
+      isDayscholar,
+    );
+
+    // Best-effort SMS with the login credentials — SmsService.send() never
+    // throws (see its own docblock), so a missing/broken provider can never
+    // fail an admission that's already been committed to the DB above. The
+    // result is returned to the caller either way so the UI can show an
+    // honest "not sent" note instead of assuming delivery.
+    const phone = dto.contacts?.student_mobile;
+    const sms = phone
+      ? await this.sms.send(
+          phone,
+          `Your student portal login — email: ${dto.email}, password: ${plainPassword}. Please change this password after logging in.`,
+        )
+      : {
+          sent: false,
+          note: 'No phone number was provided for this student.',
+        };
+
+    return { ...createdStudent, password: plainPassword, sms };
+  }
+
+  /** Just the DB-writing half of perfectEntry, split out so the SMS step above can run after a real commit instead of inside the same try/catch. */
+  private async runPerfectEntryTransaction(
+    id: number,
+    dto: CreatePerfectEntryDto,
+    passwordHash: string,
+    studentRoleId: number,
+    isDayscholar: boolean,
+  ) {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const user = await tx.users.create({
           data: {
             email: dto.email,
-            password_hash: tempPasswordHash,
-            role_id: studentRole.id,
+            password_hash: passwordHash,
+            role_id: studentRoleId,
             status: 'active',
           },
         });
@@ -404,6 +474,11 @@ export class SoaApplicationsService {
             joined_through: dto.joined_through,
             knew_institution_by: dto.knew_institution_by,
             nominee: dto.nominee,
+            // Always a URL this same application already got back from
+            // POST :id/photo (see CreatePerfectEntryDto's docblock) — never
+            // a client-chosen photo_uploaded_at, so the two stay honest.
+            photo_url: dto.photo_url,
+            photo_uploaded_at: dto.photo_url ? new Date() : undefined,
           },
         });
 
@@ -452,8 +527,26 @@ export class SoaApplicationsService {
           });
         }
 
+        if (dto.certificates?.length) {
+          await tx.student_certificates.createMany({
+            data: dto.certificates.map((cert) => ({
+              student_id: student.id,
+              certificate_type_id: cert.certificate_type_id,
+              is_available: cert.is_available,
+              file_url: cert.file_url,
+            })),
+          });
+        }
+
         // student_transport_mapping / student_hostel_mapping intentionally
         // NOT inserted — see the deferred-scope note in this method's docblock.
+
+        // The in-progress profile draft (if any) is no longer needed once
+        // the real student row exists — deleteMany rather than delete so
+        // this is a no-op when nothing was ever saved.
+        await tx.admission_profile_drafts.deleteMany({
+          where: { soa_application_id: id },
+        });
 
         return student;
       });
@@ -473,6 +566,178 @@ export class SoaApplicationsService {
         message:
           'Something went wrong while completing your admission. Please try again.',
         errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * GET /soa-applications/:id/draft — the Complete Profile wizard's saved
+   * in-progress state, or null if nothing has been saved yet. Returning null
+   * (not 404) for "no draft" keeps the wizard's load path a single branch:
+   * an application can validly have never been drafted.
+   */
+  async getDraft(id: number) {
+    const application = await this.prisma.soa_applications.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!application) {
+      throw new NotFoundException({
+        message: 'SOA application not found',
+        errorCode: 'SOA_APPLICATION_NOT_FOUND',
+      });
+    }
+
+    return this.prisma.admission_profile_drafts.findUnique({
+      where: { soa_application_id: id },
+      select: {
+        values: true,
+        marks: true,
+        saved_categories: true,
+        updated_at: true,
+      },
+    });
+  }
+
+  /**
+   * PUT /soa-applications/:id/draft — upserts the wizard's in-progress state.
+   * Called after every category save so closing the tab, a refresh, or
+   * another admin picking up the same application never loses progress.
+   */
+  async saveDraft(id: number, dto: SaveProfileDraftDto) {
+    const application = await this.prisma.soa_applications.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!application) {
+      throw new NotFoundException({
+        message: 'SOA application not found',
+        errorCode: 'SOA_APPLICATION_NOT_FOUND',
+      });
+    }
+
+    const data = {
+      values: dto.values as Prisma.InputJsonValue,
+      marks: dto.marks as Prisma.InputJsonValue,
+      saved_categories: dto.saved_categories,
+    };
+
+    return this.prisma.admission_profile_drafts.upsert({
+      where: { soa_application_id: id },
+      create: { soa_application_id: id, ...data },
+      update: data,
+      select: {
+        values: true,
+        marks: true,
+        saved_categories: true,
+        updated_at: true,
+      },
+    });
+  }
+
+  /**
+   * POST /soa-applications/:id/photo — uploads to Supabase Storage and
+   * returns the public URL only; nothing is written to the DB here. There
+   * is no `students` row to attach it to yet at this point in the wizard
+   * (perfect-entry hasn't run), so the frontend stashes the returned URL in
+   * the wizard's own draft state (values.photo_url) and it rides along in
+   * the final perfect-entry payload, same as every other wizard field.
+   */
+  async uploadPhoto(id: number, file: Express.Multer.File) {
+    await this.assertApplicationExists(id);
+    if (!PHOTO_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException({
+        message: `That file type is not accepted. JPG, PNG or WebP only — got ${file.mimetype || 'an unknown type'}.`,
+        errorCode: 'INVALID_PHOTO_TYPE',
+      });
+    }
+    if (file.size > PHOTO_MAX_BYTES) {
+      throw new BadRequestException({
+        message: `File is too large — the limit is ${PHOTO_MAX_BYTES / (1024 * 1024)}MB.`,
+        errorCode: 'PHOTO_TOO_LARGE',
+      });
+    }
+
+    const { key } = await this.storage.upload(
+      `soa/${id}`,
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+      STORAGE_BUCKETS.STUDENT_PHOTOS,
+    );
+    return {
+      url: this.storage.getPublicUrl(key, STORAGE_BUCKETS.STUDENT_PHOTOS),
+    };
+  }
+
+  /**
+   * POST /soa-applications/:id/documents — same "upload now, attach later"
+   * pattern as uploadPhoto: student_certificates.student_id can't be set
+   * until the real student row exists, so this only returns
+   * {certificate_type_id, file_url} for the wizard to fold into its draft
+   * and, ultimately, the perfect-entry payload's `certificates` array.
+   */
+  async uploadDocument(
+    id: number,
+    certificateTypeId: number,
+    file: Express.Multer.File,
+  ) {
+    await this.assertApplicationExists(id);
+    const certificateType = await this.prisma.certificate_types.findUnique({
+      where: { id: certificateTypeId },
+      select: { id: true },
+    });
+    if (!certificateType) {
+      throw new NotFoundException({
+        message:
+          'certificate_type_id does not reference an existing certificate type',
+        errorCode: 'CERTIFICATE_TYPE_NOT_FOUND',
+      });
+    }
+    if (!DOCUMENT_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException({
+        message: `That file type is not accepted. PDF, JPG, PNG or WebP only — got ${file.mimetype || 'an unknown type'}.`,
+        errorCode: 'INVALID_DOCUMENT_TYPE',
+      });
+    }
+    if (file.size > DOCUMENT_MAX_BYTES) {
+      throw new BadRequestException({
+        message: `File is too large — the limit is ${DOCUMENT_MAX_BYTES / (1024 * 1024)}MB per document.`,
+        errorCode: 'DOCUMENT_TOO_LARGE',
+      });
+    }
+
+    const { key } = await this.storage.upload(
+      `soa/${id}/certificates`,
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+      STORAGE_BUCKETS.STUDENT_DOCUMENTS,
+    );
+    // student_documents is PRIVATE — file_url is the storage KEY (what the
+    // wizard's draft stashes and, ultimately, perfect-entry's `certificates`
+    // array persists as student_certificates.file_url); preview_url is a
+    // freshly-signed, time-limited link for the wizard to show "View" on
+    // the just-attached scan right now. Never persist preview_url anywhere.
+    return {
+      certificate_type_id: certificateTypeId,
+      file_url: key,
+      preview_url: await this.storage.getSignedDownloadUrl(
+        key,
+        STORAGE_BUCKETS.STUDENT_DOCUMENTS,
+      ),
+    };
+  }
+
+  private async assertApplicationExists(id: number) {
+    const application = await this.prisma.soa_applications.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!application) {
+      throw new NotFoundException({
+        message: 'SOA application not found',
+        errorCode: 'SOA_APPLICATION_NOT_FOUND',
       });
     }
   }
@@ -548,6 +813,36 @@ export class SoaApplicationsService {
     }
   }
 
+  private validateCertificates(
+    certificates?: CreatePerfectEntryDto['certificates'],
+  ) {
+    if (!certificates?.length) return;
+    const typeIds = certificates.map((c) => c.certificate_type_id);
+    if (new Set(typeIds).size !== typeIds.length) {
+      throw new BadRequestException({
+        message: 'certificates cannot repeat the same certificate_type_id',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+  }
+
+  /** Same one-way SHA-256 hashing scheme used by AuthService's login check and faculty.service.ts's own createFaculty(). */
+  private hashPassword(plain: string): string {
+    return crypto.createHash('sha256').update(plain).digest('hex');
+  }
+
+  /**
+   * Used when the wizard's "Auto-generate" toggle is on — a random 6-digit
+   * numeric code (e.g. "004821", leading zeros kept), the format the
+   * frontend toggle promises. crypto.randomInt is cryptographically strong,
+   * unlike Math.random. This is intentionally simple (digits only, no
+   * letters/symbols) since it's meant to be read off an SMS and typed back
+   * in on a phone keypad — same reasoning as a bank OTP.
+   */
+  private generateNumericPassword(): string {
+    return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+  }
+
   private validateAddresses(addresses?: CreatePerfectEntryDto['addresses']) {
     if (!addresses?.length) return;
     const types = addresses.map((address) => address.address_type);
@@ -593,7 +888,15 @@ export class SoaApplicationsService {
    */
   async findAll(query: ListSoaApplicationsQueryDto) {
     const where: Record<string, unknown> = {};
-    if (query.status) where.status = query.status;
+    if (query.has_draft === 'true') {
+      // "Draft" isn't a real status — it's admission_confirmed applications
+      // that started Complete Profile but haven't finished it yet.
+      where.status = soa_status_enum.admission_confirmed;
+      where.students = null;
+      where.admission_profile_drafts = { isNot: null };
+    } else if (query.status) {
+      where.status = query.status;
+    }
     if (query.q) {
       where.OR = [
         { first_name: { contains: query.q, mode: 'insensitive' } },
@@ -610,7 +913,12 @@ export class SoaApplicationsService {
         skip: query.skip,
         take: query.limit,
         orderBy: { id: 'desc' },
-        include: { students: { select: { id: true, student_id_no: true } } },
+        include: {
+          students: { select: { id: true, student_id_no: true } },
+          admission_profile_drafts: {
+            select: { saved_categories: true, updated_at: true },
+          },
+        },
       }),
       this.prisma.soa_applications.count({ where }),
     ]);
@@ -622,7 +930,12 @@ export class SoaApplicationsService {
   async findOne(id: number) {
     const row = await this.prisma.soa_applications.findUnique({
       where: { id },
-      include: { students: { select: { id: true, student_id_no: true } } },
+      include: {
+        students: { select: { id: true, student_id_no: true } },
+        admission_profile_drafts: {
+          select: { saved_categories: true, updated_at: true },
+        },
+      },
     });
     if (!row) {
       throw new NotFoundException({

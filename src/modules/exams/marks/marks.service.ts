@@ -10,7 +10,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateMarkDto } from './dto/create-mark.dto';
 import { UpdateMarkDto } from './dto/update-mark.dto';
-import { ListMarksQueryDto } from './dto/list-marks-query.dto';
+import { ListExamMarksQueryDto } from './dto/list-exam-marks-query.dto';
 
 @Injectable()
 export class MarksService {
@@ -118,14 +118,10 @@ export class MarksService {
     }
   }
 
-  async findAll(query: ListMarksQueryDto = {}) {
+  async findAll(query: ListExamMarksQueryDto) {
     try {
       return await this.prisma.exam_marks.findMany({
-        where: {
-          ...(query.student_id !== undefined && {
-            student_id: query.student_id,
-          }),
-        },
+        where: query.student_id ? { student_id: query.student_id } : undefined,
         include: {
           exam_subject_mapping: {
             select: {
@@ -140,7 +136,9 @@ export class MarksService {
                   exam_types: { select: { name: true } },
                 },
               },
-              subjects: { select: { id: true, name: true, subject_code: true } },
+              subjects: {
+                select: { id: true, name: true, subject_code: true },
+              },
             },
           },
           students: true,

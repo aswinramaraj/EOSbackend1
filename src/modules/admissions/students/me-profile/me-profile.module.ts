@@ -3,13 +3,23 @@ import { PrismaModule } from 'src/prisma/prisma.module';
 import { MeController } from './me-profile.controller';
 import { MeProfileService } from './me-profile.service';
 import { MeAttendanceService } from './me-attendance.service';
+import { MeExamResultsService } from './me-exam-results.service';
 import { MeLeavesService } from './me-leaves.service';
 import { MeLeavesListService } from './me-leaves-list.service';
 import { MeOdTeamsService } from './me-od-teams.service';
+import { MeOdTeamsListService } from './me-od-teams-list.service';
 import { MeOdRequestsService } from './me-od-requests.service';
+import { MeOdRequestsListService } from './me-od-requests-list.service';
 import { MeHostelOutingsService } from './me-hostel-outings.service';
 import { MeBonafideRequestsService } from './me-bonafide-requests.service';
 import { MeProjectsService } from './me-projects.service';
+import { MeFacultyDirectoryService } from './me-faculty-directory.service';
+import { MeFeesService } from './me-fees.service';
+import { MeExamScheduleService } from './me-exam-schedule.service';
+import { MeHostelRoomService } from './me-hostel-room.service';
+import { MeHostelComplaintsService } from './me-hostel-complaints.service';
+import { MeMessFeedbackService } from './me-mess-feedback.service';
+import { MeAcademicCalendarService } from './me-academic-calendar.service';
 
 @Module({
   imports: [PrismaModule],
@@ -17,13 +27,29 @@ import { MeProjectsService } from './me-projects.service';
   providers: [
     MeProfileService,
     MeAttendanceService,
+    MeExamResultsService,
     MeLeavesService,
     MeLeavesListService,
     MeOdTeamsService,
+    MeOdTeamsListService,
     MeOdRequestsService,
+    MeOdRequestsListService,
     MeHostelOutingsService,
     MeBonafideRequestsService,
     MeProjectsService,
+    MeFacultyDirectoryService,
+    MeFeesService,
+    MeExamScheduleService,
+    MeHostelRoomService,
+    MeHostelComplaintsService,
+    MeMessFeedbackService,
+    MeAcademicCalendarService,
+  ],
+  exports: [
+    MeAttendanceService,
+    MeExamResultsService,
+    MeFeesService,
+    MeAcademicCalendarService,
   ],
 })
 export class MeProfileModule {}

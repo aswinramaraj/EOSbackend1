@@ -1,16 +1,29 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import crypto from 'node:crypto';
+import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/common/storage/storage.service';
+import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { AdminUpdateStudentDto } from './dto/admin-update-student.dto';
 import { AdminAttendanceSummaryQueryDto } from './dto/admin-attendance-summary-query.dto';
+import { ResetStudentPasswordDto } from './dto/reset-student-password.dto';
+
+const PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+/** Same charset faculty.service.ts's generateTemporaryPassword() uses — excludes visually ambiguous chars (0/O, 1/l/I). */
+const TEMP_PASSWORD_CHARSET =
+  'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024; // 5 MB — same limit as the soa-applications pre-admission photo upload
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -39,6 +52,8 @@ const STUDENT_LIST_SELECT = {
   status: true,
   admission_date: true,
   created_at: true,
+  photo_url: true,
+  photo_uploaded_at: true,
   batches: { select: { id: true, name: true } },
   classes: { select: { id: true, section: true, current_semester: true } },
   courses: {
@@ -52,9 +67,14 @@ const STUDENT_LIST_SELECT = {
   quotas: { select: { id: true, name: true } },
   users: { select: { id: true, email: true, phone: true, status: true } },
   soa_applications: { select: { first_name: true, last_name: true } },
+  student_contacts: { select: { student_mobile: true } },
 } as const;
 
-function toStudentDto(row: any) {
+type StudentListRow = Prisma.studentsGetPayload<{
+  select: typeof STUDENT_LIST_SELECT;
+}>;
+
+function toStudentDto(row: StudentListRow) {
   return {
     id: row.id,
     student_id_no: row.student_id_no,
@@ -64,13 +84,19 @@ function toStudentDto(row: any) {
     first_name: row.soa_applications?.first_name ?? null,
     last_name: row.soa_applications?.last_name ?? null,
     email: row.users.email,
-    phone: row.users.phone,
+    // users.phone is never written by the current perfect-entry endpoint —
+    // the number actually captured at admission lives on student_contacts
+    // instead (see students/admit wizard's "Contact record" category), so
+    // it's the real fallback here rather than a second, always-null column.
+    phone: row.users.phone ?? row.student_contacts?.student_mobile ?? null,
     gender: row.gender,
     date_of_birth: row.date_of_birth,
     student_type: row.student_type,
     dayscholar_mode: row.dayscholar_mode,
     status: row.status,
     admission_date: row.admission_date,
+    photo_url: row.photo_url,
+    photo_uploaded_at: row.photo_uploaded_at,
     created_at: row.created_at,
     batch: row.batches,
     class: row.classes,
@@ -86,11 +112,14 @@ function toStudentDto(row: any) {
 export class StudentsService {
   private readonly logger = new Logger(StudentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   /** GET /students (Admin only) — paginated, searchable, filterable. */
   async findAll(query: ListStudentsQueryDto) {
-    const where: any = {
+    const where: Prisma.studentsWhereInput = {
       batch_id: query.batch_id,
       course_id: query.course_id,
       class_id: query.class_id,
@@ -882,6 +911,7 @@ export class StudentsService {
       where: { student_id: id },
       select: {
         id: true,
+        certificate_type_id: true,
         is_available: true,
         file_url: true,
         verified_at: true,
@@ -889,13 +919,25 @@ export class StudentsService {
       },
     });
 
-    return rows.map((r) => ({
-      id: r.id,
-      certificate_name: r.certificate_types.name,
-      is_available: r.is_available,
-      file_url: r.file_url,
-      verified_at: r.verified_at,
-    }));
+    // student_documents is a PRIVATE bucket — file_url is stored as a
+    // storage key (see StorageBuckets constant's own comment), so every
+    // read needs a freshly-signed URL; the stored key is never handed to
+    // the frontend directly (it isn't a browsable link on its own).
+    return Promise.all(
+      rows.map(async (r) => ({
+        id: r.id,
+        certificate_type_id: r.certificate_type_id,
+        certificate_name: r.certificate_types.name,
+        is_available: r.is_available,
+        file_url: r.file_url
+          ? await this.storage.getSignedDownloadUrl(
+              r.file_url,
+              STORAGE_BUCKETS.STUDENT_DOCUMENTS,
+            )
+          : null,
+        verified_at: r.verified_at,
+      })),
+    );
   }
 
   /**
@@ -923,12 +965,14 @@ export class StudentsService {
       where: { student_id: id },
       select: {
         transport_routes: { select: { id: true, name: true } },
-        transport_stages_student_transport_mapping_boarding_stage_idTotransport_stages: {
-          select: { id: true, stage_name: true, fee_amount: true },
-        },
-        transport_stages_student_transport_mapping_destination_stage_idTotransport_stages: {
-          select: { id: true, stage_name: true },
-        },
+        transport_stages_student_transport_mapping_boarding_stage_idTotransport_stages:
+          {
+            select: { id: true, stage_name: true, fee_amount: true },
+          },
+        transport_stages_student_transport_mapping_destination_stage_idTotransport_stages:
+          {
+            select: { id: true, stage_name: true },
+          },
       },
     });
 
@@ -938,12 +982,299 @@ export class StudentsService {
 
     return {
       route: mapping.transport_routes,
-      boarding_stage: mapping.transport_stages_student_transport_mapping_boarding_stage_idTotransport_stages,
-      destination_stage: mapping.transport_stages_student_transport_mapping_destination_stage_idTotransport_stages,
+      boarding_stage:
+        mapping.transport_stages_student_transport_mapping_boarding_stage_idTotransport_stages,
+      destination_stage:
+        mapping.transport_stages_student_transport_mapping_destination_stage_idTotransport_stages,
     };
   }
 
+  /**
+   * GET /students/:id/medical — `medical_visits.student_id` is nullable
+   * because the same table also logs faculty visits (`visitor_type`
+   * discriminates); scoping to this student's rows is enough, no extra
+   * `visitor_type` filter needed since a row can only carry one FK.
+   */
+  async getMedicalVisits(id: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const visits = await this.prisma.medical_visits.findMany({
+      where: { student_id: id },
+      select: {
+        id: true,
+        visit_date: true,
+        reason: true,
+        diagnosis: true,
+        treatment_given: true,
+        referred_to_hospital: true,
+        medical_staff: { select: { name: true, designation: true } },
+      },
+      orderBy: { visit_date: 'desc' },
+    });
+
+    return visits.map((v) => ({
+      id: v.id,
+      visit_date: v.visit_date,
+      reason: v.reason,
+      diagnosis: v.diagnosis,
+      treatment_given: v.treatment_given,
+      referred_to_hospital: v.referred_to_hospital,
+      attended_by: v.medical_staff,
+    }));
+  }
+
   /** PATCH /students/:id (Admin only) */
+  /**
+   * GET /students/:id/edit-profile — mirrors AdminUpdateStudentDto's field
+   * list exactly, so the admin "Edit profile" form always shows the real
+   * current value of every field it's about to let someone overwrite.
+   * Deliberately separate from STUDENT_LIST_SELECT/toStudentDto (used by the
+   * paginated list too) rather than widening that shared select with a dozen
+   * edit-only columns it doesn't need.
+   */
+  async getEditProfile(id: number) {
+    const row = await this.prisma.students.findUnique({
+      where: { id },
+      select: {
+        roll_no: true,
+        register_no: true,
+        admission_no: true,
+        admission_date: true,
+        admission_type: true,
+        joined_academic_year: true,
+        gender: true,
+        date_of_birth: true,
+        student_type: true,
+        dayscholar_mode: true,
+        vehicle_number: true,
+        course_id: true,
+        quota_id: true,
+        class_id: true,
+        batch_id: true,
+        status: true,
+        is_first_graduate: true,
+        nationality: true,
+        religion: true,
+        community: true,
+        caste: true,
+        mother_tongue: true,
+        blood_group: true,
+        is_father_exserviceman: true,
+        exserviceman_info: true,
+        is_diff_abled: true,
+        diff_abled_info: true,
+        photo_url: true,
+      },
+    });
+    if (!row) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+    return row;
+  }
+
+  /**
+   * POST /students/:id/photo (Admin only) — change/replace an existing
+   * student's photo. Deletes the previous storage object (best-effort — a
+   * failure there shouldn't block the new photo from being saved) when
+   * replacing one that was uploaded through this same endpoint.
+   */
+  async uploadPhoto(id: number, file: Express.Multer.File) {
+    const student = await this.prisma.students.findUnique({
+      where: { id },
+      select: { id: true, photo_url: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+    if (!PHOTO_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException({
+        message: `That file type is not accepted. JPG, PNG or WebP only — got ${file.mimetype || 'an unknown type'}.`,
+        errorCode: 'INVALID_PHOTO_TYPE',
+      });
+    }
+    if (file.size > PHOTO_MAX_BYTES) {
+      throw new BadRequestException({
+        message: `File is too large — the limit is ${PHOTO_MAX_BYTES / (1024 * 1024)}MB.`,
+        errorCode: 'PHOTO_TOO_LARGE',
+      });
+    }
+
+    const { key } = await this.storage.upload(
+      `students/${id}`,
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+      STORAGE_BUCKETS.STUDENT_PHOTOS,
+    );
+    const photoUrl = this.storage.getPublicUrl(
+      key,
+      STORAGE_BUCKETS.STUDENT_PHOTOS,
+    );
+
+    const oldKey = this.extractStorageKey(
+      student.photo_url,
+      STORAGE_BUCKETS.STUDENT_PHOTOS,
+    );
+
+    const updated = await this.prisma.students.update({
+      where: { id },
+      data: { photo_url: photoUrl, photo_uploaded_at: new Date() },
+      select: { photo_url: true, photo_uploaded_at: true },
+    });
+
+    if (oldKey) {
+      try {
+        await this.storage.delete(oldKey, STORAGE_BUCKETS.STUDENT_PHOTOS);
+      } catch (err) {
+        this.logger.warn(
+          `Old photo cleanup failed for student ${id} (new photo already saved): ${err}`,
+        );
+      }
+    }
+
+    return updated;
+  }
+
+  /** Reverses getPublicUrl()'s construction — null on any URL that doesn't match this bucket's public-URL shape (nothing to delete, not an error). */
+  private extractStorageKey(url: string | null, bucket: string): string | null {
+    if (!url) return null;
+    const marker = `/storage/v1/object/public/${bucket}/`;
+    const index = url.indexOf(marker);
+    return index === -1 ? null : url.slice(index + marker.length);
+  }
+
+  /**
+   * DELETE /students/:id/photo (Admin only) — removes the student's photo:
+   * storage object cleanup is best-effort (a failure there shouldn't block
+   * the DB from reflecting "no photo"), then photo_url/photo_uploaded_at are
+   * cleared. Calling this when there's already no photo is a no-op, not an
+   * error — same idempotent-delete convention as the rest of this module.
+   */
+  async deletePhoto(id: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { id },
+      select: { id: true, photo_url: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const key = this.extractStorageKey(
+      student.photo_url,
+      STORAGE_BUCKETS.STUDENT_PHOTOS,
+    );
+    if (key) {
+      try {
+        await this.storage.delete(key, STORAGE_BUCKETS.STUDENT_PHOTOS);
+      } catch (err) {
+        this.logger.warn(
+          `Photo storage cleanup failed for student ${id} (DB will still be cleared): ${err}`,
+        );
+      }
+    }
+
+    return this.prisma.students.update({
+      where: { id },
+      data: { photo_url: null, photo_uploaded_at: null },
+      select: { photo_url: true, photo_uploaded_at: true },
+    });
+  }
+
+  /**
+   * POST /students/:id/reset-password (Admin only) — for a student who
+   * forgot their password (there's no self-service reset yet — see
+   * SoaApplicationsService.perfectEntry's own comment on why there's still
+   * no email/SMS delivery mechanism). Provide `password` to set it exactly,
+   * or omit it to get a random one generated — either way the plaintext is
+   * returned once so the admin can hand it to the student directly; nothing
+   * retrievable is stored (password_hash is one-way, same scheme as login).
+   */
+  async resetPassword(
+    id: number,
+    dto: ResetStudentPasswordDto,
+    adminUserId: number,
+  ) {
+    // Step-up confirmation: the calling admin must re-prove their own
+    // identity with their own current password before this runs, even
+    // though the route is already behind JwtAuthGuard + RolesGuard — that
+    // only proves the session is an admin's, not that the person at the
+    // keyboard right now is (an unattended/logged-in session shouldn't be
+    // enough to pull a student's new credentials).
+    //
+    // 403, not 401: the JWT itself is still perfectly valid — this is an
+    // authorization failure on this one action, not an authentication
+    // failure. The frontend's query client treats every 401 as "the
+    // session died" and force-logs-out to /login (see query-client.ts's
+    // onError) — a wrong confirmation password here must never trigger that.
+    const admin = await this.prisma.users.findUnique({
+      where: { id: adminUserId },
+      select: { password_hash: true },
+    });
+    if (
+      !admin ||
+      this.hashPassword(dto.adminPassword) !== admin.password_hash
+    ) {
+      throw new ForbiddenException({
+        message: 'Incorrect password',
+        errorCode: 'ADMIN_PASSWORD_INCORRECT',
+      });
+    }
+
+    const student = await this.prisma.students.findUnique({
+      where: { id },
+      select: { user_id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const newPassword = dto.password ?? this.generateTemporaryPassword();
+    const passwordHash = this.hashPassword(newPassword);
+
+    await this.prisma.users.update({
+      where: { id: student.user_id },
+      data: { password_hash: passwordHash },
+    });
+
+    return { password: newPassword };
+  }
+
+  /** Same one-way SHA-256 hashing scheme used by AuthService's login check and SoaApplicationsService's perfectEntry(). */
+  private hashPassword(plain: string): string {
+    return crypto.createHash('sha256').update(plain).digest('hex');
+  }
+
+  /** Same generator faculty.service.ts uses for its own temporary passwords. */
+  private generateTemporaryPassword(): string {
+    const bytes = crypto.randomBytes(10);
+    let password = '';
+    for (const byte of bytes) {
+      password += TEMP_PASSWORD_CHARSET[byte % TEMP_PASSWORD_CHARSET.length];
+    }
+    return `${password}@1`;
+  }
+
   async update(id: number, dto: AdminUpdateStudentDto) {
     if (!dto || Object.keys(dto).length === 0) {
       throw new BadRequestException({
@@ -954,7 +1285,22 @@ export class StudentsService {
 
     await this.findOne(id); // 404s consistently if missing
 
-    const fkChecks: Array<['course_id' | 'quota_id' | 'batch_id' | 'class_id', number | undefined]> = [
+    const fkFinders: Record<
+      'course_id' | 'quota_id' | 'batch_id' | 'class_id',
+      (fkId: number) => Promise<{ id: number } | null>
+    > = {
+      course_id: (fkId) =>
+        this.prisma.courses.findUnique({ where: { id: fkId } }),
+      quota_id: (fkId) =>
+        this.prisma.quotas.findUnique({ where: { id: fkId } }),
+      batch_id: (fkId) =>
+        this.prisma.batches.findUnique({ where: { id: fkId } }),
+      class_id: (fkId) =>
+        this.prisma.classes.findUnique({ where: { id: fkId } }),
+    };
+    const fkChecks: Array<
+      ['course_id' | 'quota_id' | 'batch_id' | 'class_id', number | undefined]
+    > = [
       ['course_id', dto.course_id],
       ['quota_id', dto.quota_id],
       ['batch_id', dto.batch_id],
@@ -962,10 +1308,7 @@ export class StudentsService {
     ];
     for (const [field, fkId] of fkChecks) {
       if (fkId === undefined) continue;
-      const table = field === 'class_id' ? 'classes' : field.replace('_id', '') + 's';
-      const exists = await (this.prisma as any)[table].findUnique({
-        where: { id: fkId },
-      });
+      const exists = await fkFinders[field](fkId);
       if (!exists) {
         throw new NotFoundException({
           message: `${field} not found`,
@@ -975,50 +1318,57 @@ export class StudentsService {
     }
 
     try {
-      const updated = await this.prisma.$transaction(async (tx) => {
-        const student = await tx.students.update({
-          where: { id },
-          data: {
-            roll_no: dto.roll_no,
-            register_no: dto.register_no,
-            admission_no: dto.admission_no,
-            admission_date: dto.admission_date ? new Date(dto.admission_date) : undefined,
-            admission_type: dto.admission_type,
-            joined_academic_year: dto.joined_academic_year,
-            gender: dto.gender,
-            date_of_birth: dto.date_of_birth ? new Date(dto.date_of_birth) : undefined,
-            student_type: dto.student_type,
-            dayscholar_mode: dto.dayscholar_mode,
-            vehicle_number: dto.vehicle_number,
-            course_id: dto.course_id,
-            quota_id: dto.quota_id,
-            class_id: dto.class_id,
-            batch_id: dto.batch_id,
-            status: dto.status,
-            is_first_graduate: dto.is_first_graduate,
-            nationality: dto.nationality,
-            religion: dto.religion,
-            community: dto.community,
-            caste: dto.caste,
-            mother_tongue: dto.mother_tongue,
-            blood_group: dto.blood_group,
-            is_father_exserviceman: dto.is_father_exserviceman,
-            exserviceman_info: dto.exserviceman_info,
-            is_diff_abled: dto.is_diff_abled,
-            diff_abled_info: dto.diff_abled_info,
-          },
-          select: { id: true, user_id: true },
-        });
-
-        if (dto.status !== undefined) {
-          await tx.users.update({
-            where: { id: student.user_id },
-            data: { status: dto.status },
+      const updated = await this.prisma.$transaction(
+        async (tx) => {
+          const student = await tx.students.update({
+            where: { id },
+            data: {
+              roll_no: dto.roll_no,
+              register_no: dto.register_no,
+              admission_no: dto.admission_no,
+              admission_date: dto.admission_date
+                ? new Date(dto.admission_date)
+                : undefined,
+              admission_type: dto.admission_type,
+              joined_academic_year: dto.joined_academic_year,
+              gender: dto.gender,
+              date_of_birth: dto.date_of_birth
+                ? new Date(dto.date_of_birth)
+                : undefined,
+              student_type: dto.student_type,
+              dayscholar_mode: dto.dayscholar_mode,
+              vehicle_number: dto.vehicle_number,
+              course_id: dto.course_id,
+              quota_id: dto.quota_id,
+              class_id: dto.class_id,
+              batch_id: dto.batch_id,
+              status: dto.status,
+              is_first_graduate: dto.is_first_graduate,
+              nationality: dto.nationality,
+              religion: dto.religion,
+              community: dto.community,
+              caste: dto.caste,
+              mother_tongue: dto.mother_tongue,
+              blood_group: dto.blood_group,
+              is_father_exserviceman: dto.is_father_exserviceman,
+              exserviceman_info: dto.exserviceman_info,
+              is_diff_abled: dto.is_diff_abled,
+              diff_abled_info: dto.diff_abled_info,
+            },
+            select: { id: true, user_id: true },
           });
-        }
 
-        return student;
-      }, { timeout: 20_000, maxWait: 20_000 }); // see finance-overview.service.ts getOverview() for why
+          if (dto.status !== undefined) {
+            await tx.users.update({
+              where: { id: student.user_id },
+              data: { status: dto.status },
+            });
+          }
+
+          return student;
+        },
+        { timeout: 20_000, maxWait: 20_000 },
+      ); // see finance-overview.service.ts getOverview() for why
 
       return this.findOne(updated.id);
     } catch (err) {
@@ -1059,7 +1409,10 @@ export class StudentsService {
 
     await this.prisma.$transaction(
       [
-        this.prisma.students.update({ where: { id }, data: { status: 'inactive' } }),
+        this.prisma.students.update({
+          where: { id },
+          data: { status: 'inactive' },
+        }),
         this.prisma.users.update({
           where: { id: student.user_id },
           data: { status: 'inactive' },

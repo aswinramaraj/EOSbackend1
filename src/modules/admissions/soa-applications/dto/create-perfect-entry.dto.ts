@@ -12,6 +12,7 @@ import {
   IsString,
   Matches,
   MaxLength,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import {
@@ -120,6 +121,24 @@ export class PerfectEntryAddressDto {
 }
 
 /**
+ * One row of the wizard's document checklist. file_url is always a value
+ * this same application already got back from POST :id/documents — never
+ * accepted as an arbitrary client-supplied URL for anything else, same
+ * discipline as ProfileService.uploadResume. is_available can be true with
+ * no file_url (collected but not yet scanned) — the two are separate facts,
+ * per the reference form's own doc comment on this checklist.
+ */
+export class PerfectEntryCertificateDto {
+  @IsInt()
+  certificate_type_id: number;
+
+  @IsBoolean()
+  is_available: boolean;
+
+  @IsOptional() @IsString() @MaxLength(500) file_url?: string;
+}
+
+/**
  * Only the genuinely unconditional top-level fields are strictly required
  * here (email, course_id, quota_id, batch_id, student_id_no, student_type).
  * Every conditionally-required field (dayscholar_mode, vehicle_number,
@@ -134,6 +153,21 @@ export class PerfectEntryAddressDto {
 export class CreatePerfectEntryDto {
   @IsEmail({}, { message: 'email must be a valid email' })
   email: string;
+
+  // Optional: the "Auto-generate" toggle on the wizard's Identity step lets
+  // the admin skip typing one — omit this field entirely and the service
+  // generates a random 6-digit numeric code instead (see
+  // SoaApplicationsService.generateNumericPassword). Either way it's hashed
+  // with the same scheme AuthService checks at login (see hashPassword()),
+  // and the plaintext is returned once in this endpoint's response so the
+  // admin can see/copy it — the SMS to the student's phone (see
+  // SmsService) is best-effort, not guaranteed, since no provider is wired
+  // up yet.
+  @IsOptional()
+  @IsString()
+  @MinLength(6, { message: 'password must be at least 6 characters' })
+  @MaxLength(72)
+  password?: string;
 
   @IsInt()
   course_id: number;
@@ -220,4 +254,14 @@ export class CreatePerfectEntryDto {
   @ValidateNested({ each: true })
   @Type(() => PerfectEntryAddressDto)
   addresses?: PerfectEntryAddressDto[];
+
+  // Always a URL this same application already got back from
+  // POST :id/photo — see PerfectEntryCertificateDto's docblock for why.
+  @IsOptional() @IsString() @MaxLength(500) photo_url?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PerfectEntryCertificateDto)
+  certificates?: PerfectEntryCertificateDto[];
 }

@@ -5,13 +5,23 @@ import { ROLES_KEY } from 'src/auth/decorators/roles.decorator';
 import { MeController } from './me-profile.controller';
 import { MeProfileService } from './me-profile.service';
 import { MeAttendanceService } from './me-attendance.service';
+import { MeExamResultsService } from './me-exam-results.service';
 import { MeLeavesService } from './me-leaves.service';
 import { MeLeavesListService } from './me-leaves-list.service';
 import { MeOdTeamsService } from './me-od-teams.service';
+import { MeOdTeamsListService } from './me-od-teams-list.service';
 import { MeOdRequestsService } from './me-od-requests.service';
+import { MeOdRequestsListService } from './me-od-requests-list.service';
 import { MeHostelOutingsService } from './me-hostel-outings.service';
 import { MeBonafideRequestsService } from './me-bonafide-requests.service';
 import { MeProjectsService } from './me-projects.service';
+import { MeFacultyDirectoryService } from './me-faculty-directory.service';
+import { MeFeesService } from './me-fees.service';
+import { MeExamScheduleService } from './me-exam-schedule.service';
+import { MeHostelRoomService } from './me-hostel-room.service';
+import { MeHostelComplaintsService } from './me-hostel-complaints.service';
+import { MeMessFeedbackService } from './me-mess-feedback.service';
+import { MeAcademicCalendarService } from './me-academic-calendar.service';
 import { student_leave_status_enum } from 'generated/prisma/client';
 
 describe('MeController', () => {
@@ -50,6 +60,36 @@ describe('MeController', () => {
     createProject: jest.fn(),
     getMyProjects: jest.fn(),
   };
+  const meExamResultsService = {
+    getMyExamResults: jest.fn(),
+  };
+  const meOdTeamsListService = {
+    getMyOdTeams: jest.fn(),
+  };
+  const meOdRequestsListService = {
+    getMyOdRequests: jest.fn(),
+  };
+  const meFacultyDirectoryService = {
+    getFacultyDirectory: jest.fn(),
+  };
+  const meFeesService = {
+    getMyFees: jest.fn(),
+  };
+  const meExamScheduleService = {
+    getMyExamSchedule: jest.fn(),
+  };
+  const meHostelRoomService = {
+    getMyHostelRoom: jest.fn(),
+  };
+  const meHostelComplaintsService = {
+    createComplaint: jest.fn(),
+  };
+  const meMessFeedbackService = {
+    createFeedback: jest.fn(),
+  };
+  const meAcademicCalendarService = {
+    getMyAcademicCalendar: jest.fn(),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -57,16 +97,38 @@ describe('MeController', () => {
       providers: [
         { provide: MeProfileService, useValue: meProfileService },
         { provide: MeAttendanceService, useValue: meAttendanceService },
+        { provide: MeExamResultsService, useValue: meExamResultsService },
         { provide: MeLeavesService, useValue: meLeavesService },
         { provide: MeLeavesListService, useValue: meLeavesListService },
         { provide: MeOdTeamsService, useValue: meOdTeamsService },
+        { provide: MeOdTeamsListService, useValue: meOdTeamsListService },
         { provide: MeOdRequestsService, useValue: meOdRequestsService },
+        {
+          provide: MeOdRequestsListService,
+          useValue: meOdRequestsListService,
+        },
         { provide: MeHostelOutingsService, useValue: meHostelOutingsService },
         {
           provide: MeBonafideRequestsService,
           useValue: meBonafideRequestsService,
         },
         { provide: MeProjectsService, useValue: meProjectsService },
+        {
+          provide: MeFacultyDirectoryService,
+          useValue: meFacultyDirectoryService,
+        },
+        { provide: MeFeesService, useValue: meFeesService },
+        { provide: MeExamScheduleService, useValue: meExamScheduleService },
+        { provide: MeHostelRoomService, useValue: meHostelRoomService },
+        {
+          provide: MeHostelComplaintsService,
+          useValue: meHostelComplaintsService,
+        },
+        { provide: MeMessFeedbackService, useValue: meMessFeedbackService },
+        {
+          provide: MeAcademicCalendarService,
+          useValue: meAcademicCalendarService,
+        },
       ],
     }).compile();
 

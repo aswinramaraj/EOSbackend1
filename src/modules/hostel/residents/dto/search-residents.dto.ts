@@ -12,6 +12,12 @@ export class SearchResidentsDto {
   @Min(1)
   hostel_id?: number;
 
+  /**
+   * Was previously accepted by callers (e.g. the admin student-profile
+   * "Hostel" panel) but silently stripped by validation and ignored —
+   * `data[0]` of an unfiltered page ended up being shown as "the" resident
+   * for every hosteller, regardless of which student was actually asked for.
+   */
   @IsOptional()
   @Transform(({ value }) => Number(value))
   @IsInt()

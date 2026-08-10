@@ -55,7 +55,7 @@ interface AttendanceRow {
     departments: { id: number; name: string; code: string };
   };
   subjects: { id: number; name: string; subject_code: string } | null;
-  faculty: { id: number; first_name: string; last_name: string };
+  faculty: { id: number; first_name: string; last_name: string } | null;
   students: {
     id: number;
     student_id_no: string;
@@ -197,6 +197,7 @@ export class AttendanceService {
                 attendance_date: attendanceDate,
                 status: r.status,
                 marked_by_faculty_id: faculty.id,
+                marked_by_user_id: userId,
               },
               select: { id: true, student_id: true, status: true },
             }),
@@ -360,6 +361,7 @@ export class AttendanceService {
               attendance_date: attendanceDate,
               status: r.status,
               marked_by_faculty_id: faculty.id,
+              marked_by_user_id: userId,
             },
             select: { id: true },
           }),

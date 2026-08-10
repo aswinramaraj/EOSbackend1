@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
+  Put,
   Body,
   Patch,
   Param,
@@ -9,17 +11,24 @@ import {
   ParseIntPipe,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { SoaApplicationsService } from './soa-applications.service';
 import { CreateSoaApplicationDto } from './dto/create-soa-application.dto';
 import { UpdateSoaApplicationDto } from './dto/update-soa-application.dto';
 import { UpdateSoaStatusDto } from './dto/update-soa-status.dto';
 import { CreatePerfectEntryDto } from './dto/create-perfect-entry.dto';
 import { ListSoaApplicationsQueryDto } from './dto/list-soa-applications-query.dto';
+import { SaveProfileDraftDto } from './dto/save-profile-draft.dto';
+import { UploadDocumentDto } from './dto/upload-document.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
+
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 @Controller('soa-applications')
 export class SoaApplicationsController {
@@ -92,6 +101,93 @@ export class SoaApplicationsController {
     @Body() dto: CreatePerfectEntryDto,
   ) {
     return this.soaApplicationsService.perfectEntry(id, dto);
+  }
+
+  /**
+   * GET /api/v1/soa-applications/:id/draft
+   * The Complete Profile wizard's saved in-progress state, or null if
+   * nothing has been saved yet.
+   *
+   * Error responses:
+   *  404 SOA_APPLICATION_NOT_FOUND
+   */
+  @Get(':id/draft')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  getDraft(@Param('id', ParseIntPipe) id: number) {
+    return this.soaApplicationsService.getDraft(id);
+  }
+
+  /**
+   * PUT /api/v1/soa-applications/:id/draft
+   * Upserts the wizard's in-progress state — called after every category
+   * save so nobody loses progress by closing the tab.
+   *
+   * Error responses:
+   *  404 SOA_APPLICATION_NOT_FOUND
+   */
+  @Put(':id/draft')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  saveDraft(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SaveProfileDraftDto,
+  ) {
+    return this.soaApplicationsService.saveDraft(id, dto);
+  }
+
+  /**
+   * POST /api/v1/soa-applications/:id/photo (multipart, field "file")
+   * Uploads only — no students row exists yet to attach photo_url to at
+   * this point in the wizard. Returns {url}; the frontend folds it into the
+   * wizard's draft state and it rides along in the perfect-entry payload.
+   */
+  @Post(':id/photo')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }),
+  )
+  uploadPhoto(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.soaApplicationsService.uploadPhoto(id, file);
+  }
+
+  /**
+   * POST /api/v1/soa-applications/:id/documents (multipart, field "file",
+   * body field certificate_type_id)
+   * Same "upload now, attach at perfect-entry" pattern as :id/photo.
+   */
+  @Post(':id/documents')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }),
+  )
+  uploadDocument(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UploadDocumentDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.soaApplicationsService.uploadDocument(
+      id,
+      dto.certificate_type_id,
+      file,
+    );
   }
 
   /**
