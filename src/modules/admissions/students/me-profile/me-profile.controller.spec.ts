@@ -289,7 +289,11 @@ describe('MeController', () => {
   });
 
   it('resolves student_id from the JWT and delegates submitOdRequest() to MeOdTeamsService with the team id', () => {
-    const dto = { from_date: '2099-08-12', to_date: '2099-08-13' };
+    const dto = {
+      from_date: '2099-08-12',
+      to_date: '2099-08-13',
+      reason: 'Inter-college hackathon',
+    };
     void controller.submitOdRequest(
       { sub: 7, email: 'a@b.com', role: 'student', roleId: 4 },
       61,

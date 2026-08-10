@@ -1,4 +1,4 @@
-import { IsString, Matches } from 'class-validator';
+import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 /**
  * POST /payslip-requests (Faculty only).
@@ -9,6 +9,8 @@ import { IsString, Matches } from 'class-validator';
  * convention already used by HR Payroll, split server-side.
  * `faculty_id` is never client-supplied — derived from @CurrentUser().sub.
  * `status` always starts 'pending'; `file_url` is null until HR processes it.
+ * `purpose` is optional free text (e.g. "Home loan documentation") for HR's
+ * context when processing the request.
  */
 export class CreatePayslipRequestDto {
   @IsString()
@@ -16,4 +18,9 @@ export class CreatePayslipRequestDto {
     message: 'month must be in the format YYYY-MM',
   })
   month: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  purpose?: string;
 }

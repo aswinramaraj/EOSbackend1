@@ -124,12 +124,14 @@ export class FeePaymentController {
    *  401 UNAUTHORIZED                  – missing/invalid access token
    *  403 FORBIDDEN                     – authenticated user is not an admin
    *  404 STUDENT_FEE_DEMAND_NOT_FOUND  – no demand mapping with the given id
-   *  409 FEE_PAYMENT_RECEIPT_EXISTS    – receipt_no already used by another payment
-   *  422 PAYMENT_EXCEEDS_DUE_AMOUNT    – amount_paid would exceed the demand's total_amount
+   *  409 CONCURRENT_PAYMENT_CONFLICT   – concurrent request conflict; retried automatically, safe to resubmit
+   *  422 PAYMENT_EXCEEDS_DUE_AMOUNT    – amount_paid would exceed this category's outstanding
    *  500 INTERNAL_ERROR                – unexpected server failure
    *
    * collected_by_user_id is never accepted from the request body — the
    * authenticated caller (from the JWT) is always the collector of record.
+   * receipt_no is never accepted from the request body either — the backend
+   * generates it automatically (RCP001, RCP002, ...).
    */
   @Post('student-fee-demand-mappings/:id/payments')
   @HttpCode(HttpStatus.CREATED)

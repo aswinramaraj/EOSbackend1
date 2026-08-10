@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
-import type { ReportTable } from './report-export.util';
+import type { ReportTable } from 'src/common/utils/report-export.util';
 
 const BORROW_RECORD_REPORT_INCLUDE = {
   books: { select: { title: true, qr_code: true } },

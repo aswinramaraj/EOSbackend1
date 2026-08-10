@@ -22,7 +22,13 @@ const MAPPING_SELECT = {
   id: true,
   academic_year: true,
   faculty: {
-    select: { id: true, first_name: true, last_name: true, designation: true },
+    select: {
+      id: true,
+      first_name: true,
+      last_name: true,
+      designation: true,
+      profile_url: true,
+    },
   },
   classes: {
     select: {
@@ -42,6 +48,7 @@ interface MappingRow {
     first_name: string;
     last_name: string;
     designation: string;
+    profile_url: string | null;
   };
   classes: {
     id: number;

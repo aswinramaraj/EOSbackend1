@@ -46,6 +46,32 @@ export class AssignmentsController {
     return this.assignmentsService.findAll(query, user.sub);
   }
 
+  /**
+   * GET /api/v1/me/handled-classes — Faculty only. Every (class, subject)
+   * the caller is mapped to teach - the first step of the No-Due tile's
+   * "select the class you're handling" flow.
+   */
+  @Get('handled-classes')
+  @Roles(ROLES.FACULTY)
+  getHandledClasses(@CurrentUser() user: JwtPayload) {
+    return this.assignmentsService.getHandledClasses(user.sub);
+  }
+
+  /**
+   * GET /api/v1/assignments/:id/students — Faculty only (own record).
+   * Every student in the assignment's class, each with their current
+   * is_submitted state (false/null status_id if nobody has marked them
+   * yet, not omitted).
+   */
+  @Get('assignments/:id/students')
+  @Roles(ROLES.FACULTY)
+  getAssignmentStudents(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.assignmentsService.getAssignmentStudents(id, user.sub);
+  }
+
   /** GET /api/v1/assignments/:id — Faculty only (own record). */
   @Get('assignments/:id')
   @Roles(ROLES.FACULTY)

@@ -58,7 +58,11 @@ describe('MeFacultyDirectoryService', () => {
     const result = await service.getFacultyDirectory();
 
     expect(result).toEqual([
-      { id: 3, name: 'Kavitha R', department_name: 'Computer Science and Engineering' },
+      {
+        id: 3,
+        name: 'Kavitha R',
+        department_name: 'Computer Science and Engineering',
+      },
       { id: 5, name: 'Naveen', department_name: 'Mechanical Engineering' },
     ]);
   });

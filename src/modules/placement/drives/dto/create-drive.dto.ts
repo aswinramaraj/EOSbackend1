@@ -2,8 +2,13 @@ import {
   IsBoolean,
   IsDateString,
   IsInt,
+  IsNumber,
   IsOptional,
   IsPositive,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
 } from 'class-validator';
 
 export class CreateDriveDto {
@@ -23,4 +28,33 @@ export class CreateDriveDto {
   @IsOptional()
   @IsDateString()
   disclosed_reveal_date?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  job_role?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  package_lpa?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(10)
+  eligibility_cgpa?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  venue?: string;
+
+  @IsOptional()
+  @IsDateString()
+  registration_start?: string;
+
+  @IsOptional()
+  @IsDateString()
+  registration_end?: string;
 }

@@ -1,13 +1,9 @@
 import {
-  IsBoolean,
   IsEnum,
   IsInt,
-  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsPositive,
-  IsString,
-  MaxLength,
 } from 'class-validator';
 import { payment_mode_enum } from '../../../../../generated/prisma/client';
 
@@ -23,18 +19,21 @@ export class CreateFeePaymentDto {
   @IsPositive()
   amount_paid: number;
 
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(50)
-  receipt_no: string;
+  /**
+   * receipt_no is intentionally NOT a field here — the client must never
+   * send it. The backend generates it automatically (RCP001, RCP002, ...).
+   * See FeePaymentService.createWithinTransaction().
+   */
 
   @IsOptional()
   @IsEnum(payment_mode_enum)
   payment_mode?: payment_mode_enum;
 
-  @IsOptional()
-  @IsBoolean()
-  is_partial?: boolean;
+  /**
+   * is_partial is intentionally NOT a field here — the client must never
+   * send it. The backend derives it automatically from alreadyPaid vs. the
+   * category's original amount. See FeePaymentService.createWithinTransaction().
+   */
 
   /**
    * Accepted for backward compatibility with the existing frontend payload,

@@ -110,6 +110,10 @@ export class ExamTimetableService {
     this.assertValidTimeRange(startTime, endTime);
 
     try {
+      // Transactional so the timetable row and its mapping's publish flag
+      // either both land or neither does — see the compound-unique catch
+      // below for why this needs the errors from both statements handled
+      // the same way.
       return await this.prisma.$transaction(async (tx) => {
         const timetable = await tx.exam_timetable.create({
           data: {
@@ -122,10 +126,16 @@ export class ExamTimetableService {
           },
         });
 
-        if (is_published) {
+        // Explicit undefined check (not just truthy is_published) so an
+        // explicit `is_published: false` at creation still clears
+        // published_at back to null, instead of silently doing nothing.
+        if (is_published !== undefined) {
           await tx.exam_subject_mapping.update({
             where: { id: exam_subject_mapping_id },
-            data: { is_published: true, published_at: new Date() },
+            data: {
+              is_published,
+              published_at: is_published ? new Date() : null,
+            },
           });
         }
 
