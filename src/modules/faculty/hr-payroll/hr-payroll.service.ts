@@ -22,7 +22,13 @@ const HR_PAYROLL_SELECT = {
   net_amount: true,
   paid_at: true,
   faculty: {
-    select: { id: true, first_name: true, last_name: true, designation: true },
+    select: {
+      id: true,
+      prefix: true,
+      first_name: true,
+      last_name: true,
+      designation: true,
+    },
   },
   users: { select: { id: true, email: true } },
 } as const;
@@ -36,6 +42,7 @@ interface HrPayrollRow {
   paid_at: Date | null;
   faculty: {
     id: number;
+    prefix: string | null;
     first_name: string;
     last_name: string;
     designation: string;
@@ -58,8 +65,11 @@ function toResponse(row: HrPayrollRow) {
     month: formatMonthString(row.year, row.month),
     year: row.year,
     month_number: row.month,
-    gross_amount: row.gross_amount,
-    net_amount: row.net_amount,
+    // Prisma's Decimal serializes to a string in JSON — convert to a number
+    // here so API consumers (the frontend types this as `number`) get a
+    // real number.
+    gross_amount: Number(row.gross_amount),
+    net_amount: Number(row.net_amount),
     paid_at: row.paid_at,
     faculty: row.faculty,
     processed_by: row.users,

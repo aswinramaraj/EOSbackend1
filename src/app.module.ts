@@ -38,6 +38,7 @@ import { RevaluationModule } from './modules/exams/revaluation/revaluation.modul
 import { SeatingArrangementsModule } from './modules/exams/seating-arrangements/seating-arrangements.module';
 
 import { AppraisalModule } from './modules/faculty/appraisal/appraisal.module';
+import { AppraisalCriteriaModule } from './modules/faculty/appraisal-criteria/appraisal-criteria.module';
 import { AssignmentsModule } from './modules/faculty/assignments/assignments.module';
 import { AttendanceModule } from './modules/faculty/attendance/attendance.module';
 import { ClassMentorsModule } from './modules/faculty/class-mentors/class-mentors.module';
@@ -46,10 +47,12 @@ import { FacultyAttendanceModule } from './modules/faculty/faculty-attendance/fa
 import { FacultyFilesModule } from './modules/faculty/faculty-files/faculty-files.module';
 import { FacultyIdCardModule } from './modules/faculty/faculty-id-card/faculty-id-card.module';
 import { FacultyLeavesModule } from './modules/faculty/faculty-leaves/faculty-leaves.module';
+import { FacultyOdRequestsModule } from './modules/faculty/faculty-od-requests/faculty-od-requests.module';
 import { FacultyMappingModule } from './modules/faculty/faculty-mapping/faculty-mapping.module';
 import { FacultyVerificationModule } from './modules/faculty/faculty-verification/faculty-verification.module';
 import { FacultyModule } from './modules/faculty/faculty/faculty.module';
 import { HolidaySlotsModule } from './modules/faculty/holiday-slots/holiday-slots.module';
+import { LeaveTypesModule } from './modules/faculty/leave-types/leave-types.module';
 import { HrPayrollModule } from './modules/faculty/hr-payroll/hr-payroll.module';
 import { LessonPlansModule } from './modules/faculty/lesson-plans/lesson-plans.module';
 import { LmsNotesModule } from './modules/faculty/lms-notes/lms-notes.module';
@@ -117,6 +120,10 @@ import { HostelFeesModule } from './modules/hostel/fees/fees.module';
 import { HostelSettingsModule } from './modules/hostel/settings/settings.module';
 import { HostelReportsModule } from './modules/hostel/reports/reports.module';
 
+import { HrDepartmentsModule } from './modules/hr/hr-departments/hr-departments.module';
+import { HrRequestsModule } from './modules/hr/hr-requests/hr-requests.module';
+import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module';
+
 @Module({
   imports: [
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
@@ -158,6 +165,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     SeatingArrangementsModule,
 
     AppraisalModule,
+    AppraisalCriteriaModule,
     AssignmentsModule,
     AttendanceModule,
     ClassMentorsModule,
@@ -166,6 +174,8 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     FacultyFilesModule,
     FacultyIdCardModule,
     FacultyLeavesModule,
+    LeaveTypesModule,
+    FacultyOdRequestsModule,
     FacultyMappingModule,
     FacultyVerificationModule,
     FacultyModule,
@@ -236,6 +246,10 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     HostelFeesModule,
     HostelSettingsModule,
     HostelReportsModule,
+
+    HrDepartmentsModule,
+    HrRequestsModule,
+    HrDashboardModule,
   ],
 
   controllers: [AppController],

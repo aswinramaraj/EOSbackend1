@@ -243,6 +243,7 @@ export class FacultyService {
         orderBy: { id: 'asc' },
         select: {
           id: true,
+          prefix: true,
           first_name: true,
           last_name: true,
           designation: true,
@@ -258,6 +259,7 @@ export class FacultyService {
 
     const data = rows.map((faculty) => ({
       id: faculty.id,
+      prefix: faculty.prefix,
       first_name: faculty.first_name,
       last_name: faculty.last_name,
       designation: faculty.designation,

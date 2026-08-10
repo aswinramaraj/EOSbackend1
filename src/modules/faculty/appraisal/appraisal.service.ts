@@ -25,7 +25,13 @@ const APPRAISAL_SELECT = {
   management_approved_at: true,
   created_at: true,
   faculty: {
-    select: { id: true, first_name: true, last_name: true, designation: true },
+    select: {
+      id: true,
+      prefix: true,
+      first_name: true,
+      last_name: true,
+      designation: true,
+    },
   },
   users_appraisal_requests_hod_reviewed_byTousers: {
     select: { id: true, email: true },
@@ -59,6 +65,7 @@ interface AppraisalRequestRow {
   created_at: Date;
   faculty: {
     id: number;
+    prefix: string | null;
     first_name: string;
     last_name: string;
     designation: string;
@@ -99,11 +106,14 @@ function toResponse(row: AppraisalRequestRow) {
     entries: row.appraisal_entries.map((entry) => ({
       id: entry.id,
       description: entry.description,
-      score: entry.score,
+      // Prisma's Decimal serializes to a string in JSON — convert to a
+      // number here so API consumers (the frontend types this as `number`)
+      // get a real number.
+      score: entry.score === null ? null : Number(entry.score),
       criteria: {
         id: entry.appraisal_criteria.id,
         name: entry.appraisal_criteria.criteria_name,
-        max_score: entry.appraisal_criteria.max_score,
+        max_score: Number(entry.appraisal_criteria.max_score),
         division: entry.appraisal_criteria.appraisal_divisions,
       },
     })),
