@@ -1,4 +1,4 @@
-import { Controller, Get, Param, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -8,6 +8,8 @@ import { ROLES } from 'src/common/constants/roles.constant';
 import { GetAttendanceDto } from 'src/modules/admissions/students/me-profile/dto/get-attendance.dto';
 import { GetExamResultsDto } from 'src/modules/admissions/students/me-profile/dto/get-exam-results.dto';
 import { GetMyTimetableQueryDto } from 'src/modules/faculty/timetable/dto/get-my-timetable-query.dto';
+import { CreateFeePaymentOrderDto } from 'src/modules/fees-billing/fee-payments/dto/create-fee-payment-order.dto';
+import { VerifyFeePaymentDto } from 'src/modules/fees-billing/fee-payments/dto/verify-fee-payment.dto';
 import { ParentsService } from './parents.service';
 
 @Controller('me')
@@ -49,6 +51,27 @@ export class ParentsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.parentsService.getChildFees(user.sub, studentId);
+  }
+
+  /** POST /api/v1/me/children/:studentId/fees/demands/:id/payment-order — Parent only, own child. */
+  @Post('children/:studentId/fees/demands/:id/payment-order')
+  createChildFeePaymentOrder(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Param('id', ParseIntPipe) demandMappingId: number,
+    @Body() dto: CreateFeePaymentOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.payChildFeeDemand(user.sub, studentId, demandMappingId, dto);
+  }
+
+  /** POST /api/v1/me/children/:studentId/fees/payment-order/verify — Parent only, own child. */
+  @Post('children/:studentId/fees/payment-order/verify')
+  verifyChildFeePayment(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Body() dto: VerifyFeePaymentDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.verifyChildFeePayment(user.sub, studentId, dto);
   }
 
   /** GET /api/v1/me/children/:studentId/timetable?day= — Parent only, own child. */

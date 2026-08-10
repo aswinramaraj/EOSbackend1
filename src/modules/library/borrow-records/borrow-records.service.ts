@@ -836,11 +836,8 @@ export class BorrowRecordsService {
 
   /**
    * POST /library/borrow-records/send-overdue-reminders — creates an
-   * in-app notification (via the notifications table) for every borrower
-   * currently overdue. This only persists a row for a future
-   * `GET /notifications` inbox to read — there's no real-time/email/SMS
-   * delivery yet, since none of that infrastructure exists in this
-   * codebase (see NotificationsService's own doc comment).
+   * in-app notification (bell icon inbox) plus a best-effort push
+   * (NotificationsService.notify) for every borrower currently overdue.
    */
   async sendOverdueReminders() {
     const overdueRecords = await this.prisma.book_borrow_records.findMany({
@@ -857,10 +854,13 @@ export class BorrowRecordsService {
       const userId = record.students?.user_id ?? record.faculty?.user_id;
       if (!userId) continue;
 
-      await this.notifications.create({
+      await this.notifications.notify({
         user_id: userId,
         title: 'Overdue library book',
         message: `"${record.books.title}" was due on ${record.due_date.toISOString().slice(0, 10)}. Please return it to avoid further fines.`,
+        type: 'library_overdue_reminder',
+        related_entity_type: 'book_borrow_record',
+        related_entity_id: record.id,
       });
       sent++;
     }
@@ -869,6 +869,50 @@ export class BorrowRecordsService {
       message: `Sent ${sent} overdue reminder(s).`,
       sent,
       checked: overdueRecords.length,
+    };
+  }
+
+  /**
+   * POST /library/borrow-records/send-due-soon-reminders — the not-yet-
+   * overdue sibling of sendOverdueReminders() above: still-borrowed books
+   * due within the next DUE_SOON_WINDOW_DAYS days. Same
+   * record/notify/resolve pattern, just a different due_date window and
+   * notification type.
+   */
+  async sendDueSoonReminders() {
+    const DUE_SOON_WINDOW_DAYS = 3;
+    const now = new Date();
+    const windowEnd = new Date(now.getTime() + DUE_SOON_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+    const dueSoonRecords = await this.prisma.book_borrow_records.findMany({
+      where: { status: 'borrowed', due_date: { gte: now, lte: windowEnd } },
+      include: {
+        books: { select: { title: true } },
+        students: { select: { user_id: true } },
+        faculty: { select: { user_id: true } },
+      },
+    });
+
+    let sent = 0;
+    for (const record of dueSoonRecords) {
+      const userId = record.students?.user_id ?? record.faculty?.user_id;
+      if (!userId) continue;
+
+      await this.notifications.notify({
+        user_id: userId,
+        title: 'Library book due soon',
+        message: `"${record.books.title}" is due on ${record.due_date.toISOString().slice(0, 10)}.`,
+        type: 'library_due_reminder',
+        related_entity_type: 'book_borrow_record',
+        related_entity_id: record.id,
+      });
+      sent++;
+    }
+
+    return {
+      message: `Sent ${sent} due-soon reminder(s).`,
+      sent,
+      checked: dueSoonRecords.length,
     };
   }
 

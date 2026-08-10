@@ -12,6 +12,7 @@ import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { SetPinDto } from './dto/set-pin.dto';
@@ -59,7 +60,10 @@ export class WalletService {
   private readonly logger = new Logger(WalletService.name);
   private razorpay: Razorpay | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   private getRazorpay(): Razorpay {
     if (!this.razorpay) {
@@ -257,7 +261,7 @@ export class WalletService {
       });
     }
 
-    const debitTxnId = await this.prisma.$transaction(async (tx) => {
+    const { debitTxnId, creditTxnId } = await this.prisma.$transaction(async (tx) => {
       const [firstId, secondId] = [sender.id, receiver.id].sort((a, b) => a - b);
       const locked = await tx.$queryRaw<Array<{ id: number; balance: Prisma.Decimal }>>(
         Prisma.sql`SELECT id, balance FROM wallets WHERE id IN (${firstId}, ${secondId}) ORDER BY id FOR UPDATE`,
@@ -296,7 +300,7 @@ export class WalletService {
         data: { related_transaction_id: creditTxn.id },
       });
 
-      return debitTxn.id;
+      return { debitTxnId: debitTxn.id, creditTxnId: creditTxn.id };
     });
 
     const updatedSender = await this.prisma.wallets.findUniqueOrThrow({
@@ -306,6 +310,20 @@ export class WalletService {
     this.logger.log(
       `Wallet transfer: ${dto.amount} from wallet=${sender.id} to wallet=${receiver.id} (txn=${debitTxnId})`,
     );
+
+    try {
+      await this.notifications.notify({
+        user_id: receiver.user_id,
+        title: 'Money received',
+        message: `You received ₹${dto.amount} in your wallet.`,
+        type: 'wallet_money_received',
+        related_entity_type: 'wallet_transaction',
+        related_entity_id: creditTxnId,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to notify wallet=${receiver.id} of received transfer`, err);
+    }
+
     return { balance: Number(updatedSender.balance), transaction_id: debitTxnId };
   }
 
@@ -415,6 +433,20 @@ export class WalletService {
     });
 
     this.logger.log(`Wallet top-up verified: wallet=${wallet.id} amount=${txn.amount}`);
+
+    try {
+      await this.notifications.notify({
+        user_id: userId,
+        title: 'Wallet top-up successful',
+        message: `Your top-up of ₹${txn.amount.toString()} was successful.`,
+        type: 'wallet_topup_success',
+        related_entity_type: 'wallet_transaction',
+        related_entity_id: txn.id,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to notify user ${userId} of wallet top-up`, err);
+    }
+
     return { balance: Number(updatedWallet.balance) };
   }
 

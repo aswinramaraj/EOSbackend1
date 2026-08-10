@@ -25,7 +25,10 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
 /**
  * Department achievement posts. Posting/editing/deleting an achievement or
- * its media is restricted to Secretary, Media Room, and Admin (oversight).
+ * its media is Media Room only - no exceptions, not even Admin (this used
+ * to also allow Secretary and Admin; narrowed to a single team on purpose).
+ * A Media Room account can still only edit/delete its OWN posts, never a
+ * teammate's - see AchievementsService.assertOwner.
  * Reading and commenting has no @Roles() — any authenticated user may.
  */
 @Controller('department-achievements')
@@ -34,7 +37,7 @@ export class AchievementsController {
   constructor(private readonly achievementsService: AchievementsService) {}
 
   @Post()
-  @Roles(ROLES.SECRETARY, ROLES.MEDIA_ROOM, ROLES.ADMIN)
+  @Roles(ROLES.MEDIA_ROOM)
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateAchievementDto) {
     return this.achievementsService.create(user, dto);
   }
@@ -50,7 +53,7 @@ export class AchievementsController {
   }
 
   @Patch(':id')
-  @Roles(ROLES.SECRETARY, ROLES.MEDIA_ROOM, ROLES.ADMIN)
+  @Roles(ROLES.MEDIA_ROOM)
   update(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -60,7 +63,7 @@ export class AchievementsController {
   }
 
   @Delete(':id')
-  @Roles(ROLES.SECRETARY, ROLES.MEDIA_ROOM, ROLES.ADMIN)
+  @Roles(ROLES.MEDIA_ROOM)
   remove(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -69,7 +72,7 @@ export class AchievementsController {
   }
 
   @Post(':id/media')
-  @Roles(ROLES.SECRETARY, ROLES.MEDIA_ROOM, ROLES.ADMIN)
+  @Roles(ROLES.MEDIA_ROOM)
   addMedia(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
@@ -79,7 +82,7 @@ export class AchievementsController {
   }
 
   @Delete(':id/media/:mediaId')
-  @Roles(ROLES.SECRETARY, ROLES.MEDIA_ROOM, ROLES.ADMIN)
+  @Roles(ROLES.MEDIA_ROOM)
   removeMedia(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,

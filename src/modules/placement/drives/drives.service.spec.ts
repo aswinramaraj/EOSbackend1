@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { DrivesService } from './drives.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CompaniesService } from '../companies/companies.service';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 
 // The real PrismaService pulls in the generated Prisma client, which uses
 // `import.meta.url` and cannot be parsed by ts-jest's CommonJS transform.
@@ -12,6 +13,7 @@ jest.mock('../../../prisma/prisma.service', () => ({
 
 describe('DrivesService', () => {
   let service: DrivesService;
+  let notifications: { notify: jest.Mock };
   let prisma: {
     students: { findUnique: jest.Mock; findMany: jest.Mock };
     student_drive_applications: {
@@ -22,7 +24,7 @@ describe('DrivesService', () => {
     faculty: { findUnique: jest.Mock };
     class_mentors: { findMany: jest.Mock; findFirst: jest.Mock };
     classes: { findMany: jest.Mock; findUnique: jest.Mock };
-    placement_drives: { findMany: jest.Mock };
+    placement_drives: { findMany: jest.Mock; findUnique: jest.Mock };
   };
 
   beforeEach(async () => {
@@ -36,14 +38,16 @@ describe('DrivesService', () => {
       faculty: { findUnique: jest.fn() },
       class_mentors: { findMany: jest.fn(), findFirst: jest.fn() },
       classes: { findMany: jest.fn(), findUnique: jest.fn() },
-      placement_drives: { findMany: jest.fn() },
+      placement_drives: { findMany: jest.fn(), findUnique: jest.fn() },
     };
+    notifications = { notify: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DrivesService,
         { provide: PrismaService, useValue: prisma },
         { provide: CompaniesService, useValue: {} },
+        { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
 
@@ -292,6 +296,38 @@ describe('DrivesService', () => {
       const [args] = prisma.student_drive_applications.update.mock
         .calls[0] as [{ data: Record<string, unknown> }];
       expect(args.data).not.toHaveProperty('last_cleared_round');
+    });
+
+    it('notifies the student of the new status', async () => {
+      mockExistingApplication();
+      prisma.student_drive_applications.update.mockResolvedValue({});
+      prisma.students.findUnique.mockResolvedValue({ user_id: 501 });
+      prisma.placement_drives.findUnique.mockResolvedValue({ companies: { name: 'TCS' } });
+
+      await service.updateApplicationStatus(jwtActor, 1, 42, { status: 'r1_cleared' });
+
+      expect(prisma.students.findUnique).toHaveBeenCalledWith({
+        where: { id: 42 },
+        select: { user_id: true },
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 501,
+          type: 'placement_status_updated',
+          related_entity_type: 'drive_application',
+          related_entity_id: 1,
+        }),
+      );
+    });
+
+    it('does not fail the status update if notifying the student throws', async () => {
+      mockExistingApplication();
+      prisma.student_drive_applications.update.mockResolvedValue({ id: 99, status: 'r1_cleared' });
+      prisma.students.findUnique.mockRejectedValue(new Error('connection lost'));
+
+      const result = await service.updateApplicationStatus(jwtActor, 1, 42, { status: 'r1_cleared' });
+
+      expect(result).toMatchObject({ id: 99 });
     });
   });
 

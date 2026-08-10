@@ -56,6 +56,7 @@ describe('BorrowRecordsService', () => {
 
   const mockNotificationsService = {
     create: jest.fn(),
+    notify: jest.fn(),
   };
 
   // Runs both the callback form (used inside create/return) and the
@@ -1272,6 +1273,70 @@ describe('BorrowRecordsService', () => {
         mockPrismaService.book_borrow_records.delete,
       ).not.toHaveBeenCalled();
       expect(mockPrismaService.books.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('sendDueSoonReminders', () => {
+    it('notifies a student borrower, resolved via students.user_id', async () => {
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
+        makeRecord({
+          id: 10,
+          due_date: daysFromNow(2),
+          students: { ...includedStudent, user_id: 501 },
+          faculty: null,
+        }),
+      ]);
+
+      const result = await service.sendDueSoonReminders();
+
+      expect(mockNotificationsService.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 501,
+          type: 'library_due_reminder',
+          related_entity_type: 'book_borrow_record',
+          related_entity_id: 10,
+        }),
+      );
+      expect(result).toMatchObject({ sent: 1, checked: 1 });
+    });
+
+    it('falls back to faculty.user_id when the borrower is faculty, not a student', async () => {
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
+        makeRecord({
+          id: 11,
+          due_date: daysFromNow(1),
+          students: null,
+          faculty: { user_id: 801 },
+        }),
+      ]);
+
+      await service.sendDueSoonReminders();
+
+      expect(mockNotificationsService.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: 801, related_entity_id: 11 }),
+      );
+    });
+
+    it('sends nothing when nothing is due soon', async () => {
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
+
+      const result = await service.sendDueSoonReminders();
+
+      expect(mockNotificationsService.notify).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ sent: 0, checked: 0 });
+    });
+
+    it('queries only still-borrowed records due within the next few days', async () => {
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
+
+      await service.sendDueSoonReminders();
+
+      const [args] = mockPrismaService.book_borrow_records.findMany.mock
+        .calls[0] as [{ where: Record<string, unknown> }];
+      expect(args.where).toMatchObject({
+        status: 'borrowed',
+        due_date: { gte: expect.any(Date), lte: expect.any(Date) },
+      });
     });
   });
 });

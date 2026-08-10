@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { paginate } from '../../../common/dto/pagination.dto';
 import { CompaniesService } from '../companies/companies.service';
 import type { JwtPayload } from '../../../auth/interfaces/jwt-payload.interface';
@@ -34,6 +35,7 @@ export class DrivesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly companiesService: CompaniesService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(user: JwtPayload, dto: CreateDriveDto) {
@@ -205,7 +207,7 @@ export class DrivesService {
     const application = await this.findApplicationOrThrow(driveId, studentId);
     const roundReached = DrivesService.ROUND_REACHED_BY_STATUS[dto.status];
 
-    return this.prisma.student_drive_applications.update({
+    const updated = await this.prisma.student_drive_applications.update({
       where: { id: application.id },
       data: {
         status: dto.status,
@@ -214,6 +216,44 @@ export class DrivesService {
         updated_at: new Date(),
       },
     });
+
+    await this.notifyApplicationStatusUpdated(studentId, driveId, dto.status);
+
+    return updated;
+  }
+
+  /** Never throws - the application update above has already committed by this point. */
+  private async notifyApplicationStatusUpdated(
+    studentId: number,
+    driveId: number,
+    status: string,
+  ): Promise<void> {
+    try {
+      const student = await this.prisma.students.findUnique({
+        where: { id: studentId },
+        select: { user_id: true },
+      });
+      if (!student) return;
+
+      const drive = await this.prisma.placement_drives.findUnique({
+        where: { id: driveId },
+        select: { companies: { select: { name: true } } },
+      });
+
+      await this.notifications.notify({
+        user_id: student.user_id,
+        title: 'Placement application status updated',
+        message: `Your application${drive ? ` for ${drive.companies.name}` : ''} is now: ${status}.`,
+        type: 'placement_status_updated',
+        related_entity_type: 'drive_application',
+        related_entity_id: driveId,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to notify student ${studentId} of drive ${driveId} status update`,
+        err,
+      );
+    }
   }
 
   async removeApplication(driveId: number, studentId: number) {

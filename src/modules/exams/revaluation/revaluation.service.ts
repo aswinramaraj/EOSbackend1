@@ -9,6 +9,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { CreateRevaluationDto } from './dto/create-revaluation.dto';
 import { UpdateRevaluationDto } from './dto/update-revaluation.dto';
 
@@ -18,7 +20,10 @@ const VALID_STATUSES = ['requested', 'under_review', 'revised', 'no_change'];
 export class RevaluationService {
   private readonly logger = new Logger(RevaluationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async create(createRevaluationDto: CreateRevaluationDto) {
     const { exam_marks_id, student_id } = createRevaluationDto;
@@ -56,8 +61,9 @@ export class RevaluationService {
       });
     }
 
+    let request;
     try {
-      return await this.prisma.revaluation_requests.create({
+      request = await this.prisma.revaluation_requests.create({
         data: { exam_marks_id, student_id },
       });
     } catch (err: any) {
@@ -66,6 +72,34 @@ export class RevaluationService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
+    }
+
+    // COE is a single global role with no per-request assignee (unlike an
+    // HoD, there's no one department to route this to) - broadcast to
+    // every COE-role account rather than picking just one.
+    await this.notifyRoleOfNewRequest(request.id, student.student_id_no);
+
+    return request;
+  }
+
+  private async notifyRoleOfNewRequest(requestId: number, studentIdNo: string): Promise<void> {
+    try {
+      const coeUsers = await this.prisma.users.findMany({
+        where: { roles: { name: ROLES.COE } },
+        select: { id: true },
+      });
+      for (const u of coeUsers) {
+        await this.notifications.notify({
+          user_id: u.id,
+          title: 'New revaluation request',
+          message: `Student ${studentIdNo} has requested a revaluation.`,
+          type: 'approval_request_pending',
+          related_entity_type: 'revaluation_request',
+          related_entity_id: requestId,
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Failed to notify COE of revaluation request ${requestId}`, err);
     }
   }
 
@@ -179,8 +213,9 @@ export class RevaluationService {
       }
     }
 
+    let updated;
     try {
-      return await this.prisma.revaluation_requests.update({
+      updated = await this.prisma.revaluation_requests.update({
         where: { id },
         data: {
           status,
@@ -201,6 +236,48 @@ export class RevaluationService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
+    }
+
+    if (status !== undefined) {
+      await this.notifyStudentOfDecision(existing.student_id, id, status, revised_marks);
+    }
+
+    return updated;
+  }
+
+  private async notifyStudentOfDecision(
+    studentId: number,
+    requestId: number,
+    status: string,
+    revisedMarks: number | undefined,
+  ): Promise<void> {
+    try {
+      const student = await this.prisma.students.findUnique({
+        where: { id: studentId },
+        select: { user_id: true },
+      });
+      if (!student) return;
+
+      const message =
+        status === 'revised'
+          ? `Your revaluation request has been resolved - revised marks: ${revisedMarks}.`
+          : status === 'no_change'
+            ? 'Your revaluation request has been resolved - no change to your marks.'
+            : `Your revaluation request status is now ${status}.`;
+
+      await this.notifications.notify({
+        user_id: student.user_id,
+        title: 'Revaluation request updated',
+        message,
+        type:
+          status === 'revised' || status === 'no_change'
+            ? 'approval_request_approved'
+            : 'approval_request_pending',
+        related_entity_type: 'revaluation_request',
+        related_entity_id: requestId,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to notify student of revaluation decision ${requestId}`, err);
     }
   }
 

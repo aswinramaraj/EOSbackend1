@@ -10,6 +10,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { CreateFacultyLeafDto } from './dto/create-faculty-leaf.dto';
 import { UpdateFacultyLeafDto } from './dto/update-faculty-leaf.dto';
 import { ListFacultyLeafQueryDto } from './dto/list-faculty-leaf-query.dto';
@@ -84,7 +85,10 @@ function toResponse(leave: FacultyLeaveRow) {
 export class FacultyLeavesService {
   private readonly logger = new Logger(FacultyLeavesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * POST /faculty-leaves (Faculty or HoD — always for the caller's own
@@ -127,6 +131,27 @@ export class FacultyLeavesService {
     });
 
     this.logger.log(`Faculty leave request created: id=${leave.id}`);
+
+    // An HoD's own leave skips the HoD stage entirely (see this method's
+    // own doc comment) and has no single HoD to notify about it - HR
+    // Payroll picking up newly-HoD-approved-or-auto-approved requests from
+    // their own list is left as a future improvement (notifying an entire
+    // role, not one specific person, is a different shape of problem than
+    // every other notification here).
+    if (currentUser.role !== ROLES.HOD) {
+      const hodUserId = await this.resolveDepartmentHodUserId(faculty.department_id);
+      if (hodUserId) {
+        await this.notifications.notify({
+          user_id: hodUserId,
+          title: 'New leave request to review',
+          message: `${faculty.first_name} ${faculty.last_name} requested leave from ${dto.from_date} to ${dto.to_date}.`,
+          type: 'approval_request_pending',
+          related_entity_type: 'faculty_leave',
+          related_entity_id: leave.id,
+        });
+      }
+    }
+
     return toResponse(leave);
   }
 
@@ -274,6 +299,28 @@ export class FacultyLeavesService {
       select: FACULTY_LEAVE_SELECT,
     });
 
+    // Whichever of the two stages was just decided, tell the original
+    // requester - never the other stage's approver, since data only ever
+    // carries the one field the caller was permitted to set above.
+    const decidedStatus = data.hod_approval_status ?? data.hr_approval_status;
+    if (decidedStatus !== undefined) {
+      const requester = await this.prisma.faculty.findUnique({
+        where: { id: existing.faculty_id },
+        select: { user_id: true },
+      });
+      if (requester) {
+        const stage = data.hod_approval_status !== undefined ? 'HoD' : 'HR Payroll';
+        await this.notifications.notify({
+          user_id: requester.user_id,
+          title: decidedStatus === 'approved' ? 'Leave request approved' : 'Leave request rejected',
+          message: `Your leave request (${existing.from_date.toISOString().slice(0, 10)} to ${existing.to_date.toISOString().slice(0, 10)}) was ${decidedStatus} by ${stage}.`,
+          type: decidedStatus === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+          related_entity_type: 'faculty_leave',
+          related_entity_id: id,
+        });
+      }
+    }
+
     return toResponse(leave);
   }
 
@@ -319,5 +366,28 @@ export class FacultyLeavesService {
       );
     }
     return faculty;
+  }
+
+  /**
+   * Two plain sequential queries rather than one nested relation select -
+   * Prisma's auto-generated relation field names on `departments` (e.g.
+   * `faculty_departments_head_of_department_faculty_idTofaculty`) are not
+   * stable across `db pull` runs, so this avoids depending on that name.
+   */
+  private async resolveDepartmentHodUserId(
+    departmentId: number,
+  ): Promise<number | null> {
+    const department = await this.prisma.departments.findUnique({
+      where: { id: departmentId },
+      select: { head_of_department_faculty_id: true },
+    });
+    if (!department?.head_of_department_faculty_id) {
+      return null;
+    }
+    const hod = await this.prisma.faculty.findUnique({
+      where: { id: department.head_of_department_faculty_id },
+      select: { user_id: true },
+    });
+    return hod?.user_id ?? null;
   }
 }
