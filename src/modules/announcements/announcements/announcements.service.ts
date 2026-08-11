@@ -29,6 +29,21 @@ interface UserContext {
   linkedStudentClassIds?: number[];
 }
 
+/** Shape of the `users` relation once findAll/findOne include it for the poster name/role lookup. */
+interface PosterRelation {
+  email: string;
+  roles: { name: string };
+  faculty: { first_name: string; last_name: string; designation: string } | null;
+}
+
+const POSTED_BY_INCLUDE = {
+  select: {
+    email: true,
+    roles: { select: { name: true } },
+    faculty: { select: { first_name: true, last_name: true, designation: true } },
+  },
+} as const;
+
 @Injectable()
 export class AnnouncementsService {
   private readonly logger = new Logger(AnnouncementsService.name);
@@ -322,6 +337,7 @@ export class AnnouncementsService {
         include: {
           announcement_class_mapping: { select: { class_id: true } },
           announcement_role_mapping: { select: { role_id: true } },
+          users: POSTED_BY_INCLUDE,
         },
         orderBy: { created_at: 'desc' },
       });
@@ -359,6 +375,7 @@ export class AnnouncementsService {
         include: {
           announcement_class_mapping: { select: { class_id: true } },
           announcement_role_mapping: { select: { role_id: true } },
+          users: POSTED_BY_INCLUDE,
         },
       });
     } catch (err) {
@@ -1244,13 +1261,43 @@ export class AnnouncementsService {
     const roleMappings = (announcement.announcement_role_mapping ?? []) as {
       role_id: number;
     }[];
-    const { announcement_class_mapping, announcement_role_mapping, ...rest } = announcement;
+    const { announcement_class_mapping, announcement_role_mapping, users, ...rest } =
+      announcement;
     const fileKey = announcement.file_key as string | null | undefined;
     return {
       ...rest,
       file_url: fileKey ? this.storage.getPublicUrl(fileKey) : null,
       class_ids: classMappings.map((m) => m.class_id),
       role_ids: roleMappings.map((m) => m.role_id),
+      // Only present when the caller's query included the `users` relation
+      // (findAll/findOne, for the student-facing read views) — every other
+      // call site (create/update/approve/...) doesn't fetch it, so this is
+      // undefined there and JSON.stringify drops it, same as today.
+      posted_by: this.resolvePostedBy(
+        users as PosterRelation | null | undefined,
+      ),
+    };
+  }
+
+  /**
+   * first_name/last_name (via faculty) is the real display name for any
+   * staff poster (Principal/HoD/Faculty are all faculty rows — see
+   * MeLeavesListService.approved_by_hod for the identical email-fallback
+   * pattern used everywhere else in this codebase for a user with no
+   * better name source). role comes from roles.name, the same functional
+   * role string the JWT itself carries (admin/principal/hod/faculty/...).
+   */
+  private resolvePostedBy(
+    poster: PosterRelation | null | undefined,
+  ): { name: string; role: string; designation: string | null } | undefined {
+    if (!poster) return undefined;
+    const name = poster.faculty
+      ? `${poster.faculty.first_name} ${poster.faculty.last_name}`
+      : poster.email;
+    return {
+      name,
+      role: poster.roles.name,
+      designation: poster.faculty?.designation ?? null,
     };
   }
 }

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
 import { paginate } from '../../../common/dto/pagination.dto';
 import { CompaniesService } from '../companies/companies.service';
 import type { JwtPayload } from '../../../auth/interfaces/jwt-payload.interface';
@@ -291,6 +292,8 @@ export class DrivesService {
         company_name: this.resolveCompanyName(drive),
         scheduled_date: drive.scheduled_date,
         drive_status: drive.status,
+        job_role: drive.job_role,
+        package_lpa: drive.package_lpa === null ? null : Number(drive.package_lpa),
         application_status: app.status,
         last_cleared_round: app.last_cleared_round,
       };
@@ -672,11 +675,14 @@ export class DrivesService {
 
   private toUpcomingDrive(app: {
     status: string;
+    last_cleared_round: number | null;
     placement_drives: {
       id: number;
       scheduled_date: Date;
       is_disclosed: boolean;
       disclosed_reveal_date: Date | null;
+      job_role: string | null;
+      package_lpa: Prisma.Decimal | null;
       companies: { name: string; profile_info: string | null };
     };
   }) {
@@ -688,7 +694,10 @@ export class DrivesService {
       scheduled_date: drive.scheduled_date,
       is_disclosed: drive.is_disclosed,
       disclosed_reveal_date: drive.is_disclosed ? null : drive.disclosed_reveal_date,
+      job_role: drive.job_role,
+      package_lpa: drive.package_lpa === null ? null : Number(drive.package_lpa),
       application_status: app.status,
+      last_cleared_round: app.last_cleared_round,
     };
   }
 

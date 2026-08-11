@@ -56,15 +56,34 @@ export class LmsService {
         semester: klass?.current_semester ?? undefined,
       },
       select: {
-        subjects: { select: { id: true, name: true, subject_code: true } },
+        subjects: { select: { id: true, name: true, subject_code: true, credits: true, hours: true } },
       },
       orderBy: { subjects: { name: 'asc' } },
     });
+
+    const mappings = await this.prisma.faculty_subject_class_mapping.findMany({
+      where: { class_id: student.class_id, subject_id: { in: rows.map((r) => r.subjects.id) } },
+      select: {
+        subject_id: true,
+        academic_year: true,
+        faculty: { select: { first_name: true, last_name: true } },
+      },
+      orderBy: { academic_year: 'desc' },
+    });
+    const facultyNameBySubject = new Map<number, string>();
+    for (const m of mappings) {
+      if (!facultyNameBySubject.has(m.subject_id)) {
+        facultyNameBySubject.set(m.subject_id, `${m.faculty.first_name} ${m.faculty.last_name}`);
+      }
+    }
 
     return rows.map((row) => ({
       subject_id: row.subjects.id,
       subject_name: row.subjects.name,
       subject_code: row.subjects.subject_code,
+      credits: row.subjects.credits,
+      hours: row.subjects.hours,
+      faculty_name: facultyNameBySubject.get(row.subjects.id) ?? null,
     }));
   }
 

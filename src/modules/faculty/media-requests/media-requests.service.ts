@@ -31,12 +31,15 @@ interface MediaRequestRow {
   status: string;
   media_file_url: string | null;
   created_at: Date;
+  // requested_by_faculty_id (schema.prisma) is nullable — every request
+  // created through this service sets it (faculty-only endpoint), but the
+  // column itself allows null, so the relation must be typed that way too.
   faculty: {
     id: number;
     first_name: string;
     last_name: string;
     designation: string;
-  };
+  } | null;
 }
 
 function toResponse(request: MediaRequestRow) {
@@ -63,6 +66,7 @@ export class MediaRequestsService {
     const request = await this.prisma.media_requests.create({
       data: {
         requested_by_faculty_id: faculty.id,
+        requested_by_user_id: userId,
         description: dto.description,
         status: 'pending',
       },
@@ -112,7 +116,7 @@ export class MediaRequestsService {
 
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-      if (request.faculty.id !== faculty.id) {
+      if (request.faculty?.id !== faculty.id) {
         throw new ForbiddenException(
           'You may only view your own media requests',
         );

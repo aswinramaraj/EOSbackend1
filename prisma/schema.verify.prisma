@@ -857,10 +857,10 @@ model fee_payments {
   created_at                    DateTime                      @default(now()) @db.Timestamptz(6)
   fee_structure_item_id         Int?
   fee_payment_gateway_orders    fee_payment_gateway_orders[]
-  fee_receipt_number_payments   fee_receipt_number_payments[]
   users                         users?                        @relation(fields: [collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   fee_structure_items           fee_structure_items?          @relation(fields: [fee_structure_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_fee_demand_mapping    student_fee_demand_mapping    @relation(fields: [student_fee_demand_mapping_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fee_receipt_number_payments   fee_receipt_number_payments[]
 
   @@index([student_fee_demand_mapping_id], map: "idx_fee_payments_demand")
   @@index([fee_structure_item_id], map: "idx_fee_payments_fee_structure_item")
@@ -1818,8 +1818,8 @@ model student_fee_demand_mapping {
   created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
   demand_category            Int?
   education_loan_dd          education_loan_dd[]
-  fee_payments               fee_payments[]
   fee_payment_gateway_orders fee_payment_gateway_orders[]
+  fee_payments               fee_payments[]
   demand_categories          demand_categories?           @relation(fields: [demand_category], references: [id], onDelete: NoAction, onUpdate: NoAction)
   fee_structures             fee_structures               @relation(fields: [fee_structure_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   students                   students                     @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)

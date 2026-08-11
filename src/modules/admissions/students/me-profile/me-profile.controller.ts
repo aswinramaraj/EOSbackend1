@@ -8,8 +8,11 @@ import {
   Post,
   Put,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
+import { renderFeeReceiptPdf } from './receipt-pdf.util';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -608,6 +611,38 @@ export class MeController {
   @Roles(ROLES.STUDENT)
   getFees(@CurrentUser() user: JwtPayload) {
     return this.meFeesService.getMyFees(user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/fees/payments/:paymentId/receipt
+   *
+   * Self-scoped: only a fee_payments row belonging to one of the caller's
+   * own fee demands can be fetched (enforced in MeFeesService.getReceiptData).
+   * Returns a rendered PDF, not JSON — @Res() opts this handler out of the
+   * global response envelope, same pattern as LibraryReportsController.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED      – missing/invalid JWT
+   *  403 FORBIDDEN         – authenticated but not a student, or this
+   *                          receipt belongs to a different student
+   *  404 STUDENT_NOT_FOUND / PAYMENT_NOT_FOUND
+   *  500 INTERNAL_ERROR    – unexpected server failure
+   */
+  @Get('fees/payments/:paymentId/receipt')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  async getFeeReceipt(
+    @Param('paymentId', ParseIntPipe) paymentId: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ) {
+    const receipt = await this.meFeesService.getReceiptData(user.sub, paymentId);
+    const buffer = await renderFeeReceiptPdf(receipt);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${receipt.receipt_no}.pdf"`,
+    });
+    res.send(buffer);
   }
 
   /**
