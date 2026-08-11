@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import * as crypto from 'node:crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { JoinOdTeamDto } from './dto/join-od-team.dto';
 import { CreateOdRequestDto } from './dto/create-od-request.dto';
 import { toTimeDate, formatTime } from './od-time.util';
@@ -43,7 +44,10 @@ function generateUniqueCode(): string {
 export class MeOdTeamsService {
   private readonly logger = new Logger(MeOdTeamsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * POST /me/od-teams
@@ -472,7 +476,7 @@ export class MeOdTeamsService {
 
     const caller = await this.prisma.students.findUnique({
       where: { user_id: userId },
-      select: { id: true },
+      select: { id: true, class_id: true },
     });
     if (!caller) {
       throw new NotFoundException({
@@ -483,7 +487,12 @@ export class MeOdTeamsService {
 
     const team = await this.prisma.od_teams.findUnique({
       where: { id: teamId },
-      select: { id: true, created_by_student_id: true, is_locked: true },
+      select: {
+        id: true,
+        created_by_student_id: true,
+        is_locked: true,
+        unique_code: true,
+      },
     });
     if (!team) {
       throw new NotFoundException({
@@ -565,6 +574,14 @@ export class MeOdTeamsService {
       hodApprovals,
     );
 
+    // Both reviewers below get notified right at submission - the
+    // od_request_hod_approvals rows are created immediately above (all
+    // 'pending'), not gated behind the mentor's decision, so a department's
+    // HoD already has something to review from this moment on, same as
+    // the mentor.
+    await this.notifyMentorOfNewRequest(caller.class_id, request.id, team.unique_code);
+    await this.notifyDepartmentHodsOfNewRequest(hodApprovals, request.id);
+
     return {
       id: request.id,
       team_id: request.team_id,
@@ -583,6 +600,73 @@ export class MeOdTeamsService {
         status: 'pending',
       })),
     };
+  }
+
+  /** No-op if the creator has no class (and therefore no mentor) assigned. */
+  private async notifyMentorOfNewRequest(
+    classId: number | null,
+    odRequestId: number,
+    teamCode: string,
+  ): Promise<void> {
+    if (classId === null) {
+      return;
+    }
+    const mentorMapping = await this.prisma.class_mentors.findFirst({
+      where: { class_id: classId },
+      select: { faculty_id: true },
+    });
+    if (!mentorMapping) {
+      return;
+    }
+    const mentor = await this.prisma.faculty.findUnique({
+      where: { id: mentorMapping.faculty_id },
+      select: { user_id: true },
+    });
+    if (!mentor) {
+      return;
+    }
+    await this.notifications.notify({
+      user_id: mentor.user_id,
+      title: 'New OD request to review',
+      message: `Team ${teamCode} submitted an OD request needing your review as mentor.`,
+      type: 'approval_request_pending',
+      related_entity_type: 'od_request',
+      related_entity_id: odRequestId,
+    });
+  }
+
+  /** One notification per distinct department, not per member row. */
+  private async notifyDepartmentHodsOfNewRequest(
+    hodApprovals: { department_id: number; department_name: string }[],
+    odRequestId: number,
+  ): Promise<void> {
+    const departments = new Map(
+      hodApprovals.map((a) => [a.department_id, a.department_name]),
+    );
+    for (const [departmentId, departmentName] of departments) {
+      const department = await this.prisma.departments.findUnique({
+        where: { id: departmentId },
+        select: { head_of_department_faculty_id: true },
+      });
+      if (!department?.head_of_department_faculty_id) {
+        continue;
+      }
+      const hod = await this.prisma.faculty.findUnique({
+        where: { id: department.head_of_department_faculty_id },
+        select: { user_id: true },
+      });
+      if (!hod) {
+        continue;
+      }
+      await this.notifications.notify({
+        user_id: hod.user_id,
+        title: 'New OD request to review',
+        message: `An OD request from ${departmentName} is pending your review.`,
+        type: 'approval_request_pending',
+        related_entity_type: 'od_request',
+        related_entity_id: odRequestId,
+      });
+    }
   }
 
   private async insertOdRequest(

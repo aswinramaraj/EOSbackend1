@@ -9,6 +9,9 @@ import { GetExamResultsDto } from 'src/modules/admissions/students/me-profile/dt
 import { TimetableService } from 'src/modules/faculty/timetable/timetable.service';
 import { GetMyTimetableQueryDto } from 'src/modules/faculty/timetable/dto/get-my-timetable-query.dto';
 import { DrivesService } from 'src/modules/placement/drives/drives.service';
+import { FeePaymentService } from 'src/modules/fees-billing/fee-payments/fee-payment.service';
+import { CreateFeePaymentOrderDto } from 'src/modules/fees-billing/fee-payments/dto/create-fee-payment-order.dto';
+import { VerifyFeePaymentDto } from 'src/modules/fees-billing/fee-payments/dto/verify-fee-payment.dto';
 
 interface ChildRow {
   students: {
@@ -67,6 +70,7 @@ export class ParentsService {
     private readonly meAcademicCalendarService: MeAcademicCalendarService,
     private readonly timetableService: TimetableService,
     private readonly drivesService: DrivesService,
+    private readonly feePaymentService: FeePaymentService,
   ) {}
 
   /** GET /me/children (Parent only). One row per linked child, however many there are. */
@@ -122,6 +126,39 @@ export class ParentsService {
   async getChildFees(parentUserId: number, studentId: number) {
     await this.assertOwnChild(parentUserId, studentId);
     return this.meFeesService.getFeesForStudentId(studentId);
+  }
+
+  /** POST /me/children/:studentId/fees/demands/:id/payment-order (Parent only, own child). */
+  async payChildFeeDemand(
+    parentUserId: number,
+    studentId: number,
+    demandMappingId: number,
+    dto: CreateFeePaymentOrderDto,
+  ) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.feePaymentService.createGatewayOrderForChild(
+      parentUserId,
+      studentId,
+      demandMappingId,
+      dto,
+    );
+  }
+
+  /**
+   * POST /me/children/:studentId/fees/payment-order/verify (Parent only,
+   * own child). Verification itself doesn't need studentId at all (see
+   * FeePaymentService.verifyGatewayPayment's doc comment - it's keyed by
+   * order ownership, not role/student) - the assertOwnChild check here is
+   * purely defense in depth, matching every other parent-on-behalf-of-child
+   * route's shape.
+   */
+  async verifyChildFeePayment(
+    parentUserId: number,
+    studentId: number,
+    dto: VerifyFeePaymentDto,
+  ) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.feePaymentService.verifyGatewayPayment(parentUserId, dto);
   }
 
   /** GET /me/children/:studentId/timetable (Parent only). */

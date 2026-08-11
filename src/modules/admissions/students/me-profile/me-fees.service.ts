@@ -1,10 +1,12 @@
 import {
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { FeeReceiptData } from './receipt-pdf.util';
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
@@ -100,6 +102,82 @@ export class MeFeesService {
     );
 
     return { demands, payments };
+  }
+
+  /**
+   * GET /me/fees/payments/:paymentId/receipt
+   *
+   * Self-scoped: only a fee_payments row belonging to one of the caller's
+   * own student_fee_demand_mapping rows can be fetched. Student name prefers
+   * soa_applications' first_name/last_name (the same real admission-record
+   * name used elsewhere - e.g. lms.service.ts's resolveStudentName), falling
+   * back to the account email when no soa_applications row exists, since a
+   * receipt should always show *some* name rather than "NA".
+   */
+  async getReceiptData(userId: number, paymentId: number): Promise<FeeReceiptData> {
+    const student = await this.prisma.students.findUnique({
+      where: { user_id: userId },
+      select: {
+        id: true,
+        register_no: true,
+        soa_applications: { select: { first_name: true, last_name: true } },
+        users: { select: { email: true } },
+      },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student profile not found for this account',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const payment = await this.prisma.fee_payments.findUnique({
+      where: { id: paymentId },
+      select: {
+        receipt_no: true,
+        payment_date: true,
+        amount_paid: true,
+        payment_mode: true,
+        is_partial: true,
+        student_fee_demand_mapping: {
+          select: {
+            student_id: true,
+            academic_year: true,
+            semester: true,
+            fee_structures: { select: { name: true } },
+          },
+        },
+      },
+    });
+    if (!payment) {
+      throw new NotFoundException({
+        message: 'Payment not found',
+        errorCode: 'PAYMENT_NOT_FOUND',
+      });
+    }
+    if (payment.student_fee_demand_mapping.student_id !== student.id) {
+      throw new ForbiddenException({
+        message: 'This receipt does not belong to you',
+        errorCode: 'RECEIPT_NOT_YOURS',
+      });
+    }
+
+    const studentName = student.soa_applications
+      ? [student.soa_applications.first_name, student.soa_applications.last_name].filter(Boolean).join(' ')
+      : student.users.email;
+
+    return {
+      receipt_no: payment.receipt_no,
+      payment_date: toDateOnly(payment.payment_date),
+      student_name: studentName,
+      register_no: student.register_no,
+      fee_structure_name: payment.student_fee_demand_mapping.fee_structures.name,
+      academic_year: payment.student_fee_demand_mapping.academic_year,
+      semester: payment.student_fee_demand_mapping.semester,
+      amount_paid: Number(payment.amount_paid),
+      payment_mode: payment.payment_mode,
+      is_partial: payment.is_partial,
+    };
   }
 
   private async fetchDemandMappings(studentId: number) {

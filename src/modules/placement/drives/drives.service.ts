@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { paginate } from '../../../common/dto/pagination.dto';
 import { CompaniesService } from '../companies/companies.service';
 import type { JwtPayload } from '../../../auth/interfaces/jwt-payload.interface';
@@ -34,6 +36,7 @@ export class DrivesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly companiesService: CompaniesService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(user: JwtPayload, dto: CreateDriveDto) {
@@ -205,7 +208,7 @@ export class DrivesService {
     const application = await this.findApplicationOrThrow(driveId, studentId);
     const roundReached = DrivesService.ROUND_REACHED_BY_STATUS[dto.status];
 
-    return this.prisma.student_drive_applications.update({
+    const updated = await this.prisma.student_drive_applications.update({
       where: { id: application.id },
       data: {
         status: dto.status,
@@ -214,6 +217,44 @@ export class DrivesService {
         updated_at: new Date(),
       },
     });
+
+    await this.notifyApplicationStatusUpdated(studentId, driveId, dto.status);
+
+    return updated;
+  }
+
+  /** Never throws - the application update above has already committed by this point. */
+  private async notifyApplicationStatusUpdated(
+    studentId: number,
+    driveId: number,
+    status: string,
+  ): Promise<void> {
+    try {
+      const student = await this.prisma.students.findUnique({
+        where: { id: studentId },
+        select: { user_id: true },
+      });
+      if (!student) return;
+
+      const drive = await this.prisma.placement_drives.findUnique({
+        where: { id: driveId },
+        select: { companies: { select: { name: true } } },
+      });
+
+      await this.notifications.notify({
+        user_id: student.user_id,
+        title: 'Placement application status updated',
+        message: `Your application${drive ? ` for ${drive.companies.name}` : ''} is now: ${status}.`,
+        type: 'placement_status_updated',
+        related_entity_type: 'drive_application',
+        related_entity_id: driveId,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to notify student ${studentId} of drive ${driveId} status update`,
+        err,
+      );
+    }
   }
 
   async removeApplication(driveId: number, studentId: number) {
@@ -291,6 +332,8 @@ export class DrivesService {
         company_name: this.resolveCompanyName(drive),
         scheduled_date: drive.scheduled_date,
         drive_status: drive.status,
+        job_role: drive.job_role,
+        package_lpa: drive.package_lpa === null ? null : Number(drive.package_lpa),
         application_status: app.status,
         last_cleared_round: app.last_cleared_round,
       };
@@ -672,11 +715,14 @@ export class DrivesService {
 
   private toUpcomingDrive(app: {
     status: string;
+    last_cleared_round: number | null;
     placement_drives: {
       id: number;
       scheduled_date: Date;
       is_disclosed: boolean;
       disclosed_reveal_date: Date | null;
+      job_role: string | null;
+      package_lpa: Prisma.Decimal | null;
       companies: { name: string; profile_info: string | null };
     };
   }) {
@@ -688,7 +734,10 @@ export class DrivesService {
       scheduled_date: drive.scheduled_date,
       is_disclosed: drive.is_disclosed,
       disclosed_reveal_date: drive.is_disclosed ? null : drive.disclosed_reveal_date,
+      job_role: drive.job_role,
+      package_lpa: drive.package_lpa === null ? null : Number(drive.package_lpa),
       application_status: app.status,
+      last_cleared_round: app.last_cleared_round,
     };
   }
 

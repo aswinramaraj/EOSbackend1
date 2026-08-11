@@ -1,15 +1,22 @@
 import {
+  BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
+import Razorpay from 'razorpay';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import { CreateFeePaymentDto } from './dto/create-fee-payment.dto';
 import { UpdateFeePaymentDto } from './dto/update-fee-payment.dto';
+import { CreateFeePaymentOrderDto } from './dto/create-fee-payment-order.dto';
+import { VerifyFeePaymentDto } from './dto/verify-fee-payment.dto';
 import { FeePaymentDashboardRowDto } from './dto/fee-payment-dashboard-row.dto';
 import {
   FeePaymentStudentWorkspaceDto,
@@ -49,8 +56,27 @@ function computeOutstanding(
 @Injectable()
 export class FeePaymentService {
   private readonly logger = new Logger(FeePaymentService.name);
+  private razorpay: Razorpay | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
+
+  private getRazorpay(): Razorpay {
+    if (!this.razorpay) {
+      const key_id = process.env.RAZORPAY_KEY_ID;
+      const key_secret = process.env.RAZORPAY_KEY_SECRET;
+      if (!key_id || !key_secret) {
+        throw new InternalServerErrorException({
+          message: 'Razorpay is not configured',
+          errorCode: 'RAZORPAY_NOT_CONFIGURED',
+        });
+      }
+      this.razorpay = new Razorpay({ key_id, key_secret });
+    }
+    return this.razorpay;
+  }
 
   /**
    * GET /fee-payments
@@ -565,11 +591,13 @@ export class FeePaymentService {
 
     for (let attempt = 1; attempt <= MAX_SERIALIZATION_RETRIES; attempt++) {
       try {
-        return await this.createWithinTransaction(
+        const payment = await this.createWithinTransaction(
           demandMappingId,
           dto,
           collectedByUserId,
         );
+        await this.notifyPaymentConfirmed(demandMappingId, payment);
+        return payment;
       } catch (err) {
         const isSerializationConflict =
           err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -619,6 +647,41 @@ export class FeePaymentService {
           errorCode: 'INTERNAL_ERROR',
         });
       }
+    }
+  }
+
+  /**
+   * Runs after createWithinTransaction has already committed - never
+   * throws, and never rolls back a payment that has already succeeded
+   * just because notifying the student failed.
+   */
+  private async notifyPaymentConfirmed(
+    demandMappingId: number,
+    payment: { id: number; amount_paid: Prisma.Decimal; receipt_no: string },
+  ): Promise<void> {
+    try {
+      const mapping = await this.prisma.student_fee_demand_mapping.findUnique({
+        where: { id: demandMappingId },
+        select: { student_id: true },
+      });
+      if (!mapping) return;
+
+      const student = await this.prisma.students.findUnique({
+        where: { id: mapping.student_id },
+        select: { user_id: true },
+      });
+      if (!student) return;
+
+      await this.notifications.notify({
+        user_id: student.user_id,
+        title: 'Fee payment confirmed',
+        message: `Your payment of ₹${payment.amount_paid.toString()} (receipt ${payment.receipt_no}) has been recorded.`,
+        type: 'fee_payment_confirmed',
+        related_entity_type: 'fee_payment',
+        related_entity_id: payment.id,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to notify student of fee payment ${payment.id}`, err);
     }
   }
 
@@ -739,6 +802,426 @@ export class FeePaymentService {
 
     const nextNumber = (result[0]?.max_num ?? 0) + 1;
     return `RCP${String(nextNumber).padStart(3, '0')}`;
+  }
+
+  // ── Student-facing Razorpay gateway (POST /me/fees/*) ────────────────────
+  //
+  // Deliberately separate from create()/createWithinTransaction() above,
+  // which is the admin/staff category-wise (fee_structure_item_id-scoped)
+  // recording flow. The mobile "Pay fees" screen has no per-category UI -
+  // it only ever shows one lump total/paid/due per demand mapping - so the
+  // methods below pay toward a mapping's TOTAL outstanding as a whole,
+  // with fee_structure_item_id left null on the resulting fee_payments row.
+  // Both flows write to the same fee_payments table and both count toward
+  // the same outstanding calculation, so a mapping can be partly paid by
+  // staff (category-wise) and partly online (mapping-wise) with no double
+  // counting.
+
+  /**
+   * POST /me/fees/demands/:id/payment-order (Student, self-scoped).
+   * Stages a Razorpay order - the real fee_payments row is only created
+   * later, once verifyGatewayPayment() confirms the signature. Mirrors
+   * WalletService.createTopupOrder/verifyTopup exactly, just fee-scoped.
+   *
+   * Error cases:
+   *  404 STUDENT_NOT_FOUND            – caller has no linked student record
+   *  404 STUDENT_FEE_DEMAND_NOT_FOUND – no demand mapping with the given id
+   *  403 NOT_YOUR_DEMAND              – the mapping belongs to a different student
+   *  422 AMOUNT_EXCEEDS_OUTSTANDING   – amount would exceed this mapping's outstanding
+   *  500 RAZORPAY_NOT_CONFIGURED / INTERNAL_ERROR
+   */
+  async createGatewayOrder(
+    userId: number,
+    demandMappingId: number,
+    dto: CreateFeePaymentOrderDto,
+  ) {
+    const mapping = await this.resolveOwnDemandMapping(userId, demandMappingId);
+    return this.stageGatewayOrder(demandMappingId, mapping.fee_structure_id, dto.amount, userId);
+  }
+
+  /**
+   * POST /me/children/:studentId/fees/demands/:id/payment-order (Parent,
+   * scoped to a verified child - the parent-child link itself is checked
+   * upstream by ParentsService.assertOwnChild, same as every other
+   * parent-on-behalf-of-child read; this only re-checks that the demand
+   * mapping id actually belongs to studentId, as defense in depth against
+   * a mismatched/forged id).
+   *
+   * created_by_user_id on both the gateway order and (once verified) the
+   * resulting fee_payments row is the PARENT's own user id, not the
+   * student's - who actually paid is worth keeping distinct from whose
+   * fee it was. The fee_payment_confirmed notification still always goes
+   * to the student (see notifyPaymentConfirmed), regardless of who paid.
+   *
+   * Error cases: same as createGatewayOrder, plus:
+   *  403 NOT_YOUR_CHILDS_DEMAND – the mapping belongs to a different student
+   */
+  async createGatewayOrderForChild(
+    parentUserId: number,
+    studentId: number,
+    demandMappingId: number,
+    dto: CreateFeePaymentOrderDto,
+  ) {
+    const mapping = await this.resolveChildDemandMapping(studentId, demandMappingId);
+    return this.stageGatewayOrder(
+      demandMappingId,
+      mapping.fee_structure_id,
+      dto.amount,
+      parentUserId,
+    );
+  }
+
+  private async stageGatewayOrder(
+    demandMappingId: number,
+    feeStructureId: number,
+    amount: number,
+    createdByUserId: number,
+  ) {
+    const outstanding = await this.computeMappingOutstanding(demandMappingId, feeStructureId);
+
+    if (new Prisma.Decimal(amount).greaterThan(outstanding)) {
+      throw new UnprocessableEntityException({
+        message:
+          'Payment amount would exceed the outstanding amount for this fee demand',
+        errorCode: 'AMOUNT_EXCEEDS_OUTSTANDING',
+      });
+    }
+
+    const razorpay = this.getRazorpay();
+    const order = await razorpay.orders.create({
+      amount: Math.round(amount * 100), // rupees -> paise
+      currency: 'INR',
+      receipt: `fee-${demandMappingId}-${Date.now()}`,
+    });
+
+    try {
+      await this.prisma.fee_payment_gateway_orders.create({
+        data: {
+          student_fee_demand_mapping_id: demandMappingId,
+          amount,
+          status: 'pending',
+          razorpay_order_id: order.id,
+          created_by_user_id: createdByUserId,
+        },
+      });
+    } catch (err) {
+      this.logger.error('DB error while staging fee payment gateway order', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    return {
+      order_id: order.id,
+      amount,
+      currency: 'INR',
+      key_id: process.env.RAZORPAY_KEY_ID,
+    };
+  }
+
+  /**
+   * POST /me/fees/payment-order/verify (Student) or
+   * POST /me/children/:studentId/fees/payment-order/verify (Parent) -
+   * shared by both callers unchanged. Ownership here is keyed by "did YOU
+   * create this order" (order.created_by_user_id === userId), not by role
+   * or student_id, so a parent verifying an order they staged via
+   * createGatewayOrderForChild works exactly the same way as a student
+   * verifying their own - no separate method needed.
+   *
+   * Recomputes the HMAC-SHA256 signature server-side, exactly like
+   * WalletService.verifyTopup - never trusts the client's claim that
+   * Checkout succeeded. Only records the fee payment on a genuine match.
+   *
+   * Error cases:
+   *  404 GATEWAY_ORDER_NOT_FOUND     – no order matches for this caller
+   *  400 ALREADY_PROCESSED           – this order has already been verified
+   *  400 PAYMENT_VERIFICATION_FAILED – signature mismatch
+   *  422 AMOUNT_EXCEEDS_OUTSTANDING  – the mapping's outstanding shrank below
+   *                                    the ordered amount since the order was
+   *                                    staged (e.g. a staff payment posted in
+   *                                    the gap) - Razorpay has already
+   *                                    charged the student at this point, so
+   *                                    this is left 'failed' for manual
+   *                                    finance reconciliation, not silently
+   *                                    swallowed.
+   */
+  async verifyGatewayPayment(userId: number, dto: VerifyFeePaymentDto) {
+    const order = await this.prisma.fee_payment_gateway_orders.findUnique({
+      where: { razorpay_order_id: dto.razorpay_order_id },
+    });
+    if (!order || order.created_by_user_id !== userId) {
+      throw new NotFoundException({
+        message: 'No matching payment order found for your account',
+        errorCode: 'GATEWAY_ORDER_NOT_FOUND',
+      });
+    }
+    if (order.status !== 'pending') {
+      throw new BadRequestException({
+        message: 'This payment order has already been processed',
+        errorCode: 'ALREADY_PROCESSED',
+      });
+    }
+
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (!secret) {
+      throw new InternalServerErrorException({
+        message: 'Razorpay is not configured',
+        errorCode: 'RAZORPAY_NOT_CONFIGURED',
+      });
+    }
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(`${dto.razorpay_order_id}|${dto.razorpay_payment_id}`)
+      .digest('hex');
+
+    if (expectedSignature !== dto.razorpay_signature) {
+      await this.prisma.fee_payment_gateway_orders.update({
+        where: { id: order.id },
+        data: {
+          status: 'failed',
+          razorpay_payment_id: dto.razorpay_payment_id,
+          razorpay_signature: dto.razorpay_signature,
+        },
+      });
+      throw new BadRequestException({
+        message: "Payment verification failed - signature doesn't match",
+        errorCode: 'PAYMENT_VERIFICATION_FAILED',
+      });
+    }
+
+    let payment: { id: number; amount_paid: Prisma.Decimal; receipt_no: string };
+    try {
+      payment = await this.createMappingLevelPayment(
+        order.student_fee_demand_mapping_id,
+        Number(order.amount),
+        userId,
+      );
+    } catch (err) {
+      // The money has already been charged by Razorpay at this point - mark
+      // the order failed (not left stuck 'pending' forever) so finance has
+      // something concrete to reconcile, then let the real error surface.
+      await this.prisma.fee_payment_gateway_orders.update({
+        where: { id: order.id },
+        data: {
+          status: 'failed',
+          razorpay_payment_id: dto.razorpay_payment_id,
+          razorpay_signature: dto.razorpay_signature,
+        },
+      });
+      throw err;
+    }
+
+    await this.prisma.fee_payment_gateway_orders.update({
+      where: { id: order.id },
+      data: {
+        status: 'success',
+        razorpay_payment_id: dto.razorpay_payment_id,
+        razorpay_signature: dto.razorpay_signature,
+        fee_payment_id: payment.id,
+      },
+    });
+
+    this.logger.log(
+      `Fee payment gateway order verified: order=${order.id} payment=${payment.id}`,
+    );
+
+    return {
+      fee_payment_id: payment.id,
+      amount_paid: Number(payment.amount_paid),
+      receipt_no: payment.receipt_no,
+    };
+  }
+
+  private async resolveOwnDemandMapping(userId: number, demandMappingId: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { user_id: userId },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student profile not found for this account',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const mapping = await this.prisma.student_fee_demand_mapping.findUnique({
+      where: { id: demandMappingId },
+      select: { student_id: true, fee_structure_id: true },
+    });
+    if (!mapping) {
+      throw new NotFoundException({
+        message: 'Student fee demand mapping not found',
+        errorCode: 'STUDENT_FEE_DEMAND_NOT_FOUND',
+      });
+    }
+    if (mapping.student_id !== student.id) {
+      throw new ForbiddenException({
+        message: 'You may only pay your own fees',
+        errorCode: 'NOT_YOUR_DEMAND',
+      });
+    }
+
+    return mapping;
+  }
+
+  /**
+   * Parent-on-behalf-of-child counterpart to resolveOwnDemandMapping - no
+   * students.findUnique(where:{user_id}) lookup needed since studentId is
+   * already given (and already verified to belong to this parent by
+   * ParentsService.assertOwnChild before this is ever called); this only
+   * re-checks that demandMappingId itself actually belongs to that student.
+   */
+  private async resolveChildDemandMapping(studentId: number, demandMappingId: number) {
+    const mapping = await this.prisma.student_fee_demand_mapping.findUnique({
+      where: { id: demandMappingId },
+      select: { student_id: true, fee_structure_id: true },
+    });
+    if (!mapping) {
+      throw new NotFoundException({
+        message: 'Student fee demand mapping not found',
+        errorCode: 'STUDENT_FEE_DEMAND_NOT_FOUND',
+      });
+    }
+    if (mapping.student_id !== studentId) {
+      throw new ForbiddenException({
+        message: 'This fee demand does not belong to this student',
+        errorCode: 'NOT_YOUR_CHILDS_DEMAND',
+      });
+    }
+
+    return mapping;
+  }
+
+  private async computeMappingOutstanding(
+    demandMappingId: number,
+    feeStructureId: number,
+  ): Promise<Prisma.Decimal> {
+    const [items, paidResult] = await this.prisma.$transaction([
+      this.prisma.fee_structure_items.findMany({
+        where: { fee_structure_id: feeStructureId },
+        select: { amount: true },
+      }),
+      this.prisma.fee_payments.aggregate({
+        where: { student_fee_demand_mapping_id: demandMappingId },
+        _sum: { amount_paid: true },
+      }),
+    ]);
+
+    const liveTotalAmount = this.computeLiveTotalAmount(items);
+    const paidAmount = paidResult._sum.amount_paid ?? new Prisma.Decimal(0);
+    return computeOutstanding(liveTotalAmount, paidAmount);
+  }
+
+  /**
+   * MAX_SERIALIZATION_RETRIES + SERIALIZABLE isolation, mirroring
+   * create()/createWithinTransaction() above - a concurrent staff payment
+   * against the same mapping is the exact same class of race.
+   */
+  private async createMappingLevelPayment(
+    demandMappingId: number,
+    amount: number,
+    collectedByUserId: number,
+  ) {
+    const MAX_SERIALIZATION_RETRIES = 3;
+
+    for (let attempt = 1; attempt <= MAX_SERIALIZATION_RETRIES; attempt++) {
+      try {
+        const payment = await this.prisma.$transaction(
+          async (tx) => {
+            const mapping = await tx.student_fee_demand_mapping.findUnique({
+              where: { id: demandMappingId },
+              select: { fee_structure_id: true },
+            });
+            if (!mapping) {
+              throw new NotFoundException({
+                message: 'Student fee demand mapping not found',
+                errorCode: 'STUDENT_FEE_DEMAND_NOT_FOUND',
+              });
+            }
+
+            const items = await tx.fee_structure_items.findMany({
+              where: { fee_structure_id: mapping.fee_structure_id },
+              select: { amount: true },
+            });
+            const liveTotalAmount = this.computeLiveTotalAmount(items);
+
+            const paidSoFarResult = await tx.fee_payments.aggregate({
+              where: { student_fee_demand_mapping_id: demandMappingId },
+              _sum: { amount_paid: true },
+            });
+            const alreadyPaid =
+              paidSoFarResult._sum.amount_paid ?? new Prisma.Decimal(0);
+            const outstanding = computeOutstanding(liveTotalAmount, alreadyPaid);
+
+            if (new Prisma.Decimal(amount).greaterThan(outstanding)) {
+              throw new UnprocessableEntityException({
+                message:
+                  'Payment amount would exceed the outstanding amount for this fee demand',
+                errorCode: 'AMOUNT_EXCEEDS_OUTSTANDING',
+              });
+            }
+
+            const receiptNo = await this.generateNextReceiptNo(tx);
+            const newTotalPaid = alreadyPaid.plus(amount);
+            const isPartial = newTotalPaid.lessThan(liveTotalAmount);
+
+            return tx.fee_payments.create({
+              data: {
+                student_fee_demand_mapping_id: demandMappingId,
+                fee_structure_item_id: null,
+                amount_paid: amount,
+                receipt_no: receiptNo,
+                payment_mode: 'razorpay',
+                is_partial: isPartial,
+                collected_by_user_id: collectedByUserId,
+              },
+            });
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+
+        await this.notifyPaymentConfirmed(demandMappingId, payment);
+        return payment;
+      } catch (err) {
+        const isSerializationConflict =
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2034';
+        const isReceiptNumberRace =
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002' &&
+          (err.meta?.target as string[] | undefined)?.includes('receipt_no');
+        const isRetryableConflict = isSerializationConflict || isReceiptNumberRace;
+
+        if (isRetryableConflict && attempt < MAX_SERIALIZATION_RETRIES) {
+          continue;
+        }
+        if (isRetryableConflict) {
+          throw new ConflictException({
+            message:
+              'This payment could not be completed due to a concurrent update. Please try again.',
+            errorCode: 'CONCURRENT_PAYMENT_CONFLICT',
+          });
+        }
+        if (
+          err instanceof NotFoundException ||
+          err instanceof ConflictException ||
+          err instanceof UnprocessableEntityException
+        ) {
+          throw err;
+        }
+        this.logger.error('DB error while recording gateway fee payment', err);
+        throw new InternalServerErrorException({
+          message: 'Something went wrong. Please try again.',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
+    }
+    // Unreachable - the loop always either returns or throws.
+    throw new InternalServerErrorException({
+      message: 'Something went wrong. Please try again.',
+      errorCode: 'INTERNAL_ERROR',
+    });
   }
 
   /**

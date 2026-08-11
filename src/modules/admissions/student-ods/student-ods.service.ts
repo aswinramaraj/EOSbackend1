@@ -9,6 +9,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { ListStudentOdQueryDto } from './dto/list-student-od-query.dto';
 import { FacultyApproveOdDto } from './dto/faculty-approve-od.dto';
 import { HodApproveOdDto } from './dto/hod-approve-od.dto';
@@ -125,7 +126,10 @@ function toResponse(request: OdRequestRow, hodApprovalStatus?: string) {
 export class StudentOdsService {
   private readonly logger = new Logger(StudentOdsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * GET /me/student-ods (Faculty or HoD).
@@ -259,6 +263,15 @@ export class StudentOdsService {
       select: OD_REQUEST_SELECT,
     });
 
+    await this.notifications.notify({
+      user_id: updated.od_teams.students.users.id,
+      title: dto.decision === 'approved' ? 'OD request approved by mentor' : 'OD request rejected by mentor',
+      message: `Your OD request (${toDateOnly(updated.from_date)} to ${toDateOnly(updated.to_date)}) was ${dto.decision} by your mentor.`,
+      type: dto.decision === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+      related_entity_type: 'od_request',
+      related_entity_id: id,
+    });
+
     // Once the mentor approves, fan the request out to one pending approval
     // row per TEAM MEMBER (od_request_hod_approvals — previously defined
     // in the schema but never populated anywhere), tagged with that
@@ -362,6 +375,26 @@ export class StudentOdsService {
     const request = await this.prisma.od_requests.findUniqueOrThrow({
       where: { id },
       select: OD_REQUEST_SELECT,
+    });
+
+    // Named by the department that just decided, not "your department" -
+    // the request creator (who this notifies) isn't necessarily a member
+    // of that department themselves; other team members might be.
+    const department = await this.prisma.departments.findUnique({
+      where: { id: hod.department_id },
+      select: { name: true },
+    });
+
+    await this.notifications.notify({
+      user_id: request.od_teams.students.users.id,
+      title:
+        dto.decision === 'approved'
+          ? 'OD request approved by HoD'
+          : 'OD request rejected by HoD',
+      message: `Your OD request (${toDateOnly(request.from_date)} to ${toDateOnly(request.to_date)}) was ${dto.decision} by the HoD of ${department?.name ?? 'a department on your team'}.`,
+      type: dto.decision === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+      related_entity_type: 'od_request',
+      related_entity_id: id,
     });
 
     this.logger.log(

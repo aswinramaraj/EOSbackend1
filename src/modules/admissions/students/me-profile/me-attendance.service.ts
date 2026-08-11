@@ -99,12 +99,13 @@ export class MeAttendanceService {
 
     const bySubject = new Map<
       number,
-      { subject_name: string; total: number; present: number }
+      { subject_name: string; subject_code: string | null; total: number; present: number }
     >();
     for (const record of records) {
       if (record.subject_id === null) continue;
       const entry = bySubject.get(record.subject_id) ?? {
         subject_name: record.subjects?.name ?? '',
+        subject_code: record.subjects?.subject_code ?? null,
         total: 0,
         present: 0,
       };
@@ -124,6 +125,7 @@ export class MeAttendanceService {
         ([subject_id, entry]) => ({
           subject_id,
           subject_name: entry.subject_name,
+          subject_code: entry.subject_code,
           total: entry.total,
           present: entry.present,
           percentage: round2((entry.present / entry.total) * 100),
@@ -132,6 +134,7 @@ export class MeAttendanceService {
       records: records.map((record) => ({
         attendance_date: toDateOnly(record.attendance_date),
         subject_id: record.subject_id,
+        subject_code: record.subjects?.subject_code ?? null,
         status: record.status,
       })),
     };
@@ -154,7 +157,7 @@ export class MeAttendanceService {
           attendance_date: true,
           subject_id: true,
           status: true,
-          subjects: { select: { name: true } },
+          subjects: { select: { name: true, subject_code: true } },
         },
         orderBy: { attendance_date: 'asc' },
       });

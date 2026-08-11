@@ -89,7 +89,7 @@ const MY_TIMETABLE_SLOT_SELECT = {
   period_number: true,
   start_time: true,
   end_time: true,
-  subjects: { select: { id: true, name: true, subject_code: true } },
+  subjects: { select: { id: true, name: true, subject_code: true, course_type: true } },
   faculty: { select: { id: true, first_name: true, last_name: true } },
 } as const;
 
@@ -98,7 +98,7 @@ interface MyTimetableSlotRow {
   period_number: number;
   start_time: Date;
   end_time: Date;
-  subjects: { id: number; name: string; subject_code: string };
+  subjects: { id: number; name: string; subject_code: string; course_type: string | null };
   faculty: { id: number; first_name: string; last_name: string };
 }
 
@@ -486,6 +486,11 @@ export class TimetableService {
 
     const klass = await this.prisma.classes.findUnique({
       where: { id: classId },
+      select: {
+        section: true,
+        current_semester: true,
+        departments: { select: { name: true, code: true } },
+      },
     });
 
     const rows = await this.prisma.timetable_slots.findMany({
@@ -500,9 +505,16 @@ export class TimetableService {
       select: MY_TIMETABLE_SLOT_SELECT,
     });
 
+    const classInfo = {
+      section: klass?.section ?? null,
+      department_name: klass?.departments.name ?? null,
+      department_code: klass?.departments.code ?? null,
+    };
+
     if (query.day !== undefined) {
       return {
         day_of_week: query.day,
+        class: classInfo,
         slots: rows.map(toMySlotResponse),
       };
     }
@@ -515,6 +527,7 @@ export class TimetableService {
     }
 
     return {
+      class: classInfo,
       days: Array.from(days.entries()).map(([day_of_week, slots]) => ({
         day_of_week,
         slots,

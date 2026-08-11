@@ -43,7 +43,17 @@ export class SeatingArrangementsService {
     }
 
     const mappings = await this.prisma.exam_subject_mapping.findMany({
-      where: { exam_id: dto.exam_id, exam_timetable: { exam_date: examDate } },
+      // is_published gates on exam_subject_mapping (same signal
+      // MeExamScheduleService uses for "is this subject's schedule public
+      // yet") — seating shouldn't be allocated against a still-draft
+      // mapping. exam_timetable is a list relation now (one row per
+      // timetable version), so matching this date needs `some`, not a
+      // direct field filter.
+      where: {
+        exam_id: dto.exam_id,
+        is_published: true,
+        exam_timetable: { some: { exam_date: examDate } },
+      },
       select: { class_id: true },
     });
     const classIds = [...new Set(mappings.map((m) => m.class_id))];

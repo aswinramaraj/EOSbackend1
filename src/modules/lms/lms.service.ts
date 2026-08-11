@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/common/storage/storage.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { CreateFolderDto } from './dto/create-folder.dto';
 import { UpdateFolderDto } from './dto/update-folder.dto';
 import { CreateLinkResourceDto } from './dto/create-link-resource.dto';
@@ -34,6 +35,7 @@ export class LmsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ============================================================
@@ -56,15 +58,34 @@ export class LmsService {
         semester: klass?.current_semester ?? undefined,
       },
       select: {
-        subjects: { select: { id: true, name: true, subject_code: true } },
+        subjects: { select: { id: true, name: true, subject_code: true, credits: true, hours: true } },
       },
       orderBy: { subjects: { name: 'asc' } },
     });
+
+    const mappings = await this.prisma.faculty_subject_class_mapping.findMany({
+      where: { class_id: student.class_id, subject_id: { in: rows.map((r) => r.subjects.id) } },
+      select: {
+        subject_id: true,
+        academic_year: true,
+        faculty: { select: { first_name: true, last_name: true } },
+      },
+      orderBy: { academic_year: 'desc' },
+    });
+    const facultyNameBySubject = new Map<number, string>();
+    for (const m of mappings) {
+      if (!facultyNameBySubject.has(m.subject_id)) {
+        facultyNameBySubject.set(m.subject_id, `${m.faculty.first_name} ${m.faculty.last_name}`);
+      }
+    }
 
     return rows.map((row) => ({
       subject_id: row.subjects.id,
       subject_name: row.subjects.name,
       subject_code: row.subjects.subject_code,
+      credits: row.subjects.credits,
+      hours: row.subjects.hours,
+      faculty_name: facultyNameBySubject.get(row.subjects.id) ?? null,
     }));
   }
 
@@ -513,6 +534,21 @@ export class LmsService {
         },
       });
       created.push(task.id);
+
+      const classStudents = await this.prisma.students.findMany({
+        where: { class_id: classId },
+        select: { user_id: true },
+      });
+      for (const s of classStudents) {
+        await this.notifications.notify({
+          user_id: s.user_id,
+          title: 'New task assigned',
+          message: `${dto.title} has been assigned${dto.due_date ? ` (due ${dto.due_date})` : ''}.`,
+          type: 'lms_task_assigned',
+          related_entity_type: 'lms_task',
+          related_entity_id: task.id,
+        });
+      }
     }
 
     this.logger.log(`LMS task created: ids=${created.join(',')} faculty=${faculty.id}`);
@@ -580,7 +616,11 @@ export class LmsService {
 
     const status = await this.prisma.student_assignment_status.findUnique({
       where: { id: statusId },
-      select: { id: true, assignments: { select: { faculty_id: true, max_marks: true } } },
+      select: {
+        id: true,
+        assignments: { select: { faculty_id: true, max_marks: true, title: true } },
+        students: { select: { user_id: true } },
+      },
     });
     if (!status) {
       throw new NotFoundException({ message: 'Submission not found', errorCode: 'SUBMISSION_NOT_FOUND' });
@@ -598,6 +638,15 @@ export class LmsService {
     await this.prisma.student_assignment_status.update({
       where: { id: statusId },
       data: { marks_obtained: dto.marks_obtained, marked_by_faculty_id: faculty.id, marked_at: new Date() },
+    });
+
+    await this.notifications.notify({
+      user_id: status.students.user_id,
+      title: 'Task graded',
+      message: `${status.assignments.title} was graded: ${dto.marks_obtained}${status.assignments.max_marks !== null ? `/${status.assignments.max_marks}` : ''}.`,
+      type: 'lms_task_graded',
+      related_entity_type: 'lms_task_submission',
+      related_entity_id: statusId,
     });
 
     return { id: statusId, marks_obtained: dto.marks_obtained };

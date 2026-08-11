@@ -66,6 +66,8 @@ export class MeExamScheduleService {
       exam_date: toDateOnly(row.exam_date),
       start_time: toTimeOnly(row.start_time),
       end_time: toTimeOnly(row.end_time),
+      session: row.session,
+      venue_name: row.venues?.name ?? null,
     }));
   }
 
@@ -83,6 +85,8 @@ export class MeExamScheduleService {
           exam_date: true,
           start_time: true,
           end_time: true,
+          session: true,
+          venues: { select: { name: true } },
           exam_subject_mapping: {
             select: {
               subjects: { select: { name: true, subject_code: true } },

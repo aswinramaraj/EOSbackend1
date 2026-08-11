@@ -1,12 +1,8 @@
-import {
-  IsDateString,
-  IsInt,
-  IsNotEmpty,
-  IsPositive,
-  IsString,
-  MaxLength,
-} from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsPositive } from 'class-validator';
 import { Type } from 'class-transformer';
+
+// exam_session_enum (schema.prisma) — FN (forenoon) / AN (afternoon).
+const EXAM_SESSIONS = ['FN', 'AN'] as const;
 
 export class CreateInvigilationDto {
   @IsInt()
@@ -27,8 +23,6 @@ export class CreateInvigilationDto {
   @IsDateString()
   duty_date!: string;
 
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(20)
-  shift!: string;
+  @IsIn(EXAM_SESSIONS, { message: 'session must be FN or AN' })
+  session!: 'FN' | 'AN';
 }

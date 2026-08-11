@@ -454,6 +454,20 @@ model companies {
   placement_drives placement_drives[]
 }
 
+model coordinator_calendar_entries {
+  id            Int                                  @id @default(autoincrement())
+  academic_year String                               @db.VarChar(20)
+  semester      Int?                                 @db.SmallInt
+  entry_date    DateTime                             @db.Date
+  entry_type    coordinator_calendar_entry_type_enum
+  title         String                               @db.VarChar(200)
+  created_at    DateTime                             @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime                             @default(now()) @db.Timestamptz(6)
+
+  @@index([entry_date], map: "idx_coordinator_calendar_entries_date")
+  @@index([academic_year, semester], map: "idx_coordinator_calendar_entries_year_semester")
+}
+
 model courses {
   id             Int         @id @default(autoincrement())
   name           String      @db.VarChar(150)
@@ -823,13 +837,31 @@ model fee_payments {
   created_at                    DateTime                      @default(now()) @db.Timestamptz(6)
   fee_structure_item_id         Int?
   fee_payment_gateway_orders    fee_payment_gateway_orders[]
+  fee_receipt_number_payments   fee_receipt_number_payments[]
   users                         users?                        @relation(fields: [collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   fee_structure_items           fee_structure_items?          @relation(fields: [fee_structure_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_fee_demand_mapping    student_fee_demand_mapping    @relation(fields: [student_fee_demand_mapping_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  fee_receipt_number_payments   fee_receipt_number_payments[]
 
   @@index([student_fee_demand_mapping_id], map: "idx_fee_payments_demand")
   @@index([fee_structure_item_id], map: "idx_fee_payments_fee_structure_item")
+}
+
+model fee_receipt_number_payments {
+  receipt_number_id   Int
+  fee_payment_id      Int
+  fee_payments        fee_payments        @relation(fields: [fee_payment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  fee_receipt_numbers fee_receipt_numbers @relation(fields: [receipt_number_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([receipt_number_id, fee_payment_id])
+}
+
+model fee_receipt_numbers {
+  id                          Int                           @id @default(autoincrement())
+  print_date                  DateTime                      @db.Date
+  issued_by_user_id           Int?
+  issued_at                   DateTime                      @default(now()) @db.Timestamptz(6)
+  fee_receipt_number_payments fee_receipt_number_payments[]
+  users                       users?                        @relation(fields: [issued_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model fee_structure_items {
@@ -2939,6 +2971,18 @@ model leave_types {
   faculty_leaves         faculty_leaves[]
 }
 
+model device_push_tokens {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  push_token String   @unique @db.VarChar(255)
+  platform   String   @db.VarChar(20)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([user_id], map: "idx_device_push_tokens_user")
+}
+
 model curriculum_mappings {
   id            Int         @id @default(autoincrement())
   department_id Int
@@ -2953,18 +2997,6 @@ model curriculum_mappings {
 
   @@unique([department_id, semester, subject_id])
   @@index([department_id, semester], map: "idx_curriculum_mappings_dept_semester")
-}
-
-model device_push_tokens {
-  id         Int      @id @default(autoincrement())
-  user_id    Int
-  push_token String   @unique @db.VarChar(255)
-  platform   String   @db.VarChar(20)
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
-  users      users    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([user_id], map: "idx_device_push_tokens_user")
 }
 
 model fee_payment_gateway_orders {
@@ -2985,24 +3017,6 @@ model fee_payment_gateway_orders {
 
   @@index([student_fee_demand_mapping_id], map: "idx_fee_payment_gateway_orders_mapping")
   @@index([created_by_user_id], map: "idx_fee_payment_gateway_orders_user")
-}
-
-model fee_receipt_number_payments {
-  receipt_number_id   Int
-  fee_payment_id      Int
-  fee_payments        fee_payments        @relation(fields: [fee_payment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  fee_receipt_numbers fee_receipt_numbers @relation(fields: [receipt_number_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@id([receipt_number_id, fee_payment_id])
-}
-
-model fee_receipt_numbers {
-  id                          Int                           @id @default(autoincrement())
-  print_date                  DateTime                      @db.Date
-  issued_by_user_id           Int?
-  issued_at                   DateTime                      @default(now()) @db.Timestamptz(6)
-  fee_receipt_number_payments fee_receipt_number_payments[]
-  users                       users?                        @relation(fields: [issued_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model feedback_assignment_questions {
@@ -3231,6 +3245,11 @@ enum payment_mode_enum {
   dd
   netbanking
   razorpay
+}
+
+enum coordinator_calendar_entry_type_enum {
+  LEAVE
+  EVENT
 }
 
 enum payslip_status_enum {
@@ -3520,26 +3539,6 @@ enum salary_payment_status_enum {
   hold
 }
 
-enum fee_payment_gateway_status_enum {
-  pending
-  success
-  failed
-}
-
-enum feedback_assignment_status_enum {
-  NOT_STARTED
-  IN_PROGRESS
-  CLOSED
-}
-
-enum feedback_course_type_enum {
-  THEORY
-  THEORY_WITH_PRACTICAL
-  THEORY_WITH_PRACTICAL_WITH_PROJECT
-  LABORATORY
-  ADDITIONAL
-}
-
 enum notification_type_enum {
   approval_request_pending
   approval_request_approved
@@ -3560,4 +3559,24 @@ enum notification_type_enum {
   placement_drive_new
   placement_status_updated
   hostel_complaint_status_updated
+}
+
+enum fee_payment_gateway_status_enum {
+  pending
+  success
+  failed
+}
+
+enum feedback_assignment_status_enum {
+  NOT_STARTED
+  IN_PROGRESS
+  CLOSED
+}
+
+enum feedback_course_type_enum {
+  THEORY
+  THEORY_WITH_PRACTICAL
+  THEORY_WITH_PRACTICAL_WITH_PROJECT
+  LABORATORY
+  ADDITIONAL
 }
