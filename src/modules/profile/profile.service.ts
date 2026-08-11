@@ -239,7 +239,7 @@ export class ProfileService {
         profile_url: true,
         resume_url: true,
         users: { select: { email: true } },
-        departments_faculty_department_idTodepartments: {
+        departments: {
           select: { name: true, code: true },
         },
         faculty: { select: { first_name: true, last_name: true } },
@@ -256,9 +256,9 @@ export class ProfileService {
     return {
       role: 'faculty' as const,
       name: fullName(faculty.first_name, faculty.last_name),
-      id_no: `EMP-${faculty.departments_faculty_department_idTodepartments.code}-${faculty.id}`,
+      id_no: `EMP-${faculty.departments.code}-${faculty.id}`,
       designation: faculty.designation,
-      department: faculty.departments_faculty_department_idTodepartments.name,
+      department: faculty.departments.name,
       photo_url: faculty.profile_url,
       resume_url: faculty.resume_url,
       work_email: faculty.users.email,
@@ -462,7 +462,7 @@ export class ProfileService {
         city: true,
         state: true,
         postal_code: true,
-        departments_faculty_department_idTodepartments: {
+        departments: {
           select: { name: true, code: true },
         },
         faculty_id_card_issuances: {
@@ -485,9 +485,9 @@ export class ProfileService {
       name: fullName(faculty.first_name, faculty.last_name),
       photo_url: faculty.profile_url,
       secondary_id_label: 'Employee ID',
-      secondary_id: `EMP-${faculty.departments_faculty_department_idTodepartments.code}-${faculty.id}`,
+      secondary_id: `EMP-${faculty.departments.code}-${faculty.id}`,
       degree_dept_label: faculty.designation,
-      batch_label: faculty.departments_faculty_department_idTodepartments.name,
+      batch_label: faculty.departments.name,
       issued_at: faculty.faculty_id_card_issuances[0]?.issued_at ?? null,
       // Faculty has no blood_group column anywhere in the schema (only
       // students do) - left null rather than fabricated; see conversation

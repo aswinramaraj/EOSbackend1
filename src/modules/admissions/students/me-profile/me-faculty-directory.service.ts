@@ -31,7 +31,7 @@ export class MeFacultyDirectoryService {
     return faculty.map((f) => ({
       id: f.id,
       name: `${f.first_name} ${f.last_name ?? ''}`.trim(),
-      department_name: f.departments_faculty_department_idTodepartments.name,
+      department_name: f.departments.name,
     }));
   }
 
@@ -43,7 +43,7 @@ export class MeFacultyDirectoryService {
           id: true,
           first_name: true,
           last_name: true,
-          departments_faculty_department_idTodepartments: {
+          departments: {
             select: { name: true },
           },
         },

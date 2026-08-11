@@ -802,7 +802,7 @@ model faculty {
   class_mentors                                                  class_mentors[]
   departments_departments_head_of_department_faculty_idTofaculty departments[]                    @relation("departments_head_of_department_faculty_idTofaculty")
   exam_marks                                                     exam_marks[]
-  departments_faculty_department_idTodepartments                 departments                      @relation("faculty_department_idTodepartments", fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  departments                                                    departments                      @relation("faculty_department_idTodepartments", fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   designations                                                   designations?                    @relation(fields: [designation_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_designation_fkey")
   faculty                                                        faculty?                         @relation("facultyTofaculty", fields: [reports_to_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   other_faculty                                                  faculty[]                        @relation("facultyTofaculty")
@@ -968,37 +968,6 @@ model faculty_leaves {
   users_faculty_leaves_hod_decided_by_user_idTousers users?               @relation("faculty_leaves_hod_decided_by_user_idTousers", fields: [hod_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_hod_decider_fkey")
   users_faculty_leaves_hr_decided_by_user_idTousers  users?               @relation("faculty_leaves_hr_decided_by_user_idTousers", fields: [hr_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_hr_decider_fkey")
   leave_types                                        leave_types?         @relation(fields: [leave_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_leave_type_fkey")
-}
-
-model faculty_od_requests {
-  id                      Int                         @id @default(autoincrement())
-  faculty_id              Int
-  from_date               DateTime                    @db.Date
-  to_date                 DateTime                    @db.Date
-  place                   String?                     @db.VarChar(255)
-  purpose                 String?                     @db.VarChar(255)
-  hod_approval_status     approval_status_enum        @default(pending)
-  hr_approval_status      approval_status_enum        @default(pending)
-  created_at              DateTime                    @default(now()) @db.Timestamptz(6)
-  organization_visited    String?                     @db.VarChar(255)
-  students_guided         Int?
-  sanction_order          String?                     @db.VarChar(100)
-  latitude                Decimal?                    @db.Decimal(10, 6)
-  longitude               Decimal?                    @db.Decimal(10, 6)
-  photo_url               String?                     @db.VarChar(500)
-  photo_uploaded_at       DateTime?                   @db.Timestamptz(6)
-  certificate_url         String?                     @db.VarChar(500)
-  certificate_uploaded_at DateTime?                   @db.Timestamptz(6)
-  verification_status     od_verification_status_enum @default(awaiting_documents)
-  email_sender            String?                     @db.VarChar(255)
-  email_receiver          String?                     @db.VarChar(255)
-  email_subject           String?                     @db.VarChar(255)
-  email_sent_at           DateTime?                   @db.Timestamptz(6)
-  email_body              String?
-  admin_remarks           String?
-  faculty                 faculty                     @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([faculty_id], map: "idx_faculty_od_requests_faculty_id")
 }
 
 model faculty_sensitive_info {
@@ -2056,6 +2025,37 @@ model seating_arrangements {
   seating_plan_versions    seating_plan_versions? @relation(fields: [version_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([hall_plan_id, seat_number])
+}
+
+model faculty_od_requests {
+  id                      Int                         @id @default(autoincrement())
+  faculty_id              Int
+  from_date               DateTime                    @db.Date
+  to_date                 DateTime                    @db.Date
+  place                   String?                     @db.VarChar(255)
+  purpose                 String?                     @db.VarChar(255)
+  hod_approval_status     approval_status_enum        @default(pending)
+  hr_approval_status      approval_status_enum        @default(pending)
+  created_at              DateTime                    @default(now()) @db.Timestamptz(6)
+  organization_visited    String?                     @db.VarChar(255)
+  students_guided         Int?
+  sanction_order          String?                     @db.VarChar(100)
+  latitude                Decimal?                    @db.Decimal(10, 6)
+  longitude               Decimal?                    @db.Decimal(10, 6)
+  photo_url               String?                     @db.VarChar(500)
+  photo_uploaded_at       DateTime?                   @db.Timestamptz(6)
+  certificate_url         String?                     @db.VarChar(500)
+  certificate_uploaded_at DateTime?                   @db.Timestamptz(6)
+  verification_status     od_verification_status_enum @default(awaiting_documents)
+  email_sender            String?                     @db.VarChar(255)
+  email_receiver          String?                     @db.VarChar(255)
+  email_subject           String?                     @db.VarChar(255)
+  email_sent_at           DateTime?                   @db.Timestamptz(6)
+  email_body              String?
+  admin_remarks           String?
+  faculty                 faculty                     @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([faculty_id], map: "idx_faculty_od_requests_faculty_id")
 }
 
 model seating_plan_venue_departments {

@@ -41,7 +41,7 @@ describe('MeFacultyDirectoryService', () => {
         id: 3,
         first_name: 'Kavitha',
         last_name: 'R',
-        departments_faculty_department_idTodepartments: {
+        departments: {
           name: 'Computer Science and Engineering',
         },
       },
@@ -49,7 +49,7 @@ describe('MeFacultyDirectoryService', () => {
         id: 5,
         first_name: 'Naveen',
         last_name: null,
-        departments_faculty_department_idTodepartments: {
+        departments: {
           name: 'Mechanical Engineering',
         },
       },

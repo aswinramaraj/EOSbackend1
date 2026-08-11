@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -23,7 +22,14 @@ const PAYSLIP_SELECT = {
   requested_at: true,
   purpose: true,
   faculty: {
-    select: { id: true, first_name: true, last_name: true, designation: true },
+    select: {
+      id: true,
+      prefix: true,
+      first_name: true,
+      last_name: true,
+      designation: true,
+      departments: { select: { id: true, name: true } },
+    },
   },
 } as const;
 
@@ -37,9 +43,11 @@ interface PayslipRequestRow {
   purpose: string | null;
   faculty: {
     id: number;
+    prefix: string | null;
     first_name: string;
     last_name: string;
     designation: string;
+    departments: { id: number; name: string };
   };
 }
 
@@ -60,7 +68,14 @@ function toResponse(row: PayslipRequestRow) {
     file_url: row.file_url,
     requested_at: row.requested_at,
     purpose: row.purpose,
-    faculty: row.faculty,
+    faculty: {
+      id: row.faculty.id,
+      prefix: row.faculty.prefix,
+      first_name: row.faculty.first_name,
+      last_name: row.faculty.last_name,
+      designation: row.faculty.designation,
+      department: row.faculty.departments,
+    },
   };
 }
 
@@ -172,12 +187,6 @@ export class PayslipRequestsService {
     if (existing.status !== 'pending') {
       throw new ConflictException(
         'This payslip request has already been processed',
-      );
-    }
-
-    if (dto.status === 'processed' && !dto.file_url) {
-      throw new BadRequestException(
-        'file_url is required when marking a request as processed',
       );
     }
 

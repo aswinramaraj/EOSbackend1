@@ -67,7 +67,7 @@ export class IqacReportsService {
               select: {
                 first_name: true,
                 last_name: true,
-                departments_faculty_department_idTodepartments: { select: { name: true } },
+                departments: { select: { name: true } },
               },
             },
             non_teaching_staff: {
@@ -96,7 +96,7 @@ export class IqacReportsService {
         return {
           faculty: profile ? `${profile.first_name} ${profile.last_name ?? ''}`.trim() : booker.email,
           department: booker.faculty
-            ? (booker.faculty.departments_faculty_department_idTodepartments?.name ?? '')
+            ? (booker.faculty.departments?.name ?? '')
             : (staff?.departments?.name ?? ''),
           venue: r.venues_venue_bookings_venue_idTovenues.name,
           purpose: r.purpose,
@@ -178,7 +178,7 @@ export class IqacReportsService {
           select: {
             first_name: true,
             last_name: true,
-            departments_faculty_department_idTodepartments: { select: { name: true } },
+            departments: { select: { name: true } },
           },
         },
       },
@@ -198,7 +198,7 @@ export class IqacReportsService {
       ],
       rows: rows.map((r) => ({
         faculty: `${r.faculty.first_name} ${r.faculty.last_name}`.trim(),
-        department: r.faculty.departments_faculty_department_idTodepartments.name,
+        department: r.faculty.departments.name,
         from: r.from_date.toISOString().slice(0, 10),
         to: r.to_date.toISOString().slice(0, 10),
         purpose: r.purpose ?? '',

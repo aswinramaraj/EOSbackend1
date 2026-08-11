@@ -19,7 +19,7 @@ const BORROW_RECORD_REPORT_INCLUDE = {
       first_name: true,
       last_name: true,
       department_id: true,
-      departments_faculty_department_idTodepartments: {
+      departments: {
         select: { name: true },
       },
     },
@@ -55,7 +55,7 @@ function borrowerDepartment(record: BorrowRecordForReport): {
   if (record.faculty) {
     return {
       id: record.faculty.department_id,
-      name: record.faculty.departments_faculty_department_idTodepartments.name,
+      name: record.faculty.departments.name,
     };
   }
   return { id: null, name: '—' };

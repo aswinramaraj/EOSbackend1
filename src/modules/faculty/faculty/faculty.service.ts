@@ -244,15 +244,14 @@ export class FacultyService {
           orderBy: { id: 'asc' },
           select: {
             id: true,
+            prefix: true,
             first_name: true,
             last_name: true,
             designation: true,
             date_of_joining: true,
             status: true,
             profile_url: true,
-            departments_faculty_department_idTodepartments: {
-              select: { id: true, name: true, code: true },
-            },
+            departments: { select: { id: true, name: true, code: true } },
             users: { select: { email: true, phone: true } },
           },
         }),
@@ -265,10 +264,11 @@ export class FacultyService {
 
     const data = rows.map((faculty) => ({
       id: faculty.id,
+      prefix: faculty.prefix,
       first_name: faculty.first_name,
       last_name: faculty.last_name,
       designation: faculty.designation,
-      department: faculty.departments_faculty_department_idTodepartments,
+      department: faculty.departments,
       date_of_joining: faculty.date_of_joining,
       status: faculty.status,
       profile_url: faculty.profile_url,
@@ -289,7 +289,7 @@ export class FacultyService {
         designation: true,
         date_of_joining: true,
         status: true,
-        departments_faculty_department_idTodepartments: {
+        departments: {
           select: { id: true, name: true, code: true },
         },
         users: { select: { email: true, phone: true } },
@@ -304,7 +304,7 @@ export class FacultyService {
       first_name: faculty.first_name,
       last_name: faculty.last_name,
       designation: faculty.designation,
-      department: faculty.departments_faculty_department_idTodepartments,
+      department: faculty.departments,
       date_of_joining: faculty.date_of_joining,
       status: faculty.status,
       email: faculty.users.email,
@@ -350,7 +350,7 @@ export class FacultyService {
         date_of_joining: true,
         status: true,
         created_at: true,
-        departments_faculty_department_idTodepartments: {
+        departments: {
           select: { id: true, name: true, code: true },
         },
         users: { select: { id: true, email: true, phone: true, status: true } },
@@ -367,7 +367,7 @@ export class FacultyService {
       first_name: faculty.first_name,
       last_name: faculty.last_name,
       designation: faculty.designation,
-      department: faculty.departments_faculty_department_idTodepartments,
+      department: faculty.departments,
       date_of_joining: faculty.date_of_joining,
       status: faculty.status,
       created_at: faculty.created_at,
@@ -426,7 +426,7 @@ export class FacultyService {
             designation: true,
             date_of_joining: true,
             status: true,
-            departments_faculty_department_idTodepartments: {
+            departments: {
               select: { id: true, name: true, code: true },
             },
           },
@@ -457,7 +457,7 @@ export class FacultyService {
           first_name: faculty.first_name,
           last_name: faculty.last_name,
           designation: faculty.designation,
-          department: faculty.departments_faculty_department_idTodepartments,
+          department: faculty.departments,
           date_of_joining: faculty.date_of_joining,
           status: faculty.status,
         };

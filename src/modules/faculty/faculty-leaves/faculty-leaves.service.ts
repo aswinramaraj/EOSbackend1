@@ -19,6 +19,7 @@ const FACULTY_LEAVE_SELECT = {
   from_date: true,
   to_date: true,
   reason: true,
+  leave_type_id: true,
   hod_approval_status: true,
   hr_approval_status: true,
   created_at: true,
@@ -28,11 +29,12 @@ const FACULTY_LEAVE_SELECT = {
       first_name: true,
       last_name: true,
       designation: true,
-      departments_faculty_department_idTodepartments: {
+      departments: {
         select: { id: true, name: true, code: true },
       },
     },
   },
+  leave_types: { select: { id: true, name: true } },
 } as const;
 
 interface FacultyLeaveRow {
@@ -40,6 +42,7 @@ interface FacultyLeaveRow {
   from_date: Date;
   to_date: Date;
   reason: string | null;
+  leave_type_id: number | null;
   hod_approval_status: string;
   hr_approval_status: string;
   created_at: Date;
@@ -48,12 +51,13 @@ interface FacultyLeaveRow {
     first_name: string;
     last_name: string;
     designation: string;
-    departments_faculty_department_idTodepartments: {
+    departments: {
       id: number;
       name: string;
       code: string;
     } | null;
   };
+  leave_types: { id: number; name: string } | null;
 }
 
 function computeOverallStatus(
@@ -75,6 +79,7 @@ function toResponse(leave: FacultyLeaveRow) {
     from_date: leave.from_date,
     to_date: leave.to_date,
     reason: leave.reason,
+    leave_type: leave.leave_types,
     hod_approval_status: leave.hod_approval_status,
     hr_approval_status: leave.hr_approval_status,
     overall_status: computeOverallStatus(
@@ -116,6 +121,7 @@ export class FacultyLeavesService {
         from_date: fromDate,
         to_date: toDate,
         reason: dto.reason,
+        leave_type_id: dto.leave_type_id,
       },
       select: FACULTY_LEAVE_SELECT,
     });
@@ -172,7 +178,7 @@ export class FacultyLeavesService {
     } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
       if (
-        leave.faculty.departments_faculty_department_idTodepartments?.id !==
+        leave.faculty.departments?.id !==
         hod.department_id
       ) {
         throw new ForbiddenException(

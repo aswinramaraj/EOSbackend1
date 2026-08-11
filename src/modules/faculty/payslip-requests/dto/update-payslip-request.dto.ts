@@ -4,9 +4,11 @@ import { IsIn, IsOptional, IsUrl, MaxLength } from 'class-validator';
  * PATCH /payslip-requests/:id (HR Payroll only).
  *
  * A state-machine transition (pending -> processed/rejected), not a
- * free-form edit — same shape as Media Requests' review DTO. `file_url` is
- * required exactly when marking a request 'processed' (that's the payslip
- * file being delivered); not accepted/required for 'rejected'.
+ * free-form edit. Approving ('processed') is just HR's go-ahead — it doesn't
+ * generate anything here; the faculty module (separate, built later) is
+ * where the faculty actually generates their payslip once this is approved.
+ * `file_url` is entirely optional on both transitions — only useful if HR
+ * happens to already have a direct link to hand over.
  */
 export class UpdatePayslipRequestDto {
   @IsIn(['processed', 'rejected'])

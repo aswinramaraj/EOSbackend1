@@ -24,9 +24,9 @@ import { UploadDocumentDto } from './dto/upload-document.dto';
 const memoryUpload = { storage: memoryStorage() };
 
 /**
- * Admin-only profile photo + document uploads for a faculty record. File
- * bytes always flow through StorageProvider (see src/modules/storage/) —
- * nothing here talks to Supabase (or any storage vendor) directly.
+ * Profile photo + document uploads (Admin/HR Payroll) for a faculty record.
+ * File bytes always flow through StorageProvider (see src/modules/storage/)
+ * — nothing here talks to Supabase (or any storage vendor) directly.
  */
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('me/faculty')
@@ -34,7 +34,7 @@ export class FacultyFilesController {
   constructor(private readonly filesService: FacultyFilesService) {}
 
   @Post(':id/photo')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.HR_PAYROLL)
   @UseInterceptors(FileInterceptor('file', memoryUpload))
   uploadPhoto(
     @Param('id', ParseIntPipe) id: number,
@@ -44,19 +44,19 @@ export class FacultyFilesController {
   }
 
   @Delete(':id/photo')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.HR_PAYROLL)
   removePhoto(@Param('id', ParseIntPipe) id: number) {
     return this.filesService.removePhoto(id);
   }
 
   @Get(':id/documents')
-  @Roles(ROLES.ADMIN, ROLES.HOD)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
   listDocuments(@Param('id', ParseIntPipe) id: number) {
     return this.filesService.listDocuments(id);
   }
 
   @Post(':id/documents')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.HR_PAYROLL)
   @UseInterceptors(FileInterceptor('file', memoryUpload))
   uploadDocument(
     @Param('id', ParseIntPipe) id: number,
@@ -73,7 +73,7 @@ export class FacultyFilesController {
   }
 
   @Delete(':id/documents/:documentId')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.HR_PAYROLL)
   deleteDocument(
     @Param('id', ParseIntPipe) id: number,
     @Param('documentId', ParseIntPipe) documentId: number,
