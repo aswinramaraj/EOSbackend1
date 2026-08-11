@@ -5,10 +5,12 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { StudentOdsService } from './student-ods.service';
 
 describe('StudentOdsService', () => {
   let service: StudentOdsService;
+  let notifications: { notify: jest.Mock };
   let prisma: {
     faculty: { findUnique: jest.Mock };
     class_mentors: { findMany: jest.Mock; findFirst: jest.Mock };
@@ -21,6 +23,7 @@ describe('StudentOdsService', () => {
     };
     od_team_members: { findMany: jest.Mock };
     classes: { findMany: jest.Mock };
+    departments: { findUnique: jest.Mock };
     od_request_hod_approvals: {
       findMany: jest.Mock;
       findFirst: jest.Mock;
@@ -71,6 +74,7 @@ describe('StudentOdsService', () => {
       },
       od_team_members: { findMany: jest.fn().mockResolvedValue([]) },
       classes: { findMany: jest.fn().mockResolvedValue([]) },
+      departments: { findUnique: jest.fn() },
       od_request_hod_approvals: {
         findMany: jest.fn(),
         findFirst: jest.fn(),
@@ -79,11 +83,13 @@ describe('StudentOdsService', () => {
       },
       $transaction: jest.fn((queries: Promise<unknown>[]) => Promise.all(queries)),
     };
+    notifications = { notify: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StudentOdsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
 
@@ -248,6 +254,14 @@ describe('StudentOdsService', () => {
         data: { mentor_approval_status: 'approved' },
         select: expect.any(Object),
       });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 100,
+          type: 'approval_request_approved',
+          related_entity_type: 'od_request',
+          related_entity_id: 1,
+        }),
+      );
     });
 
     it('sets mentor_approval_status to rejected on reject', async () => {
@@ -266,6 +280,88 @@ describe('StudentOdsService', () => {
         data: { mentor_approval_status: 'rejected' },
         select: expect.any(Object),
       });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 100,
+          type: 'approval_request_rejected',
+          related_entity_type: 'od_request',
+          related_entity_id: 1,
+        }),
+      );
+    });
+  });
+
+  describe('hodApprove', () => {
+    it('throws 404 HOD_APPROVAL_NOT_FOUND when the request has not reached this department', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 10 });
+      prisma.od_request_hod_approvals.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.hodApprove(1, { decision: 'approved' }, 1),
+      ).rejects.toMatchObject({
+        status: 404,
+        response: { errorCode: 'HOD_APPROVAL_NOT_FOUND' },
+      });
+      expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it('throws 422 ALREADY_DECIDED when every row for this department has already been reviewed', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 10 });
+      prisma.od_request_hod_approvals.findMany.mockResolvedValue([
+        { status: 'approved' },
+      ]);
+
+      await expect(
+        service.hodApprove(1, { decision: 'approved' }, 1),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: { errorCode: 'ALREADY_DECIDED' },
+      });
+      expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it('notifies the request creator when this department approves', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 10 });
+      prisma.od_request_hod_approvals.findMany.mockResolvedValue([
+        { status: 'pending' },
+      ]);
+      prisma.od_requests.findUniqueOrThrow.mockResolvedValue(odRequestRow());
+      prisma.departments.findUnique.mockResolvedValue({ name: 'Electronics Engineering' });
+
+      await service.hodApprove(1, { decision: 'approved' }, 1);
+
+      expect(prisma.od_request_hod_approvals.updateMany).toHaveBeenCalledWith({
+        where: { od_request_id: 1, department_id: 10, status: 'pending' },
+        data: expect.objectContaining({ status: 'approved', hod_user_id: 1 }),
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 100,
+          type: 'approval_request_approved',
+          related_entity_type: 'od_request',
+          related_entity_id: 1,
+        }),
+      );
+    });
+
+    it('notifies the request creator when this department rejects', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7, department_id: 10 });
+      prisma.od_request_hod_approvals.findMany.mockResolvedValue([
+        { status: 'pending' },
+      ]);
+      prisma.od_requests.findUniqueOrThrow.mockResolvedValue(odRequestRow());
+      prisma.departments.findUnique.mockResolvedValue({ name: 'Electronics Engineering' });
+
+      await service.hodApprove(1, { decision: 'rejected' }, 1);
+
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 100,
+          type: 'approval_request_rejected',
+          related_entity_type: 'od_request',
+          related_entity_id: 1,
+        }),
+      );
     });
   });
 });

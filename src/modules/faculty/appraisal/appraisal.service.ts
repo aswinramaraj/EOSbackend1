@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/modules/storage/storage.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
@@ -160,6 +161,7 @@ export class AppraisalService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -245,6 +247,21 @@ export class AppraisalService {
     this.logger.log(
       `Appraisal request created: id=${request.id} faculty=${faculty.id}`,
     );
+
+    // An HoD's own self-submission skips the HoD stage entirely (see this
+    // method's own doc comment) and has no one department-level to notify.
+    if (!isHodSelfSubmission) {
+      const hodUserId = await this.resolveDepartmentHodUserId(faculty.department_id);
+      if (hodUserId) {
+        await this.notifyAppraisal(hodUserId, {
+          title: 'New appraisal request to review',
+          message: `${faculty.first_name} ${faculty.last_name} submitted an appraisal for ${dto.academic_year}.`,
+          type: 'approval_request_pending',
+          related_entity_id: request.id,
+        });
+      }
+    }
+
     return toResponse(request);
   }
 
@@ -404,10 +421,10 @@ export class AppraisalService {
           'You may only review appraisal requests from your own department',
         );
       }
-      return this.applyHodReview(id, existing.status, dto, currentUser.sub);
+      return this.applyHodReview(id, existing.status, existing.faculty_id, dto, currentUser.sub);
     }
 
-    return this.applyHrAction(id, existing.status, dto, currentUser.sub);
+    return this.applyHrAction(id, existing.status, existing.faculty_id, dto, currentUser.sub);
   }
 
   /** DELETE /appraisal/:id (Faculty only — own request, only while still 'submitted'). */
@@ -552,6 +569,7 @@ export class AppraisalService {
   private async applyHodReview(
     id: number,
     currentStatus: string,
+    facultyId: number,
     dto: UpdateAppraisalDto,
     hodUserId: number,
   ) {
@@ -579,12 +597,21 @@ export class AppraisalService {
       select: APPRAISAL_SELECT,
     });
 
+    await this.notifyFacultyOfAppraisalStatus(facultyId, id, dto.status);
+    // Passed the HoD stage - now HR Payroll's turn. Broadcast, same
+    // reasoning as revaluation's COE notify: HR Payroll is a global role
+    // with no per-request assignee.
+    if (dto.status === 'hod_reviewed') {
+      await this.notifyRoleUsersOfPendingAppraisal(id);
+    }
+
     return toResponse(request);
   }
 
   private async applyHrAction(
     id: number,
     currentStatus: string,
+    facultyId: number,
     dto: UpdateAppraisalDto,
     hrUserId: number,
   ) {
@@ -603,7 +630,7 @@ export class AppraisalService {
           'entries with scores are required to set status to hr_scored',
         );
       }
-      return this.scoreEntriesAndTransition(id, dto.entries);
+      return this.scoreEntriesAndTransition(id, facultyId, dto.entries);
     }
 
     if (dto.entries !== undefined) {
@@ -627,6 +654,7 @@ export class AppraisalService {
         },
         select: APPRAISAL_SELECT,
       });
+      await this.notifyFacultyOfAppraisalStatus(facultyId, id, 'management_approved');
       return toResponse(request);
     }
 
@@ -641,11 +669,13 @@ export class AppraisalService {
       data: { status: 'rejected' },
       select: APPRAISAL_SELECT,
     });
+    await this.notifyFacultyOfAppraisalStatus(facultyId, id, 'rejected');
     return toResponse(request);
   }
 
   private async scoreEntriesAndTransition(
     id: number,
+    facultyId: number,
     entries: AppraisalEntryScoreDto[],
   ) {
     const entryIds = entries.map((e) => e.entry_id);
@@ -695,7 +725,112 @@ export class AppraisalService {
       });
     });
 
+    await this.notifyFacultyOfAppraisalStatus(facultyId, id, 'hr_scored');
+
     return toResponse(request);
+  }
+
+  private async notifyFacultyOfAppraisalStatus(
+    facultyId: number,
+    requestId: number,
+    status: string,
+  ): Promise<void> {
+    try {
+      const faculty = await this.prisma.faculty.findUnique({
+        where: { id: facultyId },
+        select: { user_id: true },
+      });
+      if (!faculty) return;
+
+      const labels: Record<string, string> = {
+        hod_reviewed: 'reviewed by your HoD and forwarded to HR Payroll',
+        hr_scored: 'scored by HR Payroll',
+        management_approved: 'approved by management',
+        rejected: 'rejected',
+      };
+
+      await this.notifications.notify({
+        user_id: faculty.user_id,
+        title: 'Appraisal request updated',
+        message: `Your appraisal request has been ${labels[status] ?? `updated to ${status}`}.`,
+        type:
+          status === 'rejected'
+            ? 'approval_request_rejected'
+            : status === 'management_approved'
+              ? 'approval_request_approved'
+              : 'approval_request_pending',
+        related_entity_type: 'appraisal_request',
+        related_entity_id: requestId,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to notify faculty of appraisal status for request ${requestId}`, err);
+    }
+  }
+
+  /** HR Payroll is a global role with no per-request assignee - broadcast, same reasoning as revaluation's COE notify. */
+  private async notifyRoleUsersOfPendingAppraisal(requestId: number): Promise<void> {
+    try {
+      const hrUsers = await this.prisma.users.findMany({
+        where: { roles: { name: ROLES.HR_PAYROLL } },
+        select: { id: true },
+      });
+      for (const u of hrUsers) {
+        await this.notifications.notify({
+          user_id: u.id,
+          title: 'Appraisal request ready for scoring',
+          message: 'An HoD-reviewed appraisal request is ready for HR scoring.',
+          type: 'approval_request_pending',
+          related_entity_type: 'appraisal_request',
+          related_entity_id: requestId,
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Failed to notify HR Payroll of appraisal request ${requestId}`, err);
+    }
+  }
+
+  private async notifyAppraisal(
+    userId: number,
+    opts: {
+      title: string;
+      message: string;
+      type: 'approval_request_pending' | 'approval_request_approved' | 'approval_request_rejected';
+      related_entity_id: number;
+    },
+  ): Promise<void> {
+    try {
+      await this.notifications.notify({
+        user_id: userId,
+        title: opts.title,
+        message: opts.message,
+        type: opts.type,
+        related_entity_type: 'appraisal_request',
+        related_entity_id: opts.related_entity_id,
+      });
+    } catch (err) {
+      this.logger.error(`Failed to notify user ${userId} of appraisal request ${opts.related_entity_id}`, err);
+    }
+  }
+
+  /**
+   * Two plain sequential queries rather than one nested relation select -
+   * mirrors resolveDepartmentHodUserId in faculty-leaves.service.ts, for
+   * the same reason: departments' auto-generated HoD relation field name
+   * is not stable across `db pull` runs.
+   */
+  private async resolveDepartmentHodUserId(departmentId: number): Promise<number | null> {
+    const department = await this.prisma.departments.findUnique({
+      where: { id: departmentId },
+      select: { head_of_department_faculty_id: true },
+    });
+    if (!department?.head_of_department_faculty_id) {
+      return null;
+    }
+    const hod = await this.prisma.faculty.findUnique({
+      where: { id: department.head_of_department_faculty_id },
+      select: { user_id: true },
+    });
+    return hod?.user_id ?? null;
   }
 
   private async resolveFacultyByUserId(userId: number) {

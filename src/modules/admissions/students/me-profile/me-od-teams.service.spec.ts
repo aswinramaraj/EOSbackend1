@@ -1,11 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { MeOdTeamsService } from './me-od-teams.service';
 
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 describe('MeOdTeamsService', () => {
   let service: MeOdTeamsService;
+  let notifications: { notify: jest.Mock };
   let tx: {
     od_teams: { create: jest.Mock; updateMany: jest.Mock };
     od_team_members: { create: jest.Mock };
@@ -22,6 +24,8 @@ describe('MeOdTeamsService', () => {
       delete: jest.Mock;
     };
     faculty: { findUnique: jest.Mock };
+    class_mentors: { findFirst: jest.Mock };
+    departments: { findUnique: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -45,13 +49,17 @@ describe('MeOdTeamsService', () => {
         delete: jest.fn(),
       },
       faculty: { findUnique: jest.fn() },
+      class_mentors: { findFirst: jest.fn() },
+      departments: { findUnique: jest.fn() },
       $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(tx)),
     };
+    notifications = { notify: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MeOdTeamsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
 
@@ -1003,6 +1011,90 @@ describe('MeOdTeamsService', () => {
       });
 
       expect(result.hod_approvals).toEqual([]);
+    });
+
+    it("notifies the creator's mentor and every distinct department's HoD, right at submission", async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 7, class_id: 5 });
+      prisma.od_teams.findUnique.mockResolvedValue({
+        id: 61,
+        created_by_student_id: 7,
+        is_locked: false,
+        unique_code: 'X7K9QT',
+      });
+      prisma.od_team_members.findMany.mockResolvedValue([
+        { student_id: 7 },
+        { student_id: 8 },
+      ]);
+      prisma.students.findMany.mockResolvedValue([
+        { id: 7, classes: { department_id: 1, departments: { name: 'CSE' } } },
+        { id: 8, classes: { department_id: 2, departments: { name: 'Mechanical' } } },
+      ]);
+      tx.od_requests.create.mockResolvedValue({
+        id: 61,
+        team_id: 61,
+        from_date: new Date('2099-08-12T00:00:00.000Z'),
+        to_date: new Date('2099-08-13T00:00:00.000Z'),
+        reason: null,
+        mentor_approval_status: 'pending',
+      });
+      tx.od_request_hod_approvals.createMany.mockResolvedValue({ count: 2 });
+      prisma.class_mentors.findFirst.mockResolvedValue({ faculty_id: 30 });
+      prisma.faculty.findUnique.mockResolvedValue({ user_id: 300 });
+      prisma.departments.findUnique
+        .mockResolvedValueOnce({ head_of_department_faculty_id: 40 })
+        .mockResolvedValueOnce({ head_of_department_faculty_id: 41 });
+
+      await service.submitOdRequest(103, 61, {
+        from_date: '2099-08-12',
+        to_date: '2099-08-13',
+      });
+
+      expect(prisma.class_mentors.findFirst).toHaveBeenCalledWith({
+        where: { class_id: 5 },
+        select: { faculty_id: true },
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 300,
+          type: 'approval_request_pending',
+          related_entity_type: 'od_request',
+          related_entity_id: 61,
+        }),
+      );
+      // Once per distinct department (1 and 2), plus once for the mentor = 3 total.
+      expect(notifications.notify).toHaveBeenCalledTimes(3);
+    });
+
+    it('skips the mentor notification (without erroring) when the creator has no class assigned', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 7, class_id: null });
+      prisma.od_teams.findUnique.mockResolvedValue({
+        id: 61,
+        created_by_student_id: 7,
+        is_locked: false,
+        unique_code: 'X7K9QT',
+      });
+      prisma.od_team_members.findMany.mockResolvedValue([{ student_id: 7 }]);
+      prisma.students.findMany.mockResolvedValue([
+        { id: 7, classes: { department_id: 1, departments: { name: 'CSE' } } },
+      ]);
+      tx.od_requests.create.mockResolvedValue({
+        id: 61,
+        team_id: 61,
+        from_date: new Date('2099-08-12T00:00:00.000Z'),
+        to_date: new Date('2099-08-13T00:00:00.000Z'),
+        reason: null,
+        mentor_approval_status: 'pending',
+      });
+      tx.od_request_hod_approvals.createMany.mockResolvedValue({ count: 1 });
+      prisma.departments.findUnique.mockResolvedValue({ head_of_department_faculty_id: null });
+
+      await service.submitOdRequest(103, 61, {
+        from_date: '2099-08-12',
+        to_date: '2099-08-13',
+      });
+
+      expect(prisma.class_mentors.findFirst).not.toHaveBeenCalled();
+      expect(notifications.notify).not.toHaveBeenCalled();
     });
   });
 });

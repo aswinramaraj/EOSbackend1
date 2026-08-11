@@ -8,10 +8,9 @@ import { ListMyNotificationsQueryDto } from './dto/list-my-notifications-query.d
 
 /**
  * Self-scoped notifications inbox (bell icon). Any authenticated role can
- * have notifications — not restricted with @Roles. New controller alongside
- * the existing NotificationsGateway (websocket, real-time push); this is
- * the polling/REST counterpart the frontend needs for an inbox list, unread
- * count, and mark-as-read, none of which existed before.
+ * have notifications — not restricted with @Roles. Distinct from the
+ * broader NotificationsController (mounted at /notifications): this is the
+ * self-service surface for an inbox list, unread count, and mark-as-read.
  */
 @Controller('me/notifications')
 @UseGuards(JwtAuthGuard)
@@ -23,7 +22,7 @@ export class MeNotificationsController {
     @Query() query: ListMyNotificationsQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.notificationsService.findAllForUser(user.sub, {
+    return this.notificationsService.findPaginatedForUser(user.sub, {
       page: query.page ?? 1,
       limit: query.limit ?? 20,
       unreadOnly: query.unread === 'true',

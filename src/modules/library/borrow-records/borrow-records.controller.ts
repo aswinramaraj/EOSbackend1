@@ -101,6 +101,13 @@ export class BorrowRecordsController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('library', 'admin')
+  @Post('library/borrow-records/send-due-soon-reminders')
+  sendDueSoonReminders() {
+    return this.borrowRecordsService.sendDueSoonReminders();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('library', 'admin')
   @Patch('library/borrow-records/:id/create-replacement-indent')
   createReplacementIndent(
     @Param('id', ParseIntPipe) id: number,

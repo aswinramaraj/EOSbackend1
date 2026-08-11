@@ -11,6 +11,7 @@ import { MeFeesService } from 'src/modules/admissions/students/me-profile/me-fee
 import { MeAcademicCalendarService } from 'src/modules/admissions/students/me-profile/me-academic-calendar.service';
 import { TimetableService } from 'src/modules/faculty/timetable/timetable.service';
 import { DrivesService } from 'src/modules/placement/drives/drives.service';
+import { FeePaymentService } from 'src/modules/fees-billing/fee-payments/fee-payment.service';
 import { ParentsService } from './parents.service';
 
 describe('ParentsService', () => {
@@ -22,6 +23,7 @@ describe('ParentsService', () => {
   let meAcademicCalendarService: { getAcademicCalendarForStudentId: jest.Mock };
   let timetableService: { getTimetableForStudentId: jest.Mock };
   let drivesService: { getUpcomingForStudentId: jest.Mock; getPlacementHistoryForStudentId: jest.Mock };
+  let feePaymentService: { createGatewayOrderForChild: jest.Mock; verifyGatewayPayment: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -33,6 +35,7 @@ describe('ParentsService', () => {
     meAcademicCalendarService = { getAcademicCalendarForStudentId: jest.fn() };
     timetableService = { getTimetableForStudentId: jest.fn() };
     drivesService = { getUpcomingForStudentId: jest.fn(), getPlacementHistoryForStudentId: jest.fn() };
+    feePaymentService = { createGatewayOrderForChild: jest.fn(), verifyGatewayPayment: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -44,6 +47,7 @@ describe('ParentsService', () => {
         { provide: MeAcademicCalendarService, useValue: meAcademicCalendarService },
         { provide: TimetableService, useValue: timetableService },
         { provide: DrivesService, useValue: drivesService },
+        { provide: FeePaymentService, useValue: feePaymentService },
       ],
     }).compile();
 
@@ -197,6 +201,49 @@ describe('ParentsService', () => {
       await service.getChildPlacementHistory(100, 5);
 
       expect(drivesService.getPlacementHistoryForStudentId).toHaveBeenCalledWith(5);
+    });
+
+    it('throws 403 NOT_THIS_PARENT before staging a payment order for an unlinked student', async () => {
+      prisma.parent_student_mapping.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.payChildFeeDemand(100, 999, 3, { amount: 500 } as any),
+      ).rejects.toMatchObject({ response: { errorCode: 'NOT_THIS_PARENT' } });
+      expect(feePaymentService.createGatewayOrderForChild).not.toHaveBeenCalled();
+    });
+
+    it('delegates payChildFeeDemand to FeePaymentService.createGatewayOrderForChild once ownership is confirmed', async () => {
+      prisma.parent_student_mapping.findFirst.mockResolvedValue({ id: 1 });
+      feePaymentService.createGatewayOrderForChild.mockResolvedValue({ order_id: 'order_1' });
+
+      await service.payChildFeeDemand(100, 5, 3, { amount: 500 } as any);
+
+      expect(feePaymentService.createGatewayOrderForChild).toHaveBeenCalledWith(100, 5, 3, {
+        amount: 500,
+      });
+    });
+
+    it('throws 403 NOT_THIS_PARENT before verifying a payment for an unlinked student', async () => {
+      prisma.parent_student_mapping.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.verifyChildFeePayment(100, 999, { razorpay_order_id: 'o' } as any),
+      ).rejects.toMatchObject({ response: { errorCode: 'NOT_THIS_PARENT' } });
+      expect(feePaymentService.verifyGatewayPayment).not.toHaveBeenCalled();
+    });
+
+    it('delegates verifyChildFeePayment to FeePaymentService.verifyGatewayPayment (keyed by parentUserId) once ownership is confirmed', async () => {
+      prisma.parent_student_mapping.findFirst.mockResolvedValue({ id: 1 });
+      feePaymentService.verifyGatewayPayment.mockResolvedValue({ fee_payment_id: 77 });
+      const dto = {
+        razorpay_order_id: 'order_1',
+        razorpay_payment_id: 'pay_1',
+        razorpay_signature: 'sig',
+      };
+
+      await service.verifyChildFeePayment(100, 5, dto as any);
+
+      expect(feePaymentService.verifyGatewayPayment).toHaveBeenCalledWith(100, dto);
     });
   });
 });

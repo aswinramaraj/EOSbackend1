@@ -6,13 +6,17 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/modules/storage/storage.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { AppraisalService } from './appraisal.service';
 
 describe('AppraisalService', () => {
   let service: AppraisalService;
+  let notifications: { notify: jest.Mock };
   let prisma: {
     faculty: { findUnique: jest.Mock };
+    departments: { findUnique: jest.Mock };
+    users: { findMany: jest.Mock };
     appraisal_criteria: { findMany: jest.Mock };
     appraisal_divisions: { findUnique: jest.Mock };
     appraisal_requests: {
@@ -42,6 +46,8 @@ describe('AppraisalService', () => {
   beforeEach(async () => {
     prisma = {
       faculty: { findUnique: jest.fn() },
+      departments: { findUnique: jest.fn() },
+      users: { findMany: jest.fn().mockResolvedValue([]) },
       appraisal_criteria: { findMany: jest.fn() },
       appraisal_divisions: { findUnique: jest.fn() },
       appraisal_requests: {
@@ -67,12 +73,14 @@ describe('AppraisalService', () => {
       $transaction: jest.fn(),
     };
     storage = { upload: jest.fn(), remove: jest.fn() };
+    notifications = { notify: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AppraisalService,
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: storage },
+        { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
 
@@ -160,6 +168,69 @@ describe('AppraisalService', () => {
 
       const [args] = txCreate.mock.calls[0] as [{ data: Record<string, unknown> }];
       expect(args.data).toEqual({ faculty_id: 5, academic_year: '2025-2026' });
+    });
+
+    it("notifies the department HoD when a non-HoD faculty member submits", async () => {
+      prisma.faculty.findUnique.mockImplementation(({ where }: any) =>
+        where.user_id === 1
+          ? Promise.resolve({ id: 5, department_id: 2, first_name: 'Ada', last_name: 'Lovelace' })
+          : where.id === 40
+            ? Promise.resolve({ user_id: 777 })
+            : Promise.resolve(null),
+      );
+      prisma.departments.findUnique.mockResolvedValue({ head_of_department_faculty_id: 40 });
+      prisma.appraisal_requests.findFirst.mockResolvedValue(null);
+      prisma.appraisal_criteria.findMany.mockResolvedValue([
+        { id: 1, academic_year: '2025-2026' },
+      ]);
+      prisma.$transaction.mockImplementation((cb: any) =>
+        cb({
+          appraisal_requests: {
+            create: jest.fn().mockResolvedValue({ id: 42 }),
+            findUniqueOrThrow: jest.fn().mockResolvedValue(requestRow({ id: 42 })),
+          },
+          appraisal_entries: { createMany: jest.fn() },
+        }),
+      );
+
+      await service.create(
+        { academic_year: '2025-2026', entries: [{ criteria_id: 1 }] } as any,
+        { sub: 1, role: ROLES.FACULTY } as any,
+      );
+
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 777,
+          type: 'approval_request_pending',
+          related_entity_type: 'appraisal_request',
+          related_entity_id: 42,
+        }),
+      );
+    });
+
+    it("does not notify anyone when an HoD submits their own appraisal (skips the HoD stage)", async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 9, department_id: 2 });
+      prisma.appraisal_requests.findFirst.mockResolvedValue(null);
+      prisma.appraisal_criteria.findMany.mockResolvedValue([
+        { id: 1, academic_year: '2025-2026' },
+      ]);
+      prisma.$transaction.mockImplementation((cb: any) =>
+        cb({
+          appraisal_requests: {
+            create: jest.fn().mockResolvedValue({ id: 1 }),
+            findUniqueOrThrow: jest.fn().mockResolvedValue(requestRow({ status: 'hod_reviewed' })),
+          },
+          appraisal_entries: { createMany: jest.fn() },
+        }),
+      );
+
+      await service.create(
+        { academic_year: '2025-2026', entries: [{ criteria_id: 1 }] } as any,
+        { sub: 23, role: ROLES.HOD } as any,
+      );
+
+      expect(prisma.departments.findUnique).not.toHaveBeenCalled();
+      expect(notifications.notify).not.toHaveBeenCalled();
     });
   });
 
@@ -274,12 +345,20 @@ describe('AppraisalService', () => {
       expect(prisma.appraisal_requests.update).not.toHaveBeenCalled();
     });
 
-    it('lets a HOD caller forward a submitted request from their own department to HR (hod_reviewed)', async () => {
+    it('lets a HOD caller forward a submitted request from their own department to HR (hod_reviewed), notifying the faculty member and every HR Payroll account', async () => {
       prisma.appraisal_requests.findUnique.mockResolvedValue({
+        faculty_id: 5,
         status: 'submitted',
         faculty: { department_id: 2 },
       });
-      prisma.faculty.findUnique.mockResolvedValue({ id: 9, department_id: 2 });
+      prisma.faculty.findUnique.mockImplementation(({ where }: any) =>
+        where.user_id === 23
+          ? Promise.resolve({ id: 9, department_id: 2 })
+          : where.id === 5
+            ? Promise.resolve({ user_id: 501 })
+            : Promise.resolve(null),
+      );
+      prisma.users.findMany.mockResolvedValue([{ id: 900 }]);
       prisma.appraisal_requests.update.mockResolvedValue(requestRow({ status: 'hod_reviewed' }));
 
       const result = await service.update(
@@ -294,14 +373,31 @@ describe('AppraisalService', () => {
         select: expect.any(Object),
       });
       expect(result.status).toBe('hod_reviewed');
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: 501, type: 'approval_request_pending', related_entity_type: 'appraisal_request' }),
+      );
+      expect(prisma.users.findMany).toHaveBeenCalledWith({
+        where: { roles: { name: 'hr_payroll' } },
+        select: { id: true },
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: 900, type: 'approval_request_pending' }),
+      );
     });
 
-    it('lets a HOD caller reject a submitted request from their own department', async () => {
+    it('lets a HOD caller reject a submitted request from their own department, notifying the faculty member', async () => {
       prisma.appraisal_requests.findUnique.mockResolvedValue({
+        faculty_id: 5,
         status: 'submitted',
         faculty: { department_id: 2 },
       });
-      prisma.faculty.findUnique.mockResolvedValue({ id: 9, department_id: 2 });
+      prisma.faculty.findUnique.mockImplementation(({ where }: any) =>
+        where.user_id === 23
+          ? Promise.resolve({ id: 9, department_id: 2 })
+          : where.id === 5
+            ? Promise.resolve({ user_id: 501 })
+            : Promise.resolve(null),
+      );
       prisma.appraisal_requests.update.mockResolvedValue(requestRow({ status: 'rejected' }));
 
       await service.update(1, { status: 'rejected' } as any, { sub: 23, role: ROLES.HOD } as any);
@@ -311,6 +407,11 @@ describe('AppraisalService', () => {
         data: { status: 'rejected', hod_reviewed_by: 23, hod_reviewed_at: expect.any(Date) },
         select: expect.any(Object),
       });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: 501, type: 'approval_request_rejected' }),
+      );
+      // Rejected does not move to HR - no role broadcast.
+      expect(prisma.users.findMany).not.toHaveBeenCalled();
     });
 
     it('throws 409 when a HOD caller reviews a request that has already moved past submitted', async () => {
@@ -323,6 +424,71 @@ describe('AppraisalService', () => {
       await expect(
         service.update(1, { status: 'hod_reviewed' } as any, { sub: 23, role: ROLES.HOD } as any),
       ).rejects.toThrow('This appraisal request has already moved past the HoD review stage');
+    });
+  });
+
+  describe('update (HR Payroll stage)', () => {
+    beforeEach(() => {
+      prisma.faculty.findUnique.mockImplementation(({ where }: any) =>
+        where.id === 5 ? Promise.resolve({ user_id: 501 }) : Promise.resolve(null),
+      );
+    });
+
+    it("notifies the faculty member once entries are scored (hr_scored)", async () => {
+      prisma.appraisal_requests.findUnique.mockResolvedValue({
+        faculty_id: 5,
+        status: 'hod_reviewed',
+        faculty: { department_id: 2 },
+      });
+      prisma.appraisal_entries.findMany.mockResolvedValue([
+        { id: 11, appraisal_criteria: { max_score: 10 } },
+      ]);
+      prisma.$transaction.mockImplementation((cb: any) =>
+        cb({
+          appraisal_entries: { update: jest.fn() },
+          appraisal_requests: { update: jest.fn().mockResolvedValue(requestRow({ status: 'hr_scored' })) },
+        }),
+      );
+
+      await service.update(
+        1,
+        { status: 'hr_scored', entries: [{ entry_id: 11, score: 8 }] } as any,
+        { sub: 40, role: ROLES.HR_PAYROLL } as any,
+      );
+
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: 501, type: 'approval_request_pending', related_entity_type: 'appraisal_request' }),
+      );
+    });
+
+    it("notifies the faculty member on management_approved", async () => {
+      prisma.appraisal_requests.findUnique.mockResolvedValue({
+        faculty_id: 5,
+        status: 'hr_scored',
+        faculty: { department_id: 2 },
+      });
+      prisma.appraisal_requests.update.mockResolvedValue(requestRow({ status: 'management_approved' }));
+
+      await service.update(1, { status: 'management_approved' } as any, { sub: 40, role: ROLES.HR_PAYROLL } as any);
+
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: 501, type: 'approval_request_approved' }),
+      );
+    });
+
+    it('notifies the faculty member when HR rejects', async () => {
+      prisma.appraisal_requests.findUnique.mockResolvedValue({
+        faculty_id: 5,
+        status: 'hod_reviewed',
+        faculty: { department_id: 2 },
+      });
+      prisma.appraisal_requests.update.mockResolvedValue(requestRow({ status: 'rejected' }));
+
+      await service.update(1, { status: 'rejected' } as any, { sub: 40, role: ROLES.HR_PAYROLL } as any);
+
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: 501, type: 'approval_request_rejected' }),
+      );
     });
   });
 

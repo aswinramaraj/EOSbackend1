@@ -18,10 +18,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { WalletService } from './wallet.service';
 
 describe('WalletService', () => {
   let service: WalletService;
+  let notifications: { notify: jest.Mock };
   let prisma: {
     wallets: {
       findUnique: jest.Mock;
@@ -85,9 +87,14 @@ describe('WalletService', () => {
       if (Array.isArray(arg)) return Promise.all(arg);
       return (arg as (tx: unknown) => Promise<unknown>)(prisma);
     });
+    notifications = { notify: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [WalletService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        WalletService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: notifications },
+      ],
     }).compile();
 
     service = module.get<WalletService>(WalletService);
@@ -318,6 +325,33 @@ describe('WalletService', () => {
         data: { related_transaction_id: 502 },
       });
       expect(result).toEqual({ balance: 400, transaction_id: 501 });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 20,
+          type: 'wallet_money_received',
+          related_entity_type: 'wallet_transaction',
+          related_entity_id: 502,
+        }),
+      );
+    });
+
+    it('does not fail the transfer if notifying the recipient throws', async () => {
+      prisma.wallets.findUnique
+        .mockResolvedValueOnce(walletRow({ id: 1, pin_hash: await bcrypt.hash(pin, 4) }))
+        .mockResolvedValueOnce(walletRow({ id: 2, user_id: 20 }));
+      prisma.$queryRaw.mockResolvedValue([
+        { id: 1, balance: fakeDecimal(500) },
+        { id: 2, balance: fakeDecimal(200) },
+      ]);
+      prisma.wallets.findUniqueOrThrow.mockResolvedValue(walletRow({ id: 1, balance: '400.00' }));
+      prisma.wallet_transactions.create
+        .mockResolvedValueOnce({ id: 501 })
+        .mockResolvedValueOnce({ id: 502 });
+      notifications.notify.mockRejectedValue(new Error('connection lost'));
+
+      const result = await service.transfer(10, { qr_token: 'their-token', amount: 100, pin });
+
+      expect(result).toEqual({ balance: 400, transaction_id: 501 });
     });
   });
 
@@ -427,6 +461,14 @@ describe('WalletService', () => {
       // just re-reads the wallet after the trigger has already run.
       expect(prisma.wallets.update).not.toHaveBeenCalled();
       expect(result).toEqual({ balance: 750 });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 10,
+          type: 'wallet_topup_success',
+          related_entity_type: 'wallet_transaction',
+          related_entity_id: 900,
+        }),
+      );
     });
 
     it('throws 400 when the order has already been processed', async () => {

@@ -8,9 +8,14 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/common/storage/storage.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
-import { Prisma, announcement_status_enum } from '../../../../generated/prisma/client';
+import {
+  Prisma,
+  announcement_status_enum,
+  target_audience_enum,
+} from '../../../../generated/prisma/client';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 
@@ -51,6 +56,7 @@ export class AnnouncementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -160,9 +166,10 @@ export class AnnouncementsService {
       await this.assertRoleTargetingPermitted(context);
       await this.assertRolesValid(dto.role_ids!);
 
+      let announcement: { id: number } & Record<string, unknown>;
       try {
-        return await this.prisma.$transaction(async (tx) => {
-          const announcement = await tx.announcements.create({
+        announcement = await this.prisma.$transaction(async (tx) => {
+          const created = await tx.announcements.create({
             data: {
               posted_by_user_id: user.sub,
               title: dto.title,
@@ -176,16 +183,12 @@ export class AnnouncementsService {
 
           await tx.announcement_role_mapping.createMany({
             data: dto.role_ids!.map((role_id) => ({
-              announcement_id: announcement.id,
+              announcement_id: created.id,
               role_id,
             })),
           });
 
-          return this.toResponseShape({
-            ...announcement,
-            announcement_class_mapping: [],
-            announcement_role_mapping: dto.role_ids!.map((role_id) => ({ role_id })),
-          });
+          return created;
         });
       } catch (err) {
         this.logger.error('DB error while creating announcement', err);
@@ -194,6 +197,16 @@ export class AnnouncementsService {
           errorCode: 'INTERNAL_ERROR',
         });
       }
+
+      await this.notifyNewAnnouncement(announcement.id, dto.title, 'roles', {
+        roleIds: dto.role_ids,
+      });
+
+      return this.toResponseShape({
+        ...announcement,
+        announcement_class_mapping: [],
+        announcement_role_mapping: dto.role_ids!.map((role_id) => ({ role_id })),
+      });
     }
 
     // 'teachers' is a department-wide faculty broadcast (department_id),
@@ -205,8 +218,9 @@ export class AnnouncementsService {
         context,
       );
 
+      let announcement: { id: number } & Record<string, unknown>;
       try {
-        const announcement = await this.prisma.announcements.create({
+        announcement = await this.prisma.announcements.create({
           data: {
             posted_by_user_id: user.sub,
             title: dto.title,
@@ -218,7 +232,6 @@ export class AnnouncementsService {
             file_name: dto.file_name,
           },
         });
-        return this.toResponseShape({ ...announcement, announcement_class_mapping: [] });
       } catch (err) {
         this.logger.error('DB error while creating announcement', err);
         throw new InternalServerErrorException({
@@ -226,13 +239,20 @@ export class AnnouncementsService {
           errorCode: 'INTERNAL_ERROR',
         });
       }
+
+      await this.notifyNewAnnouncement(announcement.id, dto.title, 'teachers', {
+        departmentId,
+      });
+
+      return this.toResponseShape({ ...announcement, announcement_class_mapping: [] });
     }
 
     await this.assertClassesValid(dto.class_ids!, context);
 
+    let announcement: { id: number } & Record<string, unknown>;
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        const announcement = await tx.announcements.create({
+      announcement = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.announcements.create({
           data: {
             posted_by_user_id: user.sub,
             title: dto.title,
@@ -246,15 +266,12 @@ export class AnnouncementsService {
 
         await tx.announcement_class_mapping.createMany({
           data: dto.class_ids!.map((class_id) => ({
-            announcement_id: announcement.id,
+            announcement_id: created.id,
             class_id,
           })),
         });
 
-        return this.toResponseShape({
-          ...announcement,
-          announcement_class_mapping: dto.class_ids!.map((class_id) => ({ class_id })),
-        });
+        return created;
       });
     } catch (err) {
       this.logger.error('DB error while creating announcement', err);
@@ -263,6 +280,15 @@ export class AnnouncementsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    await this.notifyNewAnnouncement(announcement.id, dto.title, dto.target_audience!, {
+      classIds: dto.class_ids,
+    });
+
+    return this.toResponseShape({
+      ...announcement,
+      announcement_class_mapping: dto.class_ids!.map((class_id) => ({ class_id })),
+    });
   }
 
   /**
@@ -317,6 +343,90 @@ export class AnnouncementsService {
       message: 'You are not permitted to post announcements to faculty',
       errorCode: 'ROLE_NOT_PERMITTED',
     });
+  }
+
+  /**
+   * Fans out "new announcement" notifications to every actual recipient of
+   * a just-published announcement. Only called from create() branches that
+   * have already resolved status === 'published' (a draft is never
+   * announced - it isn't addressed to anyone yet). Never throws - a
+   * failure here must not roll back or fail the announcement's own
+   * creation, which has already committed by the time this runs.
+   */
+  private async notifyNewAnnouncement(
+    announcementId: number,
+    title: string,
+    targetAudience: target_audience_enum,
+    opts: { classIds?: number[]; departmentId?: number | null; roleIds?: number[] },
+  ): Promise<void> {
+    try {
+      const userIds = await this.resolveAnnouncementRecipientUserIds(
+        targetAudience,
+        opts,
+      );
+      for (const userId of userIds) {
+        await this.notifications.notify({
+          user_id: userId,
+          title: 'New announcement',
+          message: title,
+          type: 'announcement_new',
+          related_entity_type: 'announcement',
+          related_entity_id: announcementId,
+        });
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to notify recipients of announcement ${announcementId}`,
+        err,
+      );
+    }
+  }
+
+  private async resolveAnnouncementRecipientUserIds(
+    targetAudience: target_audience_enum,
+    opts: { classIds?: number[]; departmentId?: number | null; roleIds?: number[] },
+  ): Promise<number[]> {
+    switch (targetAudience) {
+      case 'students': {
+        const students = await this.prisma.students.findMany({
+          where: { class_id: { in: opts.classIds ?? [] } },
+          select: { user_id: true },
+        });
+        return students.map((s) => s.user_id);
+      }
+
+      case 'parents': {
+        const links = await this.prisma.parent_student_mapping.findMany({
+          where: { students: { class_id: { in: opts.classIds ?? [] } } },
+          select: { parent_user_id: true },
+        });
+        return [...new Set(links.map((l) => l.parent_user_id))];
+      }
+
+      case 'teachers': {
+        // department_id === null/undefined is an org-wide broadcast to
+        // every faculty account (see resolveTeacherTargetDepartment).
+        const faculty = await this.prisma.faculty.findMany({
+          where:
+            opts.departmentId !== null && opts.departmentId !== undefined
+              ? { department_id: opts.departmentId }
+              : {},
+          select: { user_id: true },
+        });
+        return faculty.map((f) => f.user_id);
+      }
+
+      case 'roles': {
+        const users = await this.prisma.users.findMany({
+          where: { role_id: { in: opts.roleIds ?? [] } },
+          select: { id: true },
+        });
+        return users.map((u) => u.id);
+      }
+
+      default:
+        return [];
+    }
   }
 
   /**
