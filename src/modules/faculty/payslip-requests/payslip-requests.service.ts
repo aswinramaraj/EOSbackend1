@@ -111,7 +111,7 @@ export class PayslipRequestsService {
     }
 
     const request = await this.prisma.payslip_requests.create({
-      data: { faculty_id: faculty.id, year, month },
+      data: { faculty_id: faculty.id, year, month, purpose: dto.purpose },
       select: PAYSLIP_SELECT,
     });
 

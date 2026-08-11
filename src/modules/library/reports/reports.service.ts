@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
-import type { ReportTable } from './report-export.util';
+import type { ReportTable } from 'src/common/utils/report-export.util';
 
 const BORROW_RECORD_REPORT_INCLUDE = {
   books: { select: { title: true, qr_code: true } },
@@ -19,7 +19,9 @@ const BORROW_RECORD_REPORT_INCLUDE = {
       first_name: true,
       last_name: true,
       department_id: true,
-      departments: { select: { name: true } },
+      departments: {
+        select: { name: true },
+      },
     },
   },
 } satisfies Prisma.book_borrow_recordsInclude;

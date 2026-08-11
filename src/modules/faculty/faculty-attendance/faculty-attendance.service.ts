@@ -273,7 +273,9 @@ export class FacultyAttendanceService {
         first_name: true,
         last_name: true,
         profile_url: true,
-        departments: { select: { id: true, name: true, code: true } },
+        departments: {
+          select: { id: true, name: true, code: true },
+        },
       },
       orderBy: { id: 'asc' },
     });

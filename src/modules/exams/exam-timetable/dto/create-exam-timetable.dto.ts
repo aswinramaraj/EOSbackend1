@@ -2,6 +2,7 @@
 import {
   IsBoolean,
   IsDateString,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -9,6 +10,7 @@ import {
   Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { exam_session_enum } from 'generated/prisma/client';
 
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/;
 
@@ -33,6 +35,11 @@ export class CreateExamTimetableDto {
     message: 'end_time must be in HH:mm or HH:mm:ss format',
   })
   end_time!: string;
+
+  @IsEnum(exam_session_enum, {
+    message: `session must be one of: ${Object.values(exam_session_enum).join(', ')}`,
+  })
+  session!: exam_session_enum;
 
   @IsOptional()
   @IsBoolean({ message: 'is_published must be a boolean' })

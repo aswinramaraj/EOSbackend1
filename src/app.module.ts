@@ -15,12 +15,17 @@ import { DepartmentsModule } from './modules/academic-structure/departments/depa
 import { SubjectsModule } from './modules/academic-structure/subjects/subjects.module';
 
 import { BonafideModule } from './modules/admissions/bonafide/bonafide.module';
+import { BonafideReasonsModule } from './modules/admissions/bonafide-reasons/bonafide-reasons.module';
 import { CertificatesModule } from './modules/admissions/certificates/certificates.module';
 import { OdModule } from './modules/admissions/od/od.module';
+import { OdHodApprovalsModule } from './modules/admissions/od-hod-approvals/od-hod-approvals.module';
+import { IqacStudentOdsModule } from './modules/admissions/iqac-student-ods/iqac-student-ods.module';
 import { SoaApplicationsModule } from './modules/admissions/soa-applications/soa-applications.module';
 import { StudentLeavesModule } from './modules/admissions/student-leaves/student-leaves.module';
+import { StudentOdsModule } from './modules/admissions/student-ods/student-ods.module';
 import { StudentsModule } from './modules/admissions/students/students.module';
 import { MeProfileModule } from './modules/admissions/students/me-profile/me-profile.module';
+import { ProfileModule } from './modules/profile/profile.module';
 
 import { AnnouncementsModule } from './modules/announcements/announcements/announcements.module';
 
@@ -48,6 +53,7 @@ import { FacultyFilesModule } from './modules/faculty/faculty-files/faculty-file
 import { FacultyIdCardModule } from './modules/faculty/faculty-id-card/faculty-id-card.module';
 import { FacultyLeavesModule } from './modules/faculty/faculty-leaves/faculty-leaves.module';
 import { FacultyOdRequestsModule } from './modules/faculty/faculty-od-requests/faculty-od-requests.module';
+import { FacultyOdModule } from './modules/faculty/faculty-od/faculty-od.module';
 import { FacultyMappingModule } from './modules/faculty/faculty-mapping/faculty-mapping.module';
 import { FacultyVerificationModule } from './modules/faculty/faculty-verification/faculty-verification.module';
 import { FacultyModule } from './modules/faculty/faculty/faculty.module';
@@ -66,6 +72,7 @@ import { DemandModule } from './modules/fees-billing/demand/demand.module';
 import { EducationLoanDdModule } from './modules/fees-billing/education-loan-dd/education-loan-dd.module';
 import { FeeConcessionModule } from './modules/fees-billing/fee-concessions/fee-concession.module';
 import { FeePaymentModule } from './modules/fees-billing/fee-payments/fee-payment.module';
+import { FinanceOverviewModule } from './modules/fees-billing/finance-overview/finance-overview.module';
 import { FeeStructureModule } from './modules/fees-billing/fee-structure/fee-structure.module';
 import { FeeStructureItemModule } from './modules/fees-billing/fee-structure-items/fee-structure-item.module';
 import { GateLedgerModule } from './modules/fees-billing/gate-ledger/gate-ledger.module';
@@ -102,9 +109,14 @@ import { VendorQuotationsModule } from './modules/procurement/vendor-quotations/
 import { VendorsModule } from './modules/procurement/vendors/vendors.module';
 
 import { VenuesModule } from './modules/venues/venues/venues.module';
+import { ServiceRequestsModule } from './modules/secretary/service-requests/service-requests.module';
+import { ProductRequestsModule } from './modules/secretary/product-requests/product-requests.module';
+import { SecretaryDashboardModule } from './modules/secretary/dashboard/dashboard.module';
+import { SecretaryReportsModule } from './modules/secretary/reports/reports.module';
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
+import { IqacReportsModule } from './modules/iqac/reports/iqac-reports.module';
 
 import { AlumniModule } from './modules/alumni/alumni.module';
 import { AchievementsModule } from './modules/achievements/achievements.module';
@@ -142,12 +154,17 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     SubjectsModule,
 
     BonafideModule,
+    BonafideReasonsModule,
     CertificatesModule,
     OdModule,
+    OdHodApprovalsModule,
+    IqacStudentOdsModule,
     SoaApplicationsModule,
     StudentLeavesModule,
+    StudentOdsModule,
     StudentsModule,
     MeProfileModule,
+    ProfileModule,
 
     AnnouncementsModule,
 
@@ -176,6 +193,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     FacultyLeavesModule,
     LeaveTypesModule,
     FacultyOdRequestsModule,
+    FacultyOdModule,
     FacultyMappingModule,
     FacultyVerificationModule,
     FacultyModule,
@@ -193,6 +211,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     EducationLoanDdModule,
     FeeConcessionModule,
     FeePaymentModule,
+    FinanceOverviewModule,
     FeeStructureModule,
     FeeStructureItemModule,
     GateLedgerModule,
@@ -229,9 +248,14 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     VendorsModule,
 
     VenuesModule,
+    ServiceRequestsModule,
+    ProductRequestsModule,
+    SecretaryDashboardModule,
+    SecretaryReportsModule,
     NotificationsModule,
     FeedbackModule,
     HallTicketClearanceModule,
+    IqacReportsModule,
 
     AlumniModule,
     AchievementsModule,

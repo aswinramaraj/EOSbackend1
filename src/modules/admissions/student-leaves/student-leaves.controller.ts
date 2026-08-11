@@ -32,7 +32,7 @@ export class StudentLeavesController {
     return this.studentLeavesService.create(createStudentLeafDto);
   }
 
-  /** GET /api/v1/student-leaves — Faculty only. The mentor's review queue. */
+  /** GET /api/v1/me/student-leaves — Faculty only. The mentor's review queue. */
   @Get('student-leaves')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.FACULTY)
@@ -57,7 +57,7 @@ export class StudentLeavesController {
   }
 
   /**
-   * PATCH /api/v1/student-leaves/:id/faculty-approve — Faculty only (the
+   * PATCH /api/v1/me/student-leaves/:id/faculty-approve — Faculty only (the
    * student's assigned mentor). First stage of the two-stage approval chain.
    */
   @Patch('student-leaves/:id/faculty-approve')
@@ -72,7 +72,7 @@ export class StudentLeavesController {
   }
 
   /**
-   * PATCH /api/v1/student-leaves/:id/hod-approve — HoD only. Second (final)
+   * PATCH /api/v1/me/student-leaves/:id/hod-approve — HoD only. Second (final)
    * stage of the two-stage approval chain.
    */
   @Patch('student-leaves/:id/hod-approve')

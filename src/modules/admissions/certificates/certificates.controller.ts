@@ -1,45 +1,69 @@
 import {
+  BadRequestException,
+  Body,
   Controller,
   Get,
-  Post,
-  Body,
-  Patch,
   Param,
-  Delete,
+  ParseIntPipe,
+  Patch,
+  Post,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { Roles } from 'src/auth/decorators/roles.decorator';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { CertificatesService } from './certificates.service';
 import { CreateCertificateDto } from './dto/create-certificate.dto';
 import { UpdateCertificateDto } from './dto/update-certificate.dto';
 
-@Controller('certificates')
+const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Admission document checklist — the "documents" feature the admit wizard
+ * and student profile both use. Read access to a single student's own
+ * checklist stays on GET /students/:id/certificates (students.service.ts);
+ * this controller is the write side (attach a scan, tick collected, verify).
+ */
+@Controller()
+@Roles(ROLES.ADMIN)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class CertificatesController {
   constructor(private readonly certificatesService: CertificatesService) {}
 
-  @Post()
-  create(@Body() createCertificateDto: CreateCertificateDto) {
-    return this.certificatesService.create(createCertificateDto);
+  /** GET /certificate-types — the real, DB-backed checklist item list. */
+  @Get('certificate-types')
+  listTypes() {
+    return this.certificatesService.listTypes();
   }
 
-  @Get()
-  findAll() {
-    return this.certificatesService.findAll();
-  }
-
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.certificatesService.findOne(+id);
-  }
-
-  @Patch(':id')
-  update(
-    @Param('id') id: string,
-    @Body() updateCertificateDto: UpdateCertificateDto,
+  /** POST /certificates (multipart, field "file" optional) */
+  @Post('certificates')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_DOCUMENT_BYTES } }),
+  )
+  create(
+    @Body() dto: CreateCertificateDto,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.certificatesService.update(+id, updateCertificateDto);
+    if (file && !file.buffer) {
+      throw new BadRequestException({
+        message: 'Uploaded file was empty',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.certificatesService.create(dto, file);
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.certificatesService.remove(+id);
+  /** PATCH /certificates/:id */
+  @Patch('certificates/:id')
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCertificateDto,
+  ) {
+    return this.certificatesService.update(id, dto);
   }
 }

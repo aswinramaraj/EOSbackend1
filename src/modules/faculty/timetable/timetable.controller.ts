@@ -34,16 +34,16 @@ export class TimetableController {
     return this.timetableService.create(dto);
   }
 
-  /** GET /api/v1/timetable — Admin/HoD/Faculty/Student. Paginated, filterable. */
+  /** GET /api/v1/timetable — Admin/HoD/Faculty/Student/Secretary. Paginated, filterable. */
   @Get('timetable-slots')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.STUDENT)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.STUDENT, ROLES.SECRETARY)
   findAll(@Query() query: ListTimetableQueryDto) {
     return this.timetableService.findAll(query);
   }
 
-  /** GET /api/v1/timetable/:id — Admin/HoD/Faculty/Student. */
+  /** GET /api/v1/timetable/:id — Admin/HoD/Faculty/Student/Secretary. */
   @Get('timetable-slots/:id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.STUDENT)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.STUDENT, ROLES.SECRETARY)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.timetableService.findOne(id);
   }

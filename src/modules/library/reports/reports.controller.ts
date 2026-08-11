@@ -2,7 +2,7 @@ import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { LibraryReportsService } from './reports.service';
 import { ReportFormat, ReportQueryDto } from './dto/report-query.dto';
-import { renderExcel, renderPdf, type ReportTable } from './report-export.util';
+import { renderExcel, renderPdf, type ReportTable } from 'src/common/utils/report-export.util';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';

@@ -24,7 +24,15 @@ const FACULTY_LEAVE_SELECT = {
   hr_approval_status: true,
   created_at: true,
   faculty: {
-    select: { id: true, first_name: true, last_name: true, designation: true },
+    select: {
+      id: true,
+      first_name: true,
+      last_name: true,
+      designation: true,
+      departments: {
+        select: { id: true, name: true, code: true },
+      },
+    },
   },
   leave_types: { select: { id: true, name: true } },
 } as const;
@@ -43,6 +51,11 @@ interface FacultyLeaveRow {
     first_name: string;
     last_name: string;
     designation: string;
+    departments: {
+      id: number;
+      name: string;
+      code: string;
+    } | null;
   };
   leave_types: { id: number; name: string } | null;
 }
@@ -160,6 +173,16 @@ export class FacultyLeavesService {
       if (leave.faculty.id !== faculty.id) {
         throw new ForbiddenException(
           'You may only view your own leave requests',
+        );
+      }
+    } else if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (
+        leave.faculty.departments?.id !==
+        hod.department_id
+      ) {
+        throw new ForbiddenException(
+          'You may only view leave requests from your own department',
         );
       }
     }
