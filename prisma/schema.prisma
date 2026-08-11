@@ -434,6 +434,7 @@ model classes {
   departments                   departments                     @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   exam_subject_mapping          exam_subject_mapping[]
   faculty_subject_class_mapping faculty_subject_class_mapping[]
+  feedback_assignments          feedback_assignments[]
   feedback_forms                feedback_forms[]
   lesson_plans                  lesson_plans[]
   lms_folder_classes            lms_folder_classes[]
@@ -496,10 +497,12 @@ model departments {
   books                                                      books[]
   classes                                                    classes[]
   courses                                                    courses[]
+  curriculum_mappings                                        curriculum_mappings[]
   department_achievements                                    department_achievements[]
   faculty_departments_head_of_department_faculty_idTofaculty faculty?                         @relation("departments_head_of_department_faculty_idTofaculty", fields: [head_of_department_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "departments_hod_fkey")
   exam_timetable_versions                                    exam_timetable_versions[]
   faculty                                                    faculty[]
+  feedback_assignments                                       feedback_assignments[]
   marks_entry_locks                                          marks_entry_locks[]
   non_teaching_staff                                         non_teaching_staff[]
   od_request_hod_approvals                                   od_request_hod_approvals[]
@@ -809,19 +812,21 @@ model fee_concessions {
 }
 
 model fee_payments {
-  id                            Int                        @id @default(autoincrement())
+  id                            Int                           @id @default(autoincrement())
   student_fee_demand_mapping_id Int
-  amount_paid                   Decimal                    @db.Decimal(12, 2)
-  payment_date                  DateTime                   @default(dbgenerated("CURRENT_DATE")) @db.Date
+  amount_paid                   Decimal                       @db.Decimal(12, 2)
+  payment_date                  DateTime                      @default(dbgenerated("CURRENT_DATE")) @db.Date
   payment_mode                  payment_mode_enum?
-  receipt_no                    String                     @unique @db.VarChar(50)
-  is_partial                    Boolean                    @default(false)
+  receipt_no                    String                        @unique @db.VarChar(50)
+  is_partial                    Boolean                       @default(false)
   collected_by_user_id          Int?
-  created_at                    DateTime                   @default(now()) @db.Timestamptz(6)
+  created_at                    DateTime                      @default(now()) @db.Timestamptz(6)
   fee_structure_item_id         Int?
-  users                         users?                     @relation(fields: [collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  fee_structure_items           fee_structure_items?       @relation(fields: [fee_structure_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  student_fee_demand_mapping    student_fee_demand_mapping @relation(fields: [student_fee_demand_mapping_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fee_payment_gateway_orders    fee_payment_gateway_orders[]
+  users                         users?                        @relation(fields: [collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fee_structure_items           fee_structure_items?          @relation(fields: [fee_structure_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  student_fee_demand_mapping    student_fee_demand_mapping    @relation(fields: [student_fee_demand_mapping_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fee_receipt_number_payments   fee_receipt_number_payments[]
 
   @@index([student_fee_demand_mapping_id], map: "idx_fee_payments_demand")
   @@index([fee_structure_item_id], map: "idx_fee_payments_fee_structure_item")
@@ -1223,15 +1228,19 @@ model non_teaching_staff {
 }
 
 model notifications {
-  id         Int      @id @default(autoincrement())
-  user_id    Int
-  title      String   @db.VarChar(150)
-  message    String
-  is_read    Boolean  @default(false)
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  users      users    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                  Int                     @id @default(autoincrement())
+  user_id             Int
+  title               String                  @db.VarChar(150)
+  message             String
+  is_read             Boolean                 @default(false)
+  created_at          DateTime                @default(now()) @db.Timestamptz(6)
+  type                notification_type_enum?
+  related_entity_type String?                 @db.VarChar(50)
+  related_entity_id   Int?
+  users               users                   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([user_id], map: "idx_notifications_user_unread", where: raw("(is_read = false)"))
+  @@index([user_id, created_at(sort: Desc)], map: "idx_notifications_user_created")
 }
 
 model od_request_hod_approvals {
@@ -1748,19 +1757,20 @@ model student_family_details {
 }
 
 model student_fee_demand_mapping {
-  id                Int                 @id @default(autoincrement())
-  student_id        Int
-  fee_structure_id  Int
-  academic_year     String              @db.VarChar(20)
-  semester          Int?                @db.SmallInt
-  total_amount      Decimal             @db.Decimal(12, 2)
-  created_at        DateTime            @default(now()) @db.Timestamptz(6)
-  demand_category   Int?
-  education_loan_dd education_loan_dd[]
-  fee_payments      fee_payments[]
-  demand_categories demand_categories?  @relation(fields: [demand_category], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  fee_structures    fee_structures      @relation(fields: [fee_structure_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students          students            @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                         Int                          @id @default(autoincrement())
+  student_id                 Int
+  fee_structure_id           Int
+  academic_year              String                       @db.VarChar(20)
+  semester                   Int?                         @db.SmallInt
+  total_amount               Decimal                      @db.Decimal(12, 2)
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  demand_category            Int?
+  education_loan_dd          education_loan_dd[]
+  fee_payment_gateway_orders fee_payment_gateway_orders[]
+  fee_payments               fee_payments[]
+  demand_categories          demand_categories?           @relation(fields: [demand_category], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fee_structures             fee_structures               @relation(fields: [fee_structure_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students                   students                     @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([student_id], map: "idx_fee_demand_student")
 }
@@ -1960,9 +1970,12 @@ model subjects {
   category                      subject_category_enum?
   hours                         Int?                            @db.SmallInt
   semester                      Int?                            @db.SmallInt
+  created_at                    DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at                    DateTime                        @default(now()) @db.Timestamptz(6)
   assignments                   assignments[]
   attendance_records            attendance_records[]
   class_subjects                class_subjects[]
+  curriculum_mappings           curriculum_mappings[]
   exam_subject_mapping          exam_subject_mapping[]
   faculty_subject_class_mapping faculty_subject_class_mapping[]
   lesson_plans                  lesson_plans[]
@@ -2040,6 +2053,7 @@ model users {
   class_mentors                                                                     class_mentors[]
   coe_profiles                                                                      coe_profiles?
   department_achievements                                                           department_achievements[]
+  device_push_tokens                                                                device_push_tokens[]
   e_resources                                                                       e_resources[]
   education_loan_dd                                                                 education_loan_dd[]
   exam_timetable_versions_exam_timetable_versions_created_by_user_idTousers         exam_timetable_versions[]          @relation("exam_timetable_versions_created_by_user_idTousers")
@@ -2055,7 +2069,9 @@ model users {
   faculty_leaves_faculty_leaves_hod_decided_by_user_idTousers                       faculty_leaves[]                   @relation("faculty_leaves_hod_decided_by_user_idTousers")
   faculty_leaves_faculty_leaves_hr_decided_by_user_idTousers                        faculty_leaves[]                   @relation("faculty_leaves_hr_decided_by_user_idTousers")
   faculty_subject_class_mapping                                                     faculty_subject_class_mapping[]
+  fee_payment_gateway_orders                                                        fee_payment_gateway_orders[]
   fee_payments                                                                      fee_payments[]
+  fee_receipt_numbers                                                               fee_receipt_numbers[]
   feedback_forms                                                                    feedback_forms[]
   grn                                                                               grn[]
   hall_ticket_clearance_exceptions                                                  hall_ticket_clearance_exceptions[]
@@ -2923,6 +2939,114 @@ model leave_types {
   faculty_leaves         faculty_leaves[]
 }
 
+model curriculum_mappings {
+  id            Int         @id @default(autoincrement())
+  department_id Int
+  semester      Int         @db.SmallInt
+  subject_id    Int
+  section       String      @db.VarChar(60)
+  display_order Int         @default(0) @db.SmallInt
+  created_at    DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime    @default(now()) @db.Timestamptz(6)
+  departments   departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subjects      subjects    @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([department_id, semester, subject_id])
+  @@index([department_id, semester], map: "idx_curriculum_mappings_dept_semester")
+}
+
+model device_push_tokens {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  push_token String   @unique @db.VarChar(255)
+  platform   String   @db.VarChar(20)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([user_id], map: "idx_device_push_tokens_user")
+}
+
+model fee_payment_gateway_orders {
+  id                            Int                             @id @default(autoincrement())
+  student_fee_demand_mapping_id Int
+  amount                        Decimal                         @db.Decimal(10, 2)
+  status                        fee_payment_gateway_status_enum @default(pending)
+  razorpay_order_id             String                          @unique @db.VarChar(100)
+  razorpay_payment_id           String?                         @db.VarChar(100)
+  razorpay_signature            String?                         @db.VarChar(255)
+  fee_payment_id                Int?
+  created_by_user_id            Int
+  created_at                    DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at                    DateTime                        @default(now()) @db.Timestamptz(6)
+  users                         users                           @relation(fields: [created_by_user_id], references: [id], onUpdate: NoAction)
+  fee_payments                  fee_payments?                   @relation(fields: [fee_payment_id], references: [id], onUpdate: NoAction)
+  student_fee_demand_mapping    student_fee_demand_mapping      @relation(fields: [student_fee_demand_mapping_id], references: [id], onUpdate: NoAction)
+
+  @@index([student_fee_demand_mapping_id], map: "idx_fee_payment_gateway_orders_mapping")
+  @@index([created_by_user_id], map: "idx_fee_payment_gateway_orders_user")
+}
+
+model fee_receipt_number_payments {
+  receipt_number_id   Int
+  fee_payment_id      Int
+  fee_payments        fee_payments        @relation(fields: [fee_payment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  fee_receipt_numbers fee_receipt_numbers @relation(fields: [receipt_number_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([receipt_number_id, fee_payment_id])
+}
+
+model fee_receipt_numbers {
+  id                          Int                           @id @default(autoincrement())
+  print_date                  DateTime                      @db.Date
+  issued_by_user_id           Int?
+  issued_at                   DateTime                      @default(now()) @db.Timestamptz(6)
+  fee_receipt_number_payments fee_receipt_number_payments[]
+  users                       users?                        @relation(fields: [issued_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model feedback_assignment_questions {
+  id                   Int                  @id @default(autoincrement())
+  assignment_id        Int
+  question_text        String               @db.VarChar(500)
+  is_optional          Boolean              @default(false)
+  display_order        Int                  @default(0) @db.SmallInt
+  feedback_assignments feedback_assignments @relation(fields: [assignment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([assignment_id], map: "idx_feedback_assignment_questions_assignment")
+}
+
+model feedback_assignments {
+  id                            Int                             @id @default(autoincrement())
+  course_type                   feedback_course_type_enum
+  year_of_study                 Int                             @db.SmallInt
+  department_id                 Int
+  semester                      Int                             @db.SmallInt
+  class_id                      Int?
+  status                        feedback_assignment_status_enum @default(NOT_STARTED)
+  created_at                    DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at                    DateTime                        @default(now()) @db.Timestamptz(6)
+  feedback_assignment_questions feedback_assignment_questions[]
+  classes                       classes?                        @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  departments                   departments                     @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([course_type, department_id, year_of_study, semester, class_id], map: "feedback_assignments_course_type_department_id_year_of_st_key")
+  @@index([department_id, semester], map: "idx_feedback_assignments_dept_semester")
+  @@index([status], map: "idx_feedback_assignments_status")
+}
+
+model feedback_question_templates {
+  id            Int                       @id @default(autoincrement())
+  course_type   feedback_course_type_enum
+  question_text String                    @db.VarChar(500)
+  is_optional   Boolean                   @default(false)
+  display_order Int                       @default(0) @db.SmallInt
+  created_at    DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime                  @default(now()) @db.Timestamptz(6)
+
+  @@index([course_type], map: "idx_feedback_question_templates_course_type")
+}
+
 enum hostel_wing_enum {
   boys
   girls
@@ -3106,6 +3230,7 @@ enum payment_mode_enum {
   upi
   dd
   netbanking
+  razorpay
 }
 
 enum payslip_status_enum {
@@ -3393,4 +3518,46 @@ enum salary_payment_status_enum {
   processed
   pending
   hold
+}
+
+enum fee_payment_gateway_status_enum {
+  pending
+  success
+  failed
+}
+
+enum feedback_assignment_status_enum {
+  NOT_STARTED
+  IN_PROGRESS
+  CLOSED
+}
+
+enum feedback_course_type_enum {
+  THEORY
+  THEORY_WITH_PRACTICAL
+  THEORY_WITH_PRACTICAL_WITH_PROJECT
+  LABORATORY
+  ADDITIONAL
+}
+
+enum notification_type_enum {
+  approval_request_pending
+  approval_request_approved
+  approval_request_rejected
+  lms_task_assigned
+  lms_task_graded
+  lms_material_posted
+  announcement_new
+  exam_result_published
+  hall_ticket_issued
+  fee_due_reminder
+  fee_payment_confirmed
+  wallet_topup_success
+  wallet_money_received
+  attendance_shortage_warning
+  library_due_reminder
+  library_overdue_reminder
+  placement_drive_new
+  placement_status_updated
+  hostel_complaint_status_updated
 }
