@@ -42,6 +42,7 @@ import { PrincipalLibraryModule } from './modules/principal-library/principal-li
 import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
 import { ProfileModule } from './modules/profile/profile.module';
+import { TransportModule } from './modules/transport/transport.module';
 import { LmsModule } from './modules/lms/lms.module';
 
 import { ExamsModule } from './modules/exams/exams/exams.module';
@@ -192,6 +193,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     StudentEntrepreneurshipModule,
     ProfileModule,
     LmsModule,
+    TransportModule,
 
     AnnouncementsModule,
 
