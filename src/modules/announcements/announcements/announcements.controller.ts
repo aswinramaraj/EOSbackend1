@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -11,8 +12,11 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -87,9 +91,40 @@ export class AnnouncementsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.PRINCIPAL)
   create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     return this.announcementsService.create(dto, user);
+  }
+
+  /**
+   * POST /api/v1/announcements/:id/attachment
+   * Only the announcement's own author may attach a file to it (same
+   * ownership rule as PUT/PATCH/DELETE) — a separate call after create(),
+   * not a field on it, matching ProfileController's resume-upload pattern.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR – no file in the "file" field
+   *  403 NOT_OWNER
+   *  404 ANNOUNCEMENT_NOT_FOUND
+   *  500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
+   */
+  @Post(':id/attachment')
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.PRINCIPAL)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }),
+  )
+  uploadAttachment(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.announcementsService.uploadAttachment(id, file, user);
   }
 
   /**
@@ -132,7 +167,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Put(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.PRINCIPAL)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -150,7 +185,7 @@ export class AnnouncementsController {
    * Error responses: see PUT /api/v1/announcements/:id
    */
   @Patch(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.PRINCIPAL)
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -169,7 +204,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Delete(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.PRINCIPAL)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

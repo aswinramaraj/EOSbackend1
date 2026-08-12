@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/common/storage/storage.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { Prisma } from '../../../../generated/prisma/client';
@@ -21,17 +22,91 @@ import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 interface UserContext {
   role: string;
   userId: number;
+  roleId?: number;
   departmentId?: number;
   assignedClassIds?: number[];
   studentClassId?: number | null;
   linkedStudentClassIds?: number[];
 }
 
+/**
+ * Shared by findAll/findOne. `users`/`faculty` resolve a real "posted by"
+ * name+role — previously `posted_by` was declared on the frontend type but
+ * never actually joined here, so it silently rendered as empty everywhere
+ * that read it. `classes`/`roles` resolve human-readable audience labels
+ * (department code + section, role name) instead of raw ids.
+ */
+const ANNOUNCEMENT_RESPONSE_INCLUDE = {
+  announcement_class_mapping: {
+    select: {
+      class_id: true,
+      classes: {
+        select: { section: true, departments: { select: { code: true } } },
+      },
+    },
+  },
+  announcement_role_mapping: {
+    select: { role_id: true, roles: { select: { name: true } } },
+  },
+  users: {
+    select: {
+      email: true,
+      roles: { select: { name: true } },
+      faculty: {
+        select: {
+          first_name: true,
+          last_name: true,
+          designation: true,
+          departments: { select: { code: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.announcementsInclude;
+
 @Injectable()
 export class AnnouncementsService {
   private readonly logger = new Logger(AnnouncementsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
+
+  /**
+   * `category` doesn't exist yet (query.md #2) — read via `$queryRaw` with a
+   * try/catch fallback, same self-upgrading pattern as Higher Education's
+   * `tryLoadScholarshipData()`, so every read path below picks up real
+   * categories automatically the moment the admin runs that SQL.
+   */
+  private async tryLoadCategories(
+    ids: number[],
+  ): Promise<Map<number, string | null>> {
+    if (ids.length === 0) return new Map();
+    try {
+      const rows = await this.prisma.$queryRaw<
+        { id: number; category: string | null }[]
+      >`SELECT id, category FROM announcements WHERE id = ANY(${ids})`;
+      return new Map(rows.map((r) => [r.id, r.category]));
+    } catch {
+      return new Map();
+    }
+  }
+
+  /**
+   * Best-effort write — `category` is optional and this module is shared by
+   * every role, so a missing column should never fail the create/update
+   * that's carrying it. Swallows failure; callers re-read via
+   * `tryLoadCategories` to echo back what's actually persisted.
+   */
+  private async tryWriteCategory(id: number, category: string): Promise<void> {
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE announcements SET category = ${category}::announcement_category_enum WHERE id = ${id}`;
+    } catch {
+      // column doesn't exist yet — query.md #2 not run; ignored on purpose.
+    }
+  }
 
   /**
    * POST /announcements
@@ -52,14 +127,17 @@ export class AnnouncementsService {
     const context = await this.resolveUserContext(user);
     await this.assertClassesValid(dto.class_ids, context);
 
+    let created: { id: number } & Record<string, unknown>;
+
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      created = await this.prisma.$transaction(async (tx) => {
         const announcement = await tx.announcements.create({
           data: {
             posted_by_user_id: user.sub,
             title: dto.title,
             content: dto.content,
             target_audience: dto.target_audience,
+            ...(dto.status !== undefined ? { status: dto.status } : {}),
           },
         });
 
@@ -79,6 +157,71 @@ export class AnnouncementsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    if (dto.category !== undefined) {
+      await this.tryWriteCategory(created.id, dto.category);
+    }
+    const category = (await this.tryLoadCategories([created.id])).get(
+      created.id,
+    );
+    return { ...created, category: category ?? null };
+  }
+
+  /**
+   * POST /announcements/:id/attachment
+   *
+   * announcements.file_url/file_name/file_key already exist in the schema
+   * and SUPABASE_S3_BUCKET is literally already configured as
+   * "announcement_attachments" — this was clearly planned but never wired
+   * up until now. Decoupled from create() (a separate call after the
+   * announcement exists) rather than accepted inline on POST /announcements,
+   * matching this codebase's own convention for optional file uploads (see
+   * ProfileService.uploadResume — a separate endpoint, not a field on the
+   * main create/update body).
+   *
+   * Error cases:
+   *  400 VALIDATION_ERROR – no file in the "file" field
+   *  403 NOT_OWNER
+   *  404 ANNOUNCEMENT_NOT_FOUND
+   *  500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
+   */
+  async uploadAttachment(
+    id: number,
+    file: Express.Multer.File,
+    user: JwtPayload,
+  ) {
+    const context = await this.resolveUserContext(user);
+    const existing = await this.findVisibleById(id, context);
+
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Announcement not found',
+        errorCode: 'ANNOUNCEMENT_NOT_FOUND',
+      });
+    }
+
+    this.assertOwnership(existing, user, context);
+
+    const { key } = await this.storage.upload(
+      'announcements',
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+    );
+    const url = this.storage.getPublicUrl(key);
+
+    try {
+      return await this.prisma.announcements.update({
+        where: { id },
+        data: { file_url: url, file_name: file.originalname, file_key: key },
+      });
+    } catch (err) {
+      this.logger.error('DB error while saving announcement attachment', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
   }
 
   /**
@@ -93,7 +236,7 @@ export class AnnouncementsService {
     try {
       announcements = await this.prisma.announcements.findMany({
         where,
-        include: { announcement_class_mapping: { select: { class_id: true } } },
+        include: ANNOUNCEMENT_RESPONSE_INCLUDE,
         orderBy: { created_at: 'desc' },
       });
     } catch (err) {
@@ -104,8 +247,14 @@ export class AnnouncementsService {
       });
     }
 
+    const categories = await this.tryLoadCategories(
+      announcements.map((a) => a.id),
+    );
     return announcements.map((announcement) =>
-      this.toResponseShape(announcement),
+      this.toResponseShape({
+        ...announcement,
+        category: categories.get(announcement.id) ?? null,
+      }),
     );
   }
 
@@ -127,7 +276,7 @@ export class AnnouncementsService {
     try {
       announcement = await this.prisma.announcements.findFirst({
         where: { AND: [{ id }, where] },
-        include: { announcement_class_mapping: { select: { class_id: true } } },
+        include: ANNOUNCEMENT_RESPONSE_INCLUDE,
       });
     } catch (err) {
       this.logger.error('DB error during announcement lookup', err);
@@ -144,7 +293,13 @@ export class AnnouncementsService {
       });
     }
 
-    return this.toResponseShape(announcement);
+    const category = (await this.tryLoadCategories([announcement.id])).get(
+      announcement.id,
+    );
+    return this.toResponseShape({
+      ...announcement,
+      category: category ?? null,
+    });
   }
 
   /**
@@ -181,8 +336,10 @@ export class AnnouncementsService {
       await this.assertClassesValid(dto.class_ids, context);
     }
 
+    let updatedRow: { id: number } & Record<string, unknown>;
+
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      updatedRow = await this.prisma.$transaction(async (tx) => {
         if (
           dto.title !== undefined ||
           dto.content !== undefined ||
@@ -223,6 +380,12 @@ export class AnnouncementsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    if (dto.category !== undefined) {
+      await this.tryWriteCategory(id, dto.category);
+    }
+    const category = (await this.tryLoadCategories([id])).get(id);
+    return { ...updatedRow, category: category ?? null };
   }
 
   /**
@@ -327,6 +490,12 @@ export class AnnouncementsService {
         return { role: ROLES.PARENT, userId: user.sub, linkedStudentClassIds };
       }
 
+      case ROLES.PRINCIPAL:
+        return { role: ROLES.PRINCIPAL, userId: user.sub, roleId: user.roleId };
+
+      case ROLES.NON_TEACHING_STAFF:
+        return { role: ROLES.NON_TEACHING_STAFF, userId: user.sub };
+
       default:
         return { role: user.role, userId: user.sub };
     }
@@ -346,6 +515,10 @@ export class AnnouncementsService {
           OR: [
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
+            // Principal is institution-wide leadership, same broadcast tier
+            // as Admin here — without this, a Principal-authored
+            // announcement reached nobody but Principal's own account.
+            { users: { roles: { name: ROLES.PRINCIPAL } } },
           ],
         };
 
@@ -356,6 +529,7 @@ export class AnnouncementsService {
           OR: [
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
+            { users: { roles: { name: ROLES.PRINCIPAL } } },
             {
               AND: [
                 { users: { roles: { name: ROLES.HOD } } },
@@ -387,6 +561,39 @@ export class AnnouncementsService {
           },
         };
       }
+
+      // Principal has no class/department scope of its own — visibility is
+      // its own posts, Admin's posts (same as HOD), plus anything explicitly
+      // targeted at the Principal role via announcement_role_mapping. This
+      // is the first caller to read announcement_role_mapping; every other
+      // role above is scoped by class instead, so the table exists in the
+      // schema but was otherwise unused.
+      case ROLES.PRINCIPAL:
+        return {
+          OR: [
+            { posted_by_user_id: context.userId },
+            { users: { roles: { name: ROLES.ADMIN } } },
+            {
+              announcement_role_mapping: {
+                some: { role_id: context.roleId ?? -1 },
+              },
+            },
+          ],
+        };
+
+      // Non-teaching staff have no class/department scope either (3 real
+      // accounts hold this role today) and previously fell through to
+      // `default` — seeing nothing, ever, regardless of what was posted.
+      // Broadcast-tier only (own posts, Admin's, Principal's): there is no
+      // richer targeting concept for this role anywhere in the schema.
+      case ROLES.NON_TEACHING_STAFF:
+        return {
+          OR: [
+            { posted_by_user_id: context.userId },
+            { users: { roles: { name: ROLES.ADMIN } } },
+            { users: { roles: { name: ROLES.PRINCIPAL } } },
+          ],
+        };
 
       default:
         return { id: -1 };
@@ -433,7 +640,7 @@ export class AnnouncementsService {
       return;
     }
 
-    if (context.role === ROLES.ADMIN) {
+    if (context.role === ROLES.ADMIN || context.role === ROLES.PRINCIPAL) {
       return;
     }
 
@@ -721,10 +928,59 @@ export class AnnouncementsService {
   private toResponseShape(
     announcement: { id: number } & Record<string, unknown>,
   ) {
-    const mappings = (announcement.announcement_class_mapping ?? []) as {
+    const classMappings = (announcement.announcement_class_mapping ?? []) as {
       class_id: number;
+      classes: { section: string; departments: { code: string } } | null;
     }[];
-    const { announcement_class_mapping, ...rest } = announcement;
-    return { ...rest, class_ids: mappings.map((m) => m.class_id) };
+    const roleMappings = (announcement.announcement_role_mapping ?? []) as {
+      role_id: number;
+      roles: { name: string } | null;
+    }[];
+    const poster = announcement.users as
+      | {
+          email: string;
+          roles: { name: string } | null;
+          faculty: {
+            first_name: string;
+            last_name: string;
+            designation: string;
+            departments: { code: string } | null;
+          } | null;
+        }
+      | null
+      | undefined;
+
+    // Built via omit rather than destructure-to-omit so the excluded keys
+    // don't trip no-unused-vars.
+    const rest = { ...announcement };
+    delete rest.announcement_class_mapping;
+    delete rest.announcement_role_mapping;
+    delete rest.users;
+
+    return {
+      ...rest,
+      class_ids: classMappings.map((m) => m.class_id),
+      class_labels: classMappings
+        .map((m) =>
+          m.classes
+            ? `${m.classes.departments.code}-${m.classes.section}`
+            : null,
+        )
+        .filter((label): label is string => label != null),
+      role_ids: roleMappings.map((m) => m.role_id),
+      role_labels: roleMappings
+        .map((m) => m.roles?.name)
+        .filter((name): name is string => name != null),
+      posted_by: poster
+        ? {
+            name: poster.faculty
+              ? `${poster.faculty.first_name} ${poster.faculty.last_name}`
+              : poster.email,
+            role: poster.roles?.name ?? 'unknown',
+            designation: poster.faculty?.designation ?? null,
+            department: poster.faculty?.departments?.code ?? null,
+          }
+        : undefined,
+    };
   }
 }

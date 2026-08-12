@@ -3,13 +3,16 @@ import {
   ArrayUnique,
   IsArray,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
   MaxLength,
   ValidateIf,
 } from 'class-validator';
 import { target_audience_enum } from '../../../../../generated/prisma/client';
+import { ANNOUNCEMENT_CATEGORY_VALUES } from './create-announcement.dto';
 
 export class UpdateAnnouncementDto {
   @ValidateIf((dto) => dto.title !== undefined)
@@ -33,4 +36,10 @@ export class UpdateAnnouncementDto {
   @ArrayUnique()
   @IsInt({ each: true })
   class_ids?: number[];
+
+  /** Not yet a real column (query.md #2) — best-effort persisted, silently dropped until that migration runs. */
+  @IsOptional()
+  @IsString()
+  @IsIn(ANNOUNCEMENT_CATEGORY_VALUES)
+  category?: string;
 }

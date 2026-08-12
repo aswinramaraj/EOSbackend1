@@ -113,6 +113,22 @@ import { ServiceRequestsModule } from './modules/secretary/service-requests/serv
 import { ProductRequestsModule } from './modules/secretary/product-requests/product-requests.module';
 import { SecretaryDashboardModule } from './modules/secretary/dashboard/dashboard.module';
 import { SecretaryReportsModule } from './modules/secretary/reports/reports.module';
+import { PrincipalDashboardModule } from './modules/principal/dashboard/dashboard.module';
+import { PrincipalReportsModule } from './modules/principal/reports/reports.module';
+import { PrincipalExamsModule } from './modules/principal/exams/exams.module';
+import { PrincipalCalendarModule } from './modules/principal/calendar/calendar.module';
+import { PrincipalStudentsModule } from './modules/principal/students/students.module';
+import { PrincipalFacultyModule } from './modules/principal/faculty/faculty.module';
+import { PrincipalDepartmentsModule } from './modules/principal/departments/departments.module';
+import { PrincipalHigherEducationModule } from './modules/principal/higher-education/higher-education.module';
+import { PrincipalEdcModule } from './modules/principal/edc/edc.module';
+import { PrincipalApprovalsModule } from './modules/principal/approvals/approvals.module';
+import { PrincipalPlacementsModule } from './modules/principal/placements/placements.module';
+import { PrincipalHostelModule } from './modules/principal/hostel/hostel.module';
+import { PrincipalTransportModule } from './modules/principal/transport/transport.module';
+import { PrincipalFacilitiesModule } from './modules/principal/facilities/facilities.module';
+import { PrincipalFinanceModule } from './modules/principal/finance/finance.module';
+import { PrincipalSearchModule } from './modules/principal/search/search.module';
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
@@ -252,6 +268,22 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     ProductRequestsModule,
     SecretaryDashboardModule,
     SecretaryReportsModule,
+    PrincipalDashboardModule,
+    PrincipalReportsModule,
+    PrincipalExamsModule,
+    PrincipalCalendarModule,
+    PrincipalStudentsModule,
+    PrincipalFacultyModule,
+    PrincipalDepartmentsModule,
+    PrincipalHigherEducationModule,
+    PrincipalEdcModule,
+    PrincipalApprovalsModule,
+    PrincipalPlacementsModule,
+    PrincipalHostelModule,
+    PrincipalTransportModule,
+    PrincipalFacilitiesModule,
+    PrincipalFinanceModule,
+    PrincipalSearchModule,
     NotificationsModule,
     FeedbackModule,
     HallTicketClearanceModule,
