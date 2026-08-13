@@ -73,6 +73,7 @@ import { FacultyVerificationModule } from './modules/faculty/faculty-verificatio
 import { FacultyModule } from './modules/faculty/faculty/faculty.module';
 import { HolidaySlotsModule } from './modules/faculty/holiday-slots/holiday-slots.module';
 import { HrPayrollModule } from './modules/faculty/hr-payroll/hr-payroll.module';
+import { HrQueriesModule } from './modules/faculty/hr-queries/hr-queries.module';
 import { LessonPlansModule } from './modules/faculty/lesson-plans/lesson-plans.module';
 import { LmsNotesModule } from './modules/faculty/lms-notes/lms-notes.module';
 import { MediaRequestsModule } from './modules/faculty/media-requests/media-requests.module';
@@ -224,6 +225,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     FacultyModule,
     HolidaySlotsModule,
     HrPayrollModule,
+    HrQueriesModule,
     LessonPlansModule,
     LmsNotesModule,
     MediaRequestsModule,

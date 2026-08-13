@@ -36,6 +36,18 @@ export class MeDrivesController {
     return this.drivesService.getUpcomingDrivesForFaculty();
   }
 
+  /** GET /me/upcoming-drives/:driveId/applications — real per-mentee
+   * application status/round for this drive (student_drive_applications),
+   * scoped to the caller's own mentee classes. */
+  @Get('upcoming-drives/:driveId/applications')
+  @Roles(ROLES.FACULTY)
+  getDriveApplications(
+    @Param('driveId', ParseIntPipe) driveId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.drivesService.getDriveApplicationsForMentor(driveId, user.sub);
+  }
+
   @Get('mentored-students')
   @Roles(ROLES.FACULTY)
   getMentoredStudents(@CurrentUser() user: JwtPayload) {

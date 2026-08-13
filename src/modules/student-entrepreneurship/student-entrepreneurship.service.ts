@@ -130,6 +130,94 @@ export class StudentEntrepreneurshipService {
     }
   }
 
+  /**
+   * GET /me/mentee-entrepreneurship (Faculty — class advisor only). Scoped
+   * live via class_mentors, resolved fresh every call — a reassignment to
+   * a different class takes effect immediately, no stale caching.
+   */
+  async findAllForMentor(userId: number) {
+    const faculty = await this.prisma.faculty.findUnique({ where: { user_id: userId } });
+    if (!faculty) return [];
+
+    const mentorClasses = await this.prisma.class_mentors.findMany({
+      where: { faculty_id: faculty.id },
+      select: { class_id: true },
+    });
+    const classIds = mentorClasses.map((m) => m.class_id);
+    if (classIds.length === 0) return [];
+
+    try {
+      const rows = await this.prisma.student_entrepreneurship.findMany({
+        where: { students: { class_id: { in: classIds } } },
+        include: {
+          students: {
+            select: {
+              id: true,
+              student_id_no: true,
+              soa_applications: { select: { first_name: true, last_name: true } },
+              users: { select: { email: true } },
+              classes: { select: { section: true } },
+            },
+          },
+          faculty: { select: { first_name: true, last_name: true } },
+        },
+        orderBy: { created_at: 'desc' },
+      });
+
+      return rows.map((row) => ({
+        id: row.id,
+        mentor_faculty_name: row.faculty ? `${row.faculty.first_name} ${row.faculty.last_name}` : null,
+        business_name: row.business_name,
+        business_description: row.business_description,
+        sector: row.sector,
+        stage: row.stage,
+        funding_required: row.funding_required !== null ? Number(row.funding_required) : null,
+        remarks: row.remarks,
+        created_at: row.created_at,
+        is_incubated: row.is_incubated,
+        registration_type: row.registration_type,
+        website: row.website,
+        venture_logo_url: row.venture_logo_url,
+        current_status_note: row.current_status_note,
+        role: row.role,
+        year_started: row.year_started,
+        business_category: row.business_category,
+        problem_statement: row.problem_statement,
+        location: row.location,
+        business_model: row.business_model,
+        target_customers: row.target_customers,
+        linkedin_url: row.linkedin_url,
+        co_founders: row.co_founders,
+        team_size: row.team_size,
+        student_team_note: row.student_team_note,
+        mentor_faculty_id: row.mentor_faculty_id,
+        external_mentor_name: row.external_mentor_name,
+        external_mentor_org: row.external_mentor_org,
+        team_roles_note: row.team_roles_note,
+        idea_developed: row.idea_developed,
+        prototype_developed: row.prototype_developed,
+        mvp_launched: row.mvp_launched,
+        product_launched: row.product_launched,
+        customers_count: row.customers_count,
+        monthly_revenue: row.monthly_revenue !== null ? Number(row.monthly_revenue) : null,
+        growth_stage: row.growth_stage,
+        funding_status: row.funding_status,
+        funding_received: row.funding_received !== null ? Number(row.funding_received) : null,
+        funding_source: row.funding_source,
+        govt_grant_scheme: row.govt_grant_scheme,
+        incubator_support: row.incubator_support,
+        accelerator_support: row.accelerator_support,
+        student: toStudentSummary(row.students),
+      }));
+    } catch (err) {
+      this.logger.error('DB error listing student_entrepreneurship for mentor', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
   private async assertDepartmentExists(departmentId: number) {
     const department = await this.prisma.departments.findUnique({
       where: { id: departmentId },

@@ -25,6 +25,7 @@ const APPRAISAL_SELECT = {
   academic_year: true,
   status: true,
   hod_reviewed_at: true,
+  hod_remarks: true,
   management_approved_at: true,
   created_at: true,
   faculty: {
@@ -76,6 +77,7 @@ interface AppraisalRequestRow {
   academic_year: string;
   status: string;
   hod_reviewed_at: Date | null;
+  hod_remarks: string | null;
   management_approved_at: Date | null;
   created_at: Date;
   faculty: {
@@ -129,6 +131,7 @@ function toResponse(row: AppraisalRequestRow) {
     },
     hod_reviewer: row.users_appraisal_requests_hod_reviewed_byTousers,
     hod_reviewed_at: row.hod_reviewed_at,
+    hod_remarks: row.hod_remarks,
     management_approver:
       row.users_appraisal_requests_management_approved_byTousers,
     management_approved_at: row.management_approved_at,
@@ -136,11 +139,11 @@ function toResponse(row: AppraisalRequestRow) {
     entries: row.appraisal_entries.map((entry) => ({
       id: entry.id,
       description: entry.description,
-      score: entry.score,
+      score: entry.score !== null ? Number(entry.score) : null,
       criteria: {
         id: entry.appraisal_criteria.id,
         name: entry.appraisal_criteria.criteria_name,
-        max_score: entry.appraisal_criteria.max_score,
+        max_score: Number(entry.appraisal_criteria.max_score),
         division: entry.appraisal_criteria.appraisal_divisions,
       },
     })),
@@ -307,7 +310,7 @@ export class AppraisalService {
         name: c.appraisal_divisions.name,
         criteria: [],
       };
-      division.criteria.push({ id: c.id, name: c.criteria_name, max_score: c.max_score });
+      division.criteria.push({ id: c.id, name: c.criteria_name, max_score: Number(c.max_score) });
       divisionsById.set(division.id, division);
     }
 

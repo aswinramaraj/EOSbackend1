@@ -74,6 +74,22 @@ export class ClassMentorsController {
     return this.classMentorsService.getMenteeReport(studentId, user.sub);
   }
 
+  /**
+   * GET /api/v1/me/mentees/:student_id/documents — Faculty only (the
+   * mentee's class mentor). Real `student_certificates` rows (admin-set
+   * is_available/file_url/verified_at, one per certificate_types entry) —
+   * this table existed in the schema with zero endpoints anywhere reading
+   * it before this; same mentor-only auth pattern as /profile and /report.
+   */
+  @Get('mentees/:student_id/documents')
+  @Roles(ROLES.FACULTY)
+  getMenteeDocuments(
+    @Param('student_id', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classMentorsService.getMenteeDocuments(studentId, user.sub);
+  }
+
   /** GET /api/v1/me/mentees/:student_id/placements — Faculty only (the mentee's class mentor). */
   @Get('mentees/:student_id/placements')
   @Roles(ROLES.FACULTY)

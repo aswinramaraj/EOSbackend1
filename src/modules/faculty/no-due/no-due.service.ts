@@ -99,14 +99,75 @@ export class NoDueService {
    */
   async getStudents(query: ListNoDueStudentsQueryDto, userId: number) {
     const hod = await this.resolveFacultyByUserId(userId);
-    const status = query.status ?? 'cleared';
-
     const where: Record<string, unknown> = {
       classes: { department_id: hod.department_id },
     };
     if (query.batch_id !== undefined) {
       where.batch_id = query.batch_id;
     }
+    return this.queryNoDueStudents(where, query);
+  }
+
+  /**
+   * GET /me/mentee-no-due/batches (Faculty — class mentor). Same shape as
+   * getBatches, scoped by class_mentors instead of department_id — the
+   * class-advisor read-only equivalent of the HoD view. No approve action
+   * is exposed to this role; the advisor can only view clearance status.
+   */
+  async getBatchesForMentor(userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mentorClasses = await this.prisma.class_mentors.findMany({
+      where: { faculty_id: faculty.id },
+      select: { class_id: true },
+    });
+    const classIds = mentorClasses.map((m) => m.class_id);
+    if (classIds.length === 0) return [];
+
+    const classRows = await this.prisma.classes.findMany({
+      where: { id: { in: classIds } },
+      select: { batch_id: true },
+      distinct: ['batch_id'],
+    });
+    const batchIds = classRows.map((c) => c.batch_id);
+    if (batchIds.length === 0) return [];
+
+    return this.prisma.batches.findMany({
+      where: { id: { in: batchIds } },
+      select: { id: true, name: true },
+      orderBy: { start_year: 'desc' },
+    });
+  }
+
+  /**
+   * GET /me/mentee-no-due/students (Faculty — class mentor). Same
+   * fee/library dues computation as getStudents, scoped to the classes this
+   * faculty mentors (via class_mentors) instead of a whole department.
+   */
+  async getStudentsForMentor(query: ListNoDueStudentsQueryDto, userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mentorClasses = await this.prisma.class_mentors.findMany({
+      where: { faculty_id: faculty.id },
+      select: { class_id: true },
+    });
+    const classIds = mentorClasses.map((m) => m.class_id);
+    if (classIds.length === 0) return paginate([], 0, query);
+
+    const where: Record<string, unknown> = {
+      classes: { id: { in: classIds } },
+    };
+    if (query.batch_id !== undefined) {
+      where.batch_id = query.batch_id;
+    }
+    return this.queryNoDueStudents(where, query);
+  }
+
+  /** Shared dues computation for both the HoD and class-mentor views — only
+   * the `where` scope (department vs. mentored classes) differs. */
+  private async queryNoDueStudents(where: Record<string, unknown>, query: ListNoDueStudentsQueryDto) {
+    const status = query.status ?? 'cleared';
+
     if (query.search) {
       where.OR = [
         { student_id_no: { contains: query.search, mode: 'insensitive' } },

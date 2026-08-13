@@ -715,6 +715,7 @@ describe('MeOdTeamsService', () => {
       const result = await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Test reason',
         from_time: '09:30',
         to_time: '17:00',
       });
@@ -755,6 +756,7 @@ describe('MeOdTeamsService', () => {
       await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Test reason',
       });
 
       const [createArgs] = tx.od_requests.create.mock.calls[0] as [
@@ -791,6 +793,7 @@ describe('MeOdTeamsService', () => {
       await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Test reason',
       });
 
       const [createManyArgs] = tx.od_request_hod_approvals.createMany.mock
@@ -805,6 +808,7 @@ describe('MeOdTeamsService', () => {
         service.submitOdRequest(103, 61, {
           from_date: '2020-01-01',
           to_date: '2020-01-05',
+          reason: 'Test reason',
         }),
       ).rejects.toMatchObject({
         status: 422,
@@ -818,6 +822,7 @@ describe('MeOdTeamsService', () => {
         service.submitOdRequest(103, 61, {
           from_date: '2099-08-10',
           to_date: '2099-08-05',
+          reason: 'Test reason',
         }),
       ).rejects.toMatchObject({
         status: 422,
@@ -1008,6 +1013,7 @@ describe('MeOdTeamsService', () => {
       const result = await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Test reason',
       });
 
       expect(result.hod_approvals).toEqual([]);
@@ -1047,6 +1053,7 @@ describe('MeOdTeamsService', () => {
       await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Test reason',
       });
 
       expect(prisma.class_mentors.findFirst).toHaveBeenCalledWith({
@@ -1091,6 +1098,7 @@ describe('MeOdTeamsService', () => {
       await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Test reason',
       });
 
       expect(prisma.class_mentors.findFirst).not.toHaveBeenCalled();

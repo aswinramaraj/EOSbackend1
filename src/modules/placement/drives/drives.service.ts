@@ -375,7 +375,13 @@ export class DrivesService {
   async getUpcomingDrivesForFaculty() {
     const drives = await this.prisma.placement_drives.findMany({
       where: { status: 'scheduled' },
-      include: { companies: true },
+      include: {
+        companies: true,
+        // Real registered-applicant count — the same _count pattern
+        // DrivesService.findAll already uses for the admin listing, added
+        // here too instead of leaving "— registered" on the faculty view.
+        _count: { select: { student_drive_applications: true } },
+      },
       orderBy: { scheduled_date: 'asc' },
     });
 
@@ -386,6 +392,13 @@ export class DrivesService {
       scheduled_date: drive.scheduled_date,
       is_disclosed: drive.is_disclosed,
       disclosed_reveal_date: drive.is_disclosed ? null : drive.disclosed_reveal_date,
+      // Real columns on placement_drives, previously fetched but dropped
+      // when shaping this response.
+      job_role: drive.job_role,
+      venue: drive.venue,
+      status: drive.status,
+      eligibility_cgpa: drive.eligibility_cgpa === null ? null : Number(drive.eligibility_cgpa),
+      registered_count: drive._count.student_drive_applications,
     }));
   }
 
@@ -426,6 +439,57 @@ export class DrivesService {
       name: this.resolveStudentDisplayName(s),
       section: s.classes?.section ?? null,
       department_name: s.classes?.departments.name ?? null,
+    }));
+  }
+
+  /**
+   * GET /me/upcoming-drives/:driveId/applications (Faculty only) — real
+   * per-mentee application status/round for a specific drive, via
+   * student_drive_applications (unique on drive_id+student_id). Previously
+   * the "View student list" expander under each drive had no data source
+   * at all for this; the real columns (status, last_cleared_round) exist
+   * per application — there is no institution-wide named-round schema
+   * (no "Aptitude test"/"Technical round 1" labels anywhere in schema.prisma),
+   * only a plain numeric last_cleared_round, so this returns that real
+   * number rather than an invented round name.
+   */
+  async getDriveApplicationsForMentor(driveId: number, userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mentorClasses = await this.prisma.class_mentors.findMany({
+      where: { faculty_id: faculty.id },
+      select: { class_id: true },
+    });
+    const classIds = mentorClasses.map((m) => m.class_id);
+    if (classIds.length === 0) return [];
+
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: { drive_id: driveId, students: { class_id: { in: classIds } } },
+      select: {
+        status: true,
+        last_cleared_round: true,
+        offer_response: true,
+        offered_package: true,
+        students: {
+          select: {
+            id: true,
+            student_id_no: true,
+            soa_applications: { select: { first_name: true, last_name: true } },
+            users: { select: { email: true } },
+          },
+        },
+      },
+      orderBy: { students: { student_id_no: 'asc' } },
+    });
+
+    return applications.map((app) => ({
+      student_id: app.students.id,
+      student_id_no: app.students.student_id_no,
+      name: this.resolveStudentDisplayName(app.students),
+      status: app.status,
+      last_cleared_round: app.last_cleared_round,
+      offer_response: app.offer_response,
+      offered_package: app.offered_package === null ? null : Number(app.offered_package),
     }));
   }
 

@@ -838,6 +838,65 @@ export class ClassMentorsService {
   }
 
   /**
+   * GET /me/mentees/:student_id/documents (Faculty — the mentee's class
+   * mentor only, same auth gate as getMenteeProfile/getMenteeReport).
+   *
+   * student_certificates is a real table (one row per certificate_types
+   * entry, is_available/file_url/verified_at set by admin) that had zero
+   * endpoints anywhere reading it before this — added rather than left
+   * unused, since "which documents has admin marked received/verified for
+   * this mentee" is real, already-modeled data.
+   */
+  async getMenteeDocuments(studentId: number, userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { class_id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const mentorMapping =
+      student.class_id !== null
+        ? await this.prisma.class_mentors.findFirst({
+            where: { class_id: student.class_id, faculty_id: faculty.id },
+          })
+        : null;
+    if (!mentorMapping) {
+      throw new ForbiddenException({
+        message: 'You are not the mentor for this student',
+        errorCode: 'NOT_THE_MENTOR',
+      });
+    }
+
+    // Every certificate_types row is listed even when the student has no
+    // student_certificates row yet, so "not yet received" is distinguishable
+    // from "received but not verified" — a missing row and an
+    // is_available=false row both mean "not on file" to the caller.
+    const [certificateTypes, records] = await Promise.all([
+      this.prisma.certificate_types.findMany({ orderBy: { name: 'asc' } }),
+      this.prisma.student_certificates.findMany({ where: { student_id: studentId } }),
+    ]);
+    const byTypeId = new Map(records.map((r) => [r.certificate_type_id, r]));
+
+    return certificateTypes.map((ct) => {
+      const record = byTypeId.get(ct.id);
+      return {
+        certificate_type_id: ct.id,
+        name: ct.name,
+        is_available: record?.is_available ?? false,
+        file_url: record?.file_url ?? null,
+        verified_at: record?.verified_at ?? null,
+      };
+    });
+  }
+
+  /**
    * GET /me/children/:student_id/mentor (Parent only).
    *
    * workflow.md (Parent role): "view faculty mentor details of thier
