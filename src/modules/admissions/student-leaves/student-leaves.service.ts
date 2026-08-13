@@ -33,12 +33,19 @@ const STUDENT_LEAVE_SELECT = {
       classes: {
         select: {
           section: true,
+          current_semester: true,
           departments: { select: { name: true } },
         },
       },
     },
   },
 } as const;
+
+const ROMAN_YEAR = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+function yearLabelForSemester(semester: number): string {
+  const yearIndex = Math.ceil(semester / 2) - 1;
+  return ROMAN_YEAR[yearIndex] ?? String(yearIndex + 1);
+}
 
 interface StudentLeaveRow {
   id: number;
@@ -56,7 +63,11 @@ interface StudentLeaveRow {
     class_id: number | null;
     soa_applications: { first_name: string; last_name: string | null } | null;
     users: { id: number; email: string };
-    classes: { section: string; departments: { name: string } } | null;
+    classes: {
+      section: string;
+      current_semester: number | null;
+      departments: { name: string };
+    } | null;
   };
 }
 
@@ -83,6 +94,10 @@ function toResponse(leave: StudentLeaveRow) {
       student_id_no: leave.students.student_id_no,
       name: resolveStudentName(leave.students),
       section: leave.students.classes?.section ?? null,
+      year_label:
+        leave.students.classes?.current_semester != null
+          ? yearLabelForSemester(leave.students.classes.current_semester)
+          : null,
       department_name: leave.students.classes?.departments.name ?? null,
     },
     from_date: leave.from_date,
@@ -152,6 +167,36 @@ export class StudentLeavesService {
 
   findOne(id: number) {
     return `This action returns a #${id} studentLeaf`;
+  }
+
+  /**
+   * GET /student-leaves/hod (HoD only) — the caller's own department's
+   * queue, joined via students -> classes -> department_id (student_leaves
+   * itself has no direct department column). Unlike the mentor's own
+   * findAll above, this is not restricted to a particular class_mentors
+   * mapping — an HoD reviews every student leave in their department,
+   * regardless of who mentors that student's class.
+   */
+  async findAllForHod(query: ListStudentLeaveQueryDto, hodUserId: number) {
+    const hod = await this.resolveFacultyByUserId(hodUserId);
+
+    const where = {
+      status: query.status,
+      students: { classes: { department_id: hod.department_id } },
+    };
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.student_leaves.findMany({
+        where,
+        skip: query.skip,
+        take: query.limit,
+        orderBy: { created_at: 'desc' },
+        select: STUDENT_LEAVE_SELECT,
+      }),
+      this.prisma.student_leaves.count({ where }),
+    ]);
+
+    return paginate(rows.map(toResponse), total, query);
   }
 
   update(id: number, updateStudentLeafDto: UpdateStudentLeafDto) {
@@ -238,19 +283,32 @@ export class StudentLeavesService {
    * the student" — only valid once status is already 'faculty_approved'.
    * approved_by_hod_user_id is a direct FK to `users` (not `faculty`), so
    * unlike Class Mentors this needs no faculty-row lookup for the HoD's own
-   * identity — same pattern as Appraisal's hod_reviewed_by. No department
-   * scoping either: workflow.md states none for this action, and it isn't
-   * the dominant convention across this codebase's other HoD-gated write
-   * endpoints (only Class Mentors requires it, per its own explicit spec).
+   * identity — same pattern as Appraisal's hod_reviewed_by. Department
+   * scoping added here (via students -> classes -> department_id) mirrors
+   * the same guard every other HoD-gated write endpoint in this codebase
+   * enforces, closing the gap noted against workflow.md's silence on it.
    */
   async hodApprove(id: number, dto: HodApproveLeaveDto, hodUserId: number) {
+    const hod = await this.resolveFacultyByUserId(hodUserId);
+
     const leave = await this.prisma.student_leaves.findUnique({
       where: { id },
+      include: {
+        students: { select: { classes: { select: { department_id: true } } } },
+      },
     });
     if (!leave) {
       throw new NotFoundException({
         message: 'Leave request not found',
         errorCode: 'LEAVE_REQUEST_NOT_FOUND',
+      });
+    }
+
+    if (leave.students.classes?.department_id !== hod.department_id) {
+      throw new ForbiddenException({
+        message:
+          'You may only act on leave requests within your own department',
+        errorCode: 'NOT_YOUR_DEPARTMENT',
       });
     }
 

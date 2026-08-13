@@ -49,4 +49,19 @@ export class CreateFacultyOdDto {
   @IsString()
   @MaxLength(100)
   sanction_order?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  od_type?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  periods_affected?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  class_adjustment?: string;
 }

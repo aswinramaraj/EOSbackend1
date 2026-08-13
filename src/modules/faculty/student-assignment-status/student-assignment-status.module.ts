@@ -7,5 +7,6 @@ import { StudentAssignmentStatusController } from './student-assignment-status.c
   imports: [PrismaModule],
   controllers: [StudentAssignmentStatusController],
   providers: [StudentAssignmentStatusService],
+  exports: [StudentAssignmentStatusService],
 })
 export class StudentAssignmentStatusModule {}

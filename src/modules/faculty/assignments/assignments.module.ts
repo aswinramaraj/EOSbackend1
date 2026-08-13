@@ -7,5 +7,6 @@ import { AssignmentsController } from './assignments.controller';
   imports: [PrismaModule],
   controllers: [AssignmentsController],
   providers: [AssignmentsService],
+  exports: [AssignmentsService],
 })
 export class AssignmentsModule {}

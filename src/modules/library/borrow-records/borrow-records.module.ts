@@ -9,5 +9,6 @@ import { NotificationsModule } from '../../notifications/notifications/notificat
   imports: [PrismaModule, LibrarySettingsModule, NotificationsModule],
   controllers: [BorrowRecordsController],
   providers: [BorrowRecordsService],
+  exports: [BorrowRecordsService],
 })
 export class BorrowRecordsModule {}

@@ -544,6 +544,7 @@ export class AttendanceService {
         student_id_no: true,
         roll_no: true,
         soa_applications: { select: { first_name: true, last_name: true } },
+        users: { select: { email: true } },
       },
       orderBy: { roll_no: 'asc' },
     });
@@ -554,6 +555,11 @@ export class AttendanceService {
       roll_no: s.roll_no,
       first_name: s.soa_applications?.first_name ?? null,
       last_name: s.soa_applications?.last_name ?? null,
+      // soa_applications is nullable — students without a linked
+      // application have no first_name/last_name, so callers should fall
+      // back to this rather than student_id_no (same convention used
+      // throughout the rest of the app for this exact gap).
+      email: s.users.email,
     }));
   }
 

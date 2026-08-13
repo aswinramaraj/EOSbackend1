@@ -7,5 +7,6 @@ import { FacultyOdRequestsController } from './faculty-od-requests.controller';
   imports: [PrismaModule],
   controllers: [FacultyOdRequestsController],
   providers: [FacultyOdRequestsService],
+  exports: [FacultyOdRequestsService],
 })
 export class FacultyOdRequestsModule {}

@@ -34,7 +34,7 @@ const HOD_APPROVAL_SELECT = {
       student_id_no: true,
       soa_applications: { select: { first_name: true, last_name: true } },
       users: { select: { id: true, email: true } },
-      classes: { select: { section: true } },
+      classes: { select: { section: true, current_semester: true } },
     },
   },
   od_requests: {
@@ -45,6 +45,7 @@ const HOD_APPROVAL_SELECT = {
       reason: true,
       organization: true,
       location: true,
+      created_at: true,
       od_teams: { select: { unique_code: true } },
     },
   },
@@ -63,7 +64,7 @@ interface HodApprovalRow {
     student_id_no: string;
     soa_applications: { first_name: string; last_name: string | null } | null;
     users: { id: number; email: string };
-    classes: { section: string } | null;
+    classes: { section: string; current_semester: number | null } | null;
   };
   od_requests: {
     id: number;
@@ -72,8 +73,15 @@ interface HodApprovalRow {
     reason: string | null;
     organization: string | null;
     location: string | null;
+    created_at: Date;
     od_teams: { unique_code: string };
   };
+}
+
+const ROMAN_YEAR = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+function yearLabelForSemester(semester: number): string {
+  const yearIndex = Math.ceil(semester / 2) - 1;
+  return ROMAN_YEAR[yearIndex] ?? String(yearIndex + 1);
 }
 
 /** Same fallback chain used everywhere else - no generic display-name column on `students`. */
@@ -96,6 +104,10 @@ function toResponse(row: HodApprovalRow) {
       student_id_no: row.students.student_id_no,
       name: resolveStudentName(row.students),
       section: row.students.classes?.section ?? null,
+      year_label:
+        row.students.classes?.current_semester != null
+          ? yearLabelForSemester(row.students.classes.current_semester)
+          : null,
     },
     od_request: {
       id: row.od_requests.id,
@@ -105,6 +117,7 @@ function toResponse(row: HodApprovalRow) {
       reason: row.od_requests.reason,
       organization: row.od_requests.organization,
       location: row.od_requests.location,
+      created_at: row.od_requests.created_at,
     },
   };
 }
@@ -136,16 +149,19 @@ export class OdHodApprovalsService {
       status: query.status,
     };
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.od_request_hod_approvals.findMany({
-        where,
-        skip: query.skip,
-        take: query.limit,
-        orderBy: { id: 'desc' },
-        select: HOD_APPROVAL_SELECT,
-      }),
-      this.prisma.od_request_hod_approvals.count({ where }),
-    ], TRANSACTION_OPTIONS);
+    const [rows, total] = await this.prisma.$transaction(
+      [
+        this.prisma.od_request_hod_approvals.findMany({
+          where,
+          skip: query.skip,
+          take: query.limit,
+          orderBy: { id: 'desc' },
+          select: HOD_APPROVAL_SELECT,
+        }),
+        this.prisma.od_request_hod_approvals.count({ where }),
+      ],
+      TRANSACTION_OPTIONS,
+    );
 
     return paginate(rows.map(toResponse), total, query);
   }

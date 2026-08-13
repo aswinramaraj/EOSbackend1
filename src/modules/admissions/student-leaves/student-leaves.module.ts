@@ -7,5 +7,6 @@ import { StudentLeavesController } from './student-leaves.controller';
   imports: [PrismaModule],
   controllers: [StudentLeavesController],
   providers: [StudentLeavesService],
+  exports: [StudentLeavesService],
 })
 export class StudentLeavesModule {}

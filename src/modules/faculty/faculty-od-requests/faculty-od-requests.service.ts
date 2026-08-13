@@ -23,6 +23,9 @@ const OD_REQUEST_SELECT = {
   organization_visited: true,
   students_guided: true,
   sanction_order: true,
+  od_type: true,
+  periods_affected: true,
+  class_adjustment: true,
   hod_approval_status: true,
   hr_approval_status: true,
   verification_status: true,
@@ -31,11 +34,12 @@ const OD_REQUEST_SELECT = {
   faculty: {
     select: {
       id: true,
+      prefix: true,
       first_name: true,
       last_name: true,
       designation: true,
       department_id: true,
-      departments: { select: { id: true, name: true } },
+      departments: { select: { id: true, name: true, code: true } },
     },
   },
 } as const;
@@ -49,6 +53,9 @@ interface OdRequestRow {
   organization_visited: string | null;
   students_guided: number | null;
   sanction_order: string | null;
+  od_type: string | null;
+  periods_affected: string | null;
+  class_adjustment: string | null;
   hod_approval_status: string;
   hr_approval_status: string;
   verification_status: string;
@@ -56,11 +63,12 @@ interface OdRequestRow {
   created_at: Date;
   faculty: {
     id: number;
+    prefix: string | null;
     first_name: string;
     last_name: string;
     designation: string;
     department_id: number;
-    departments: { id: number; name: string };
+    departments: { id: number; name: string; code: string };
   };
 }
 
@@ -87,6 +95,9 @@ function toResponse(row: OdRequestRow) {
     organization_visited: row.organization_visited,
     students_guided: row.students_guided,
     sanction_order: row.sanction_order,
+    od_type: row.od_type,
+    periods_affected: row.periods_affected,
+    class_adjustment: row.class_adjustment,
     hod_approval_status: row.hod_approval_status,
     hr_approval_status: row.hr_approval_status,
     overall_status: computeOverallStatus(
@@ -139,6 +150,9 @@ export class FacultyOdRequestsService {
         organization_visited: dto.organization_visited,
         students_guided: dto.students_guided,
         sanction_order: dto.sanction_order,
+        od_type: dto.od_type,
+        periods_affected: dto.periods_affected,
+        class_adjustment: dto.class_adjustment,
       },
       select: OD_REQUEST_SELECT,
     });

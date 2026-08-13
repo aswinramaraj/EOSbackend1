@@ -13,6 +13,26 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 
+const ROMAN_YEAR = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+function yearLabelForSemester(semester: number): string {
+  const yearIndex = Math.ceil(semester / 2) - 1;
+  return ROMAN_YEAR[yearIndex] ?? String(yearIndex + 1);
+}
+
+/** Real role name only — no display label built here. The frontend already has an established ROLE_LABEL mapping (src/lib/config.ts) it applies to this, so the label text lives in exactly one place. */
+const POSTER_SELECT = {
+  roles: { select: { name: true } },
+  faculty: {
+    select: { departments: { select: { code: true } } },
+  },
+} as const;
+
+const CLASS_LABEL_SELECT = {
+  id: true,
+  section: true,
+  current_semester: true,
+} as const;
+
 /**
  * Resolved relationship facts for the current actor, derived once per request.
  * batch_id/department_id on `announcements` are never populated and never
@@ -60,6 +80,11 @@ export class AnnouncementsService {
             title: dto.title,
             content: dto.content,
             target_audience: dto.target_audience,
+            ...(dto.status !== undefined && { status: dto.status }),
+            ...(dto.category !== undefined && { category: dto.category }),
+            ...(dto.scheduled_at !== undefined && {
+              scheduled_at: new Date(dto.scheduled_at),
+            }),
           },
         });
 
@@ -93,7 +118,12 @@ export class AnnouncementsService {
     try {
       announcements = await this.prisma.announcements.findMany({
         where,
-        include: { announcement_class_mapping: { select: { class_id: true } } },
+        include: {
+          announcement_class_mapping: {
+            select: { class_id: true, classes: { select: CLASS_LABEL_SELECT } },
+          },
+          users: { select: POSTER_SELECT },
+        },
         orderBy: { created_at: 'desc' },
       });
     } catch (err) {
@@ -127,7 +157,12 @@ export class AnnouncementsService {
     try {
       announcement = await this.prisma.announcements.findFirst({
         where: { AND: [{ id }, where] },
-        include: { announcement_class_mapping: { select: { class_id: true } } },
+        include: {
+          announcement_class_mapping: {
+            select: { class_id: true, classes: { select: CLASS_LABEL_SELECT } },
+          },
+          users: { select: POSTER_SELECT },
+        },
       });
     } catch (err) {
       this.logger.error('DB error during announcement lookup', err);
@@ -342,10 +377,23 @@ export class AnnouncementsService {
         return {};
 
       case ROLES.HOD:
+        // Same shape as the FACULTY branch below: own posts, any Admin post,
+        // plus — the part that was missing — anyone else's post (COE,
+        // Principal, another department's HOD, etc.) that actually targets
+        // at least one class in this HOD's own department. Without this
+        // third clause an HOD could never see a legitimately-targeted
+        // announcement from a non-Admin poster.
         return {
           OR: [
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
+            {
+              announcement_class_mapping: {
+                some: {
+                  classes: { department_id: context.departmentId ?? -1 },
+                },
+              },
+            },
           ],
         };
 
@@ -723,8 +771,40 @@ export class AnnouncementsService {
   ) {
     const mappings = (announcement.announcement_class_mapping ?? []) as {
       class_id: number;
+      classes?: {
+        id: number;
+        section: string;
+        current_semester: number | null;
+      };
     }[];
-    const { announcement_class_mapping, ...rest } = announcement;
-    return { ...rest, class_ids: mappings.map((m) => m.class_id) };
+    const poster = announcement.users as
+      | {
+          roles: { name: string };
+          faculty: { departments: { code: string } | null } | null;
+        }
+      | undefined;
+    const rest = { ...announcement };
+    delete rest.announcement_class_mapping;
+    delete rest.users;
+
+    return {
+      ...rest,
+      class_ids: mappings.map((m) => m.class_id),
+      classes: mappings
+        .map((m) => m.classes)
+        .filter((c): c is NonNullable<typeof c> => c != null)
+        .map((c) => ({
+          id: c.id,
+          label: c.current_semester
+            ? `${yearLabelForSemester(c.current_semester)}-${c.section}`
+            : c.section,
+        })),
+      posted_by: poster
+        ? {
+            role: poster.roles.name,
+            department_code: poster.faculty?.departments?.code ?? null,
+          }
+        : null,
+    };
   }
 }

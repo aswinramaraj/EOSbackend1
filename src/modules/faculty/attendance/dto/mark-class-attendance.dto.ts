@@ -16,8 +16,8 @@ export class ClassAttendanceRecordItemDto {
   @IsInt()
   student_id: number;
 
-  @IsIn(['present', 'absent'])
-  status: 'present' | 'absent';
+  @IsIn(['present', 'absent', 'on_duty'])
+  status: 'present' | 'absent' | 'on_duty';
 }
 
 /**

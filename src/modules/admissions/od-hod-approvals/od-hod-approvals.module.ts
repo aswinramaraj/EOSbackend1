@@ -8,5 +8,6 @@ import { OdHodApprovalsController } from './od-hod-approvals.controller';
   imports: [PrismaModule, NotificationsModule],
   controllers: [OdHodApprovalsController],
   providers: [OdHodApprovalsService],
+  exports: [OdHodApprovalsService],
 })
 export class OdHodApprovalsModule {}

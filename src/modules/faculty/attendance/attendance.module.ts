@@ -9,5 +9,6 @@ import { MeStaffAttendanceService } from './me-staff-attendance.service';
   imports: [PrismaModule],
   controllers: [AttendanceController, MeClassesAttendanceController],
   providers: [AttendanceService, MeStaffAttendanceService],
+  exports: [AttendanceService],
 })
 export class AttendanceModule {}

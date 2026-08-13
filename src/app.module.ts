@@ -136,6 +136,36 @@ import { HrDepartmentsModule } from './modules/hr/hr-departments/hr-departments.
 import { HrRequestsModule } from './modules/hr/hr-requests/hr-requests.module';
 import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module';
 
+import { HodDashboardModule } from './modules/hod/hod-dashboard/hod-dashboard.module';
+import { HodReportsModule } from './modules/hod/hod-reports/hod-reports.module';
+import { HodAcademicCalendarModule } from './modules/hod/hod-academic-calendar/hod-academic-calendar.module';
+import { HodClassRecordsModule } from './modules/hod/hod-class-records/hod-class-records.module';
+import { HodExaminationsModule } from './modules/hod/hod-examinations/hod-examinations.module';
+import { HodFacultyStaffModule } from './modules/hod/hod-faculty-staff/hod-faculty-staff.module';
+import { HodLeaveRequestsModule } from './modules/hod/hod-leave-requests/hod-leave-requests.module';
+import { HodOdRequestsModule } from './modules/hod/hod-od-requests/hod-od-requests.module';
+import { HodPlacementsModule } from './modules/hod/hod-placements/hod-placements.module';
+import { HodNoDueModule } from './modules/hod/hod-no-due/hod-no-due.module';
+import { HodStudentProfileModule } from './modules/hod/hod-student-profile/hod-student-profile.module';
+import { HodEmployeeAttendanceModule } from './modules/hod/hod-employee-attendance/hod-employee-attendance.module';
+import { HodEmployeeTimetableModule } from './modules/hod/hod-employee-timetable/hod-employee-timetable.module';
+import { HodEmployeeLeaveModule } from './modules/hod/hod-employee-leave/hod-employee-leave.module';
+import { HodEmployeeOdModule } from './modules/hod/hod-employee-od/hod-employee-od.module';
+import { HodEmployeeHrPayrollModule } from './modules/hod/hod-employee-hr-payroll/hod-employee-hr-payroll.module';
+import { HodEmployeePayslipModule } from './modules/hod/hod-employee-payslip/hod-employee-payslip.module';
+import { HodEmployeeAppraisalModule } from './modules/hod/hod-employee-appraisal/hod-employee-appraisal.module';
+import { HodEmployeeLibraryModule } from './modules/hod/hod-employee-library/hod-employee-library.module';
+import { HodMyClassAssignmentStatusModule } from './modules/hod/hod-my-class-assignment-status/hod-my-class-assignment-status.module';
+import { HodMyClassSubjectRecordsModule } from './modules/hod/hod-my-class-subject-records/hod-my-class-subject-records.module';
+import { HodMyClassCurrentSemesterModule } from './modules/hod/hod-my-class-current-semester/hod-my-class-current-semester.module';
+import { HodMyClassAttendanceModule } from './modules/hod/hod-my-class-attendance/hod-my-class-attendance.module';
+import { HodHigherEducationModule } from './modules/hod/hod-higher-education/hod-higher-education.module';
+import { HodEdcModule } from './modules/hod/hod-edc/hod-edc.module';
+import { HodAssignFacultyModule } from './modules/hod/hod-assign-faculty/hod-assign-faculty.module';
+import { HodTimetableModule } from './modules/hod/hod-timetable/hod-timetable.module';
+import { HodSopPopRequestsModule } from './modules/hod/hod-sop-pop-requests/hod-sop-pop-requests.module';
+import { HodAppraisalRequestsModule } from './modules/hod/hod-appraisal-requests/hod-appraisal-requests.module';
+
 @Module({
   imports: [
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
@@ -274,6 +304,36 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     HrDepartmentsModule,
     HrRequestsModule,
     HrDashboardModule,
+
+    HodDashboardModule,
+    HodReportsModule,
+    HodAcademicCalendarModule,
+    HodClassRecordsModule,
+    HodExaminationsModule,
+    HodFacultyStaffModule,
+    HodLeaveRequestsModule,
+    HodOdRequestsModule,
+    HodPlacementsModule,
+    HodNoDueModule,
+    HodStudentProfileModule,
+    HodEmployeeAttendanceModule,
+    HodEmployeeTimetableModule,
+    HodEmployeeLeaveModule,
+    HodEmployeeOdModule,
+    HodEmployeeHrPayrollModule,
+    HodEmployeePayslipModule,
+    HodEmployeeAppraisalModule,
+    HodEmployeeLibraryModule,
+    HodMyClassAssignmentStatusModule,
+    HodMyClassSubjectRecordsModule,
+    HodMyClassCurrentSemesterModule,
+    HodMyClassAttendanceModule,
+    HodHigherEducationModule,
+    HodEdcModule,
+    HodAssignFacultyModule,
+    HodTimetableModule,
+    HodSopPopRequestsModule,
+    HodAppraisalRequestsModule,
   ],
 
   controllers: [AppController],

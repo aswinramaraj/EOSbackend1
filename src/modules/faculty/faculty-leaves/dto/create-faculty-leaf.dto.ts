@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsDateString,
   IsInt,
   IsOptional,
@@ -34,4 +35,13 @@ export class CreateFacultyLeafDto {
   @IsOptional()
   @IsInt()
   leave_type_id?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  alternate_arrangement?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  is_station_leave?: boolean;
 }

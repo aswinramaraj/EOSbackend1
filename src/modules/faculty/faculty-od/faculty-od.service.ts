@@ -37,6 +37,9 @@ const FACULTY_OD_SELECT = {
   organization_visited: true,
   students_guided: true,
   sanction_order: true,
+  od_type: true,
+  periods_affected: true,
+  class_adjustment: true,
   latitude: true,
   longitude: true,
   photo_url: true,
@@ -75,6 +78,9 @@ interface FacultyOdRow {
   organization_visited: string | null;
   students_guided: number | null;
   sanction_order: string | null;
+  od_type: string | null;
+  periods_affected: string | null;
+  class_adjustment: string | null;
   latitude: unknown;
   longitude: unknown;
   photo_url: string | null;
@@ -128,6 +134,9 @@ function toResponse(od: FacultyOdRow) {
     organization_visited: od.organization_visited,
     students_guided: od.students_guided,
     sanction_order: od.sanction_order,
+    od_type: od.od_type,
+    periods_affected: od.periods_affected,
+    class_adjustment: od.class_adjustment,
     latitude: od.latitude,
     longitude: od.longitude,
     photo_url: od.photo_url,
@@ -193,6 +202,9 @@ export class FacultyOdService {
         organization_visited: dto.organization_visited,
         students_guided: dto.students_guided,
         sanction_order: dto.sanction_order,
+        od_type: dto.od_type,
+        periods_affected: dto.periods_affected,
+        class_adjustment: dto.class_adjustment,
       },
       select: FACULTY_OD_SELECT,
     });

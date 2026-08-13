@@ -20,12 +20,15 @@ const FACULTY_LEAVE_SELECT = {
   to_date: true,
   reason: true,
   leave_type_id: true,
+  alternate_arrangement: true,
+  is_station_leave: true,
   hod_approval_status: true,
   hr_approval_status: true,
   created_at: true,
   faculty: {
     select: {
       id: true,
+      prefix: true,
       first_name: true,
       last_name: true,
       designation: true,
@@ -43,11 +46,14 @@ interface FacultyLeaveRow {
   to_date: Date;
   reason: string | null;
   leave_type_id: number | null;
+  alternate_arrangement: string | null;
+  is_station_leave: boolean;
   hod_approval_status: string;
   hr_approval_status: string;
   created_at: Date;
   faculty: {
     id: number;
+    prefix: string | null;
     first_name: string;
     last_name: string;
     designation: string;
@@ -80,6 +86,8 @@ function toResponse(leave: FacultyLeaveRow) {
     to_date: leave.to_date,
     reason: leave.reason,
     leave_type: leave.leave_types,
+    alternate_arrangement: leave.alternate_arrangement,
+    is_station_leave: leave.is_station_leave,
     hod_approval_status: leave.hod_approval_status,
     hr_approval_status: leave.hr_approval_status,
     overall_status: computeOverallStatus(
@@ -122,6 +130,10 @@ export class FacultyLeavesService {
         to_date: toDate,
         reason: dto.reason,
         leave_type_id: dto.leave_type_id,
+        alternate_arrangement: dto.alternate_arrangement,
+        ...(dto.is_station_leave !== undefined && {
+          is_station_leave: dto.is_station_leave,
+        }),
       },
       select: FACULTY_LEAVE_SELECT,
     });
@@ -130,7 +142,14 @@ export class FacultyLeavesService {
     return toResponse(leave);
   }
 
-  /** GET /faculty-leaves (Faculty/HoD/HR Payroll). Faculty is always scoped to their own records. */
+  /**
+   * GET /faculty-leaves (Faculty/HoD/HR Payroll). Faculty is always scoped
+   * to their own records; HoD is force-scoped to their own department (the
+   * acting HoD's faculty.department_id) — mirrors the department-scoping
+   * FacultyOdRequestsService.findAll already applies for the equivalent OD
+   * endpoint, closing the gap where an HoD could otherwise see every
+   * department's leave requests by omitting faculty_id.
+   */
   async findAll(query: ListFacultyLeafQueryDto, currentUser: JwtPayload) {
     const where: Record<string, unknown> = {
       faculty_id: query.faculty_id,
@@ -141,6 +160,9 @@ export class FacultyLeavesService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      where.faculty = { department_id: hod.department_id };
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -177,10 +199,7 @@ export class FacultyLeavesService {
       }
     } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
-      if (
-        leave.faculty.departments?.id !==
-        hod.department_id
-      ) {
+      if (leave.faculty.departments?.id !== hod.department_id) {
         throw new ForbiddenException(
           'You may only view leave requests from your own department',
         );
@@ -202,6 +221,7 @@ export class FacultyLeavesService {
 
     const existing = await this.prisma.faculty_leaves.findUnique({
       where: { id },
+      include: { faculty: { select: { department_id: true } } },
     });
     if (!existing) {
       throw new NotFoundException('Faculty leave request not found');
@@ -213,6 +233,12 @@ export class FacultyLeavesService {
     } = {};
 
     if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (existing.faculty.department_id !== hod.department_id) {
+        throw new ForbiddenException(
+          'You may only act on leave requests within your own department',
+        );
+      }
       if (dto.hr_approval_status !== undefined) {
         throw new ForbiddenException('HoD may only set hod_approval_status');
       }
