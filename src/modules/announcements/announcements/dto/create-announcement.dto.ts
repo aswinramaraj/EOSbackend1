@@ -44,15 +44,21 @@ export class CreateAnnouncementDto {
   target_audience?: target_audience_enum;
 
   /**
-   * Required for every target_audience except 'teachers' and 'roles' -
-   * that's the class-targeted flow, persisted via announcement_class_mapping.
-   * Never required for a draft.
+   * Required for every target_audience except 'teachers', 'roles', and the
+   * EDC-specific audiences ('edc_founders'/'edc_inside_college'/
+   * 'edc_all_entrepreneurs') - those three are plain broadcast labels with
+   * no class/department/role targeting mechanism behind them (no "founders"
+   * recipient list exists in the schema yet), same category of exception
+   * as 'teachers'/'roles'. Never required for a draft.
    */
   @ValidateIf(
     (dto) =>
       dto.status !== 'draft' &&
       dto.target_audience !== 'teachers' &&
-      dto.target_audience !== 'roles',
+      dto.target_audience !== 'roles' &&
+      dto.target_audience !== 'edc_founders' &&
+      dto.target_audience !== 'edc_inside_college' &&
+      dto.target_audience !== 'edc_all_entrepreneurs',
   )
   @IsArray()
   @ArrayNotEmpty()
@@ -95,4 +101,14 @@ export class CreateAnnouncementDto {
   @IsString()
   @MaxLength(255)
   file_name?: string;
+
+  /**
+   * Real column (`announcements.priority`), added specifically for the EDC
+   * module's High/Medium/Normal tags — free text, not an enum, since no
+   * fixed severity scale exists anywhere else in the schema to reuse.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  priority?: string;
 }

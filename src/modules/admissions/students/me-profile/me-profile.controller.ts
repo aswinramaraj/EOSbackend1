@@ -241,7 +241,7 @@ export class MeController {
    */
   @Get('faculty-directory')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.STUDENT)
+  @Roles(ROLES.STUDENT, ROLES.EDC_COORDINATOR)
   getFacultyDirectory() {
     return this.meFacultyDirectoryService.getFacultyDirectory();
   }

@@ -68,4 +68,9 @@ export class UpdateAnnouncementDto {
   @IsString()
   @MaxLength(255)
   file_name?: string;
+
+  @ValidateIf((dto) => dto.priority !== undefined)
+  @IsString()
+  @MaxLength(20)
+  priority?: string;
 }

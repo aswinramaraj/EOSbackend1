@@ -124,7 +124,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
    */
   @Post('attachments')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.EDC_COORDINATOR)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
   uploadAttachment(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
@@ -148,7 +148,7 @@ export class AnnouncementsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.EDC_COORDINATOR)
   create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     return this.announcementsService.create(dto, user);
   }
@@ -200,7 +200,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Put(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.EDC_COORDINATOR)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -218,7 +218,7 @@ export class AnnouncementsController {
    * Error responses: see PUT /api/v1/announcements/:id
    */
   @Patch(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.EDC_COORDINATOR)
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -237,7 +237,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Delete(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.EDC_COORDINATOR)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

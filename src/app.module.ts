@@ -29,6 +29,12 @@ import { ParentsModule } from './modules/parents/parents.module';
 import { PersonalCalendarModule } from './modules/personal-calendar/personal-calendar.module';
 import { StudentHigherEducationModule } from './modules/student-higher-education/student-higher-education.module';
 import { StudentEntrepreneurshipModule } from './modules/student-entrepreneurship/student-entrepreneurship.module';
+import { StartupIdeasModule } from './modules/startup-ideas/startup-ideas.module';
+import { IncubationsModule } from './modules/incubations/incubations.module';
+import { EdcEventsModule } from './modules/edc-events/edc-events.module';
+import { EdcDocumentsModule } from './modules/edc-documents/edc-documents.module';
+import { EdcReportsModule } from './modules/edc-reports/edc-reports.module';
+import { EdcFundingModule } from './modules/edc-funding/edc-funding.module';
 import { PrincipalStudentsModule } from './modules/principal-students/principal-students.module';
 import { PrincipalFacultyModule } from './modules/principal-faculty/principal-faculty.module';
 import { PrincipalDepartmentsModule } from './modules/principal-departments/principal-departments.module';
@@ -191,6 +197,12 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     PrincipalMedicalModule,
     PrincipalSportsModule,
     StudentEntrepreneurshipModule,
+    StartupIdeasModule,
+    IncubationsModule,
+    EdcEventsModule,
+    EdcDocumentsModule,
+    EdcReportsModule,
+    EdcFundingModule,
     ProfileModule,
     LmsModule,
 
