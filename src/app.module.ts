@@ -41,6 +41,7 @@ import { PrincipalTransportModule } from './modules/principal-transport/principa
 import { PrincipalLibraryModule } from './modules/principal-library/principal-library.module';
 import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
+import { SportsAdminModule } from './modules/sports-admin/sports-admin.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { LmsModule } from './modules/lms/lms.module';
 
@@ -189,6 +190,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     PrincipalLibraryModule,
     PrincipalMedicalModule,
     PrincipalSportsModule,
+    SportsAdminModule,
     StudentEntrepreneurshipModule,
     ProfileModule,
     LmsModule,
