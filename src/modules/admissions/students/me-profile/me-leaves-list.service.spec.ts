@@ -105,6 +105,53 @@ describe('MeLeavesListService', () => {
     });
   });
 
+  it('filters by routed_to_warden when provided, and omits it from the where clause otherwise', async () => {
+    prisma.students.findUnique.mockResolvedValue({ id: 7 });
+    prisma.student_leaves.count.mockResolvedValue(0);
+    prisma.student_leaves.findMany.mockResolvedValue([]);
+
+    await service.getMyLeaves(1, { routed_to_warden: true });
+
+    const [countArgs] = prisma.student_leaves.count.mock.calls[0] as [
+      { where: Record<string, unknown> },
+    ];
+    expect(countArgs.where).toEqual({ student_id: 7, routed_to_warden: true });
+  });
+
+  it('resolves approved_by_warden from the second users relation, and surfaces also_on_hostel_leave/routed_to_warden', async () => {
+    prisma.students.findUnique.mockResolvedValue({ id: 7 });
+    prisma.student_leaves.count.mockResolvedValue(1);
+    prisma.student_leaves.findMany.mockResolvedValue([
+      {
+        id: 301,
+        from_date: new Date('2026-08-20T00:00:00.000Z'),
+        to_date: new Date('2026-08-22T00:00:00.000Z'),
+        reason: 'Going home',
+        status: 'warden_approved',
+        created_at: new Date('2026-08-13T00:00:00.000Z'),
+        also_on_hostel_leave: false,
+        routed_to_warden: true,
+        faculty: null,
+        users: null,
+        users_student_leaves_approved_by_warden_user_idTousers: {
+          email: 'warden@eos.test',
+        },
+      },
+    ]);
+
+    const result = await service.getMyLeaves(1, {});
+
+    expect(result.data[0]).toMatchObject({
+      id: 301,
+      status: 'warden_approved',
+      also_on_hostel_leave: false,
+      routed_to_warden: true,
+      approved_by_faculty: null,
+      approved_by_hod: null,
+      approved_by_warden: 'warden@eos.test',
+    });
+  });
+
   it('applies pagination (page/page_size → skip/take)', async () => {
     prisma.students.findUnique.mockResolvedValue({ id: 7 });
     prisma.student_leaves.count.mockResolvedValue(50);

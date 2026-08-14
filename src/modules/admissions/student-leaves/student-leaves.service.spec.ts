@@ -38,7 +38,10 @@ describe('StudentLeavesService', () => {
         class_id: 5,
         soa_applications: { first_name: 'Arjun', last_name: 'Kumar' },
         users: { id: 100, email: 'arjun@sece.ac.in' },
-        classes: { section: 'B', departments: { name: 'Electronics Engineering' } },
+        classes: {
+          section: 'B',
+          departments: { name: 'Electronics Engineering' },
+        },
       },
       ...overrides,
     };
@@ -54,7 +57,9 @@ describe('StudentLeavesService', () => {
         count: jest.fn(),
         update: jest.fn(),
       },
-      $transaction: jest.fn((queries: Promise<unknown>[]) => Promise.all(queries)),
+      $transaction: jest.fn((queries: Promise<unknown>[]) =>
+        Promise.all(queries),
+      ),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -76,7 +81,10 @@ describe('StudentLeavesService', () => {
       prisma.faculty.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.findAll({ limit: 20, page: 1 } as any, { sub: 1, role: 'faculty' } as any),
+        service.findAll(
+          { limit: 20, page: 1 } as any,
+          { sub: 1, role: 'faculty' } as any,
+        ),
       ).rejects.toThrow('Faculty profile not found for the authenticated user');
     });
 
@@ -103,16 +111,17 @@ describe('StudentLeavesService', () => {
       prisma.student_leaves.findMany.mockResolvedValue([leaveRow()]);
       prisma.student_leaves.count.mockResolvedValue(1);
 
-      const result = await service.findAll(
-        { limit: 20, page: 1, skip: 0 } as any,
-        { sub: 1, role: 'faculty' } as any,
-      );
+      const result = await service.findAll({ limit: 20, page: 1, skip: 0 }, {
+        sub: 1,
+        role: 'faculty',
+      } as any);
 
       const [findManyArgs] = prisma.student_leaves.findMany.mock.calls[0] as [
         { where: Record<string, unknown> },
       ];
       expect(findManyArgs.where).toMatchObject({
         students: { class_id: { in: [5, 9] } },
+        routed_to_warden: false,
       });
       expect(result.data[0]).toMatchObject({
         id: 1,
@@ -157,7 +166,24 @@ describe('StudentLeavesService', () => {
   });
 
   describe('facultyApprove', () => {
-    it('throws 403 NOT_THE_MENTOR when the caller does not mentor this student\'s class', async () => {
+    it('throws 422 ROUTED_TO_WARDEN when the leave was applied from the Hostel tab', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
+      prisma.student_leaves.findUnique.mockResolvedValue({
+        status: 'pending',
+        routed_to_warden: true,
+        students: { class_id: 5 },
+      });
+
+      await expect(
+        service.facultyApprove(1, { decision: 'approved' }, 1),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: { errorCode: 'ROUTED_TO_WARDEN' },
+      });
+      expect(prisma.class_mentors.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("throws 403 NOT_THE_MENTOR when the caller does not mentor this student's class", async () => {
       prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
       prisma.student_leaves.findUnique.mockResolvedValue({
         status: 'pending',
@@ -196,7 +222,9 @@ describe('StudentLeavesService', () => {
         students: { class_id: 5 },
       });
       prisma.class_mentors.findFirst.mockResolvedValue({ id: 1 });
-      prisma.student_leaves.update.mockResolvedValue(leaveRow({ status: 'faculty_approved' }));
+      prisma.student_leaves.update.mockResolvedValue(
+        leaveRow({ status: 'faculty_approved' }),
+      );
 
       await service.facultyApprove(1, { decision: 'approved' }, 1);
 
@@ -214,7 +242,9 @@ describe('StudentLeavesService', () => {
         students: { class_id: 5 },
       });
       prisma.class_mentors.findFirst.mockResolvedValue({ id: 1 });
-      prisma.student_leaves.update.mockResolvedValue(leaveRow({ status: 'rejected' }));
+      prisma.student_leaves.update.mockResolvedValue(
+        leaveRow({ status: 'rejected' }),
+      );
 
       await service.facultyApprove(1, { decision: 'rejected' }, 1);
 
@@ -227,6 +257,21 @@ describe('StudentLeavesService', () => {
   });
 
   describe('hodApprove', () => {
+    it('throws 422 ROUTED_TO_WARDEN when the leave was applied from the Hostel tab', async () => {
+      prisma.student_leaves.findUnique.mockResolvedValue({
+        status: 'pending',
+        routed_to_warden: true,
+      });
+
+      await expect(
+        service.hodApprove(1, { decision: 'approved' }, 99),
+      ).rejects.toMatchObject({
+        status: 422,
+        response: { errorCode: 'ROUTED_TO_WARDEN' },
+      });
+      expect(prisma.student_leaves.update).not.toHaveBeenCalled();
+    });
+
     it('throws 422 NOT_FACULTY_APPROVED_YET when still pending', async () => {
       prisma.student_leaves.findUnique.mockResolvedValue({ status: 'pending' });
 
@@ -239,7 +284,9 @@ describe('StudentLeavesService', () => {
     });
 
     it('throws 422 ALREADY_DECIDED when already hod_approved/rejected', async () => {
-      prisma.student_leaves.findUnique.mockResolvedValue({ status: 'rejected' });
+      prisma.student_leaves.findUnique.mockResolvedValue({
+        status: 'rejected',
+      });
 
       await expect(
         service.hodApprove(1, { decision: 'approved' }, 99),
@@ -250,8 +297,12 @@ describe('StudentLeavesService', () => {
     });
 
     it('sets status to hod_approved and records approved_by_hod_user_id on approve', async () => {
-      prisma.student_leaves.findUnique.mockResolvedValue({ status: 'faculty_approved' });
-      prisma.student_leaves.update.mockResolvedValue(leaveRow({ status: 'hod_approved' }));
+      prisma.student_leaves.findUnique.mockResolvedValue({
+        status: 'faculty_approved',
+      });
+      prisma.student_leaves.update.mockResolvedValue(
+        leaveRow({ status: 'hod_approved' }),
+      );
 
       await service.hodApprove(1, { decision: 'approved' }, 99);
 

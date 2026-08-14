@@ -12,6 +12,7 @@ import * as crypto from 'node:crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { JoinOdTeamDto } from './dto/join-od-team.dto';
+import { CreateOdTeamDto } from './dto/create-od-team.dto';
 import { CreateOdRequestDto } from './dto/create-od-request.dto';
 import { toTimeDate, formatTime } from './od-time.util';
 
@@ -79,7 +80,7 @@ export class MeOdTeamsService {
    *  500 INTERNAL_ERROR    – unexpected DB failure, or unique_code
    *                          collision retries exhausted
    */
-  async createOdTeam(userId: number) {
+  async createOdTeam(userId: number, dto: CreateOdTeamDto) {
     const student = await this.prisma.students.findUnique({
       where: { user_id: userId },
       select: { id: true },
@@ -91,6 +92,28 @@ export class MeOdTeamsService {
       });
     }
 
+    const fromDate = new Date(dto.from_date);
+    const toDate = new Date(dto.to_date);
+    if (fromDate < startOfToday() || fromDate > toDate) {
+      throw new UnprocessableEntityException({
+        message:
+          'from_date must not be in the past and must be on or before to_date',
+        errorCode: 'INVALID_DATE_RANGE',
+      });
+    }
+
+    const guide = await this.prisma.faculty.findUnique({
+      where: { id: dto.faculty_guide_id },
+      select: { first_name: true, last_name: true },
+    });
+    if (!guide) {
+      throw new NotFoundException({
+        message: 'Faculty guide not found',
+        errorCode: 'FACULTY_NOT_FOUND',
+      });
+    }
+    const facultyGuideName = `${guide.first_name} ${guide.last_name ?? ''}`.trim();
+
     for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
       const uniqueCode = generateUniqueCode();
       try {
@@ -100,6 +123,14 @@ export class MeOdTeamsService {
               created_by_student_id: student.id,
               unique_code: uniqueCode,
               is_locked: false,
+              team_name: dto.team_name,
+              reason: dto.reason,
+              venue: dto.venue,
+              from_date: fromDate,
+              to_date: toDate,
+              from_time: toTimeDate(dto.from_time),
+              to_time: toTimeDate(dto.to_time),
+              faculty_guide_id: dto.faculty_guide_id,
             },
           });
           await tx.od_team_members.create({
@@ -117,6 +148,15 @@ export class MeOdTeamsService {
           unique_code: team.unique_code,
           is_locked: team.is_locked,
           created_at: team.created_at,
+          team_name: team.team_name,
+          reason: team.reason,
+          venue: team.venue,
+          from_date: toDateOnly(team.from_date!),
+          to_date: toDateOnly(team.to_date!),
+          from_time: formatTime(team.from_time),
+          to_time: formatTime(team.to_time),
+          faculty_guide_id: team.faculty_guide_id,
+          faculty_guide_name: facultyGuideName,
         };
       } catch (err) {
         if (

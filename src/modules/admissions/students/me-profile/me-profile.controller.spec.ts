@@ -174,13 +174,23 @@ describe('MeController', () => {
     expect(roles).toEqual([ROLES.STUDENT]);
   });
 
-  it('resolves student_id from the JWT and delegates createOdTeam() to MeOdTeamsService, ignoring the body', () => {
+  it('resolves student_id from the JWT and delegates createOdTeam() to MeOdTeamsService with the request body', () => {
+    const dto = {
+      team_name: 'Team Nexus',
+      reason: 'IEEE paper presentation',
+      venue: 'Anna University, Chennai',
+      from_date: '2999-01-10',
+      to_date: '2999-01-12',
+      from_time: '09:00',
+      to_time: '17:00',
+      faculty_guide_id: 41,
+    };
     void controller.createOdTeam(
       { sub: 7, email: 'a@b.com', role: 'student', roleId: 4 },
-      {},
+      dto,
     );
 
-    expect(meOdTeamsService.createOdTeam).toHaveBeenCalledWith(7);
+    expect(meOdTeamsService.createOdTeam).toHaveBeenCalledWith(7, dto);
   });
 
   it('restricts joinOdTeam() to the student role', () => {

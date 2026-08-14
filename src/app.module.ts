@@ -20,6 +20,7 @@ import { CertificatesModule } from './modules/admissions/certificates/certificat
 import { OdModule } from './modules/admissions/od/od.module';
 import { SoaApplicationsModule } from './modules/admissions/soa-applications/soa-applications.module';
 import { StudentLeavesModule } from './modules/admissions/student-leaves/student-leaves.module';
+import { CampusOutingRequestsModule } from './modules/admissions/campus-outing-requests/campus-outing-requests.module';
 import { StudentOdsModule } from './modules/admissions/student-ods/student-ods.module';
 import { StudentsModule } from './modules/admissions/students/students.module';
 import { MeProfileModule } from './modules/admissions/students/me-profile/me-profile.module';
@@ -140,6 +141,7 @@ import { AchievementsModule } from './modules/achievements/achievements.module';
 import { HostelsModule } from './modules/hostel/hostels/hostels.module';
 import { ResidentsModule } from './modules/hostel/residents/residents.module';
 import { OutingsModule } from './modules/hostel/outings/outings.module';
+import { LeaveRequestsModule } from './modules/hostel/leave-requests/leave-requests.module';
 import { GateLogModule } from './modules/hostel/gate-log/gate-log.module';
 import { HostelDashboardModule } from './modules/hostel/dashboard/dashboard.module';
 import { ComplaintsModule } from './modules/hostel/complaints/complaints.module';
@@ -171,6 +173,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     OdModule,
     SoaApplicationsModule,
     StudentLeavesModule,
+    CampusOutingRequestsModule,
     StudentOdsModule,
     StudentsModule,
     MeProfileModule,
@@ -291,6 +294,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     HostelsModule,
     ResidentsModule,
     OutingsModule,
+    LeaveRequestsModule,
     GateLogModule,
     HostelDashboardModule,
     ComplaintsModule,
