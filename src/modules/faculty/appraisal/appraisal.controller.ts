@@ -37,21 +37,26 @@ export class AppraisalController {
   constructor(private readonly appraisalService: AppraisalService) {}
 
   /**
-   * GET /api/v1/appraisal-criteria?academic_year= — Faculty only.
+   * GET /api/v1/appraisal-criteria?academic_year= — Faculty or HoD.
    * Reference data (divisions + criteria) for the Apply form.
    */
   @Get('appraisal-criteria')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   findCriteria(@Query() query: ListAppraisalCriteriaQueryDto) {
     return this.appraisalService.findCriteria(query);
   }
 
-  /** POST /api/v1/appraisal — Faculty only, for the caller's own record. */
+  /**
+   * POST /api/v1/appraisal — Faculty or HoD, for the caller's own record.
+   * An HoD's own appraisal skips the HoD-review stage entirely (see
+   * AppraisalService.create) and goes straight to HR scoring, same
+   * treatment as Leave/OD.
+   */
   @Post('appraisal_requests')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateAppraisalDto, @CurrentUser() user: JwtPayload) {
-    return this.appraisalService.create(dto, user.sub);
+    return this.appraisalService.create(dto, user);
   }
 
   /** GET /api/v1/appraisal — Faculty (own only)/HoD/HR Payroll. Paginated, filterable. */
@@ -85,9 +90,9 @@ export class AppraisalController {
     return this.appraisalService.update(id, dto, user);
   }
 
-  /** DELETE /api/v1/appraisal/:id — Faculty only, own request, only while still 'submitted'. */
+  /** DELETE /api/v1/appraisal/:id — Faculty or HoD, own request, only while still 'submitted'. */
   @Delete('appraisal_requests/:id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -101,7 +106,7 @@ export class AppraisalController {
    * files (field name "files", 10MB each) plus a "division_id" text field.
    */
   @Post('appraisal_requests/:id/attachments')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   @UseInterceptors(
     FilesInterceptor('files', MAX_ATTACHMENT_FILES, {
       limits: { fileSize: MAX_ATTACHMENT_FILE_SIZE_BYTES },
@@ -121,9 +126,9 @@ export class AppraisalController {
     );
   }
 
-  /** DELETE /api/v1/appraisal_requests/:id/attachments/:attachmentId — Faculty only, own request, only while still 'submitted'. */
+  /** DELETE /api/v1/appraisal_requests/:id/attachments/:attachmentId — Faculty or HoD, own request, only while still 'submitted'. */
   @Delete('appraisal_requests/:id/attachments/:attachmentId')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   removeAttachment(
     @Param('id', ParseIntPipe) id: number,
     @Param('attachmentId', ParseIntPipe) attachmentId: number,

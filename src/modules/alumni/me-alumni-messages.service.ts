@@ -20,6 +20,32 @@ function resolveStudentName(student: {
 }
 
 /**
+ * A message's sender is either a real alumnus (alumni_members) or a
+ * non-alumnus staff member like Principal (users, via
+ * AdminAlumniGroupsService) - never both, never neither. The role name is
+ * shown (capitalized) rather than a personal name for the staff case, since
+ * `users` has no name column of its own.
+ */
+function resolveSenderName(message: {
+  alumni_members: {
+    students: {
+      soa_applications: { first_name: string; last_name: string | null } | null;
+      users: { email: string };
+    };
+  } | null;
+  users: { roles: { name: string } } | null;
+}): string {
+  if (message.alumni_members) {
+    return resolveStudentName(message.alumni_members.students);
+  }
+  if (message.users) {
+    const { name } = message.users.roles;
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+  return 'Unknown';
+}
+
+/**
  * Alumni group chat, scoped to the caller's own batch.
  *
  * Critical isolation rule: a member of batch A must never read or post into
@@ -58,21 +84,15 @@ export class MeAlumniMessagesService {
               },
             },
           },
-          users: { select: { email: true } },
+          users: { select: { roles: { select: { name: true } } } },
         },
       }),
       this.prisma.alumni_group_messages.count({ where }),
     ]);
 
-    // alumni_members is null for messages posted directly via posted_by_user_id
-    // (see the model comment on alumni_group_messages) rather than through the
-    // poster's own alumni_members row — fall back to that user's email, same
-    // convention resolveStudentName already uses when soa_applications is missing.
     const data = rows.map(({ alumni_members, users, ...message }) => ({
       ...message,
-      posted_by_name: alumni_members
-        ? resolveStudentName(alumni_members.students)
-        : (users?.email ?? 'Unknown'),
+      posted_by_name: resolveSenderName({ alumni_members, users }),
     }));
 
     return paginate(data, total, dto);

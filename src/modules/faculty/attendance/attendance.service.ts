@@ -70,6 +70,9 @@ interface AttendanceRow {
     departments: { id: number; name: string; code: string };
   };
   subjects: { id: number; name: string; subject_code: string } | null;
+  // marked_by_faculty_id (schema.prisma) is nullable — attendance can be
+  // marked by any user via marked_by_user_id, with this faculty relation
+  // populated only when that marker happens to be a faculty member.
   faculty: { id: number; first_name: string; last_name: string } | null;
   users: AttendanceMarkerRow;
   students: {
@@ -411,6 +414,7 @@ export class AttendanceService {
               status: r.status,
               marked_by_faculty_id: faculty.id,
               marked_by_user_id: userId,
+              photo_url: dto.photo_url,
             },
             select: { id: true },
           }),

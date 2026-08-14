@@ -69,6 +69,8 @@ describe('MeExamScheduleService', () => {
         exam_date: new Date('2026-08-20T00:00:00.000Z'),
         start_time: new Date('1970-01-01T09:30:00.000Z'),
         end_time: new Date('1970-01-01T12:30:00.000Z'),
+        session: 'FN',
+        venues: { name: 'Main Hall' },
         exam_subject_mapping: {
           subjects: { name: 'Data Structures', subject_code: 'CS201' },
           exams: {
@@ -93,6 +95,8 @@ describe('MeExamScheduleService', () => {
         exam_date: '2026-08-20',
         start_time: '09:30',
         end_time: '12:30',
+        session: 'FN',
+        venue_name: 'Main Hall',
       },
     ]);
   });

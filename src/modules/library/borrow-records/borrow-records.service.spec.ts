@@ -56,6 +56,7 @@ describe('BorrowRecordsService', () => {
 
   const mockNotificationsService = {
     create: jest.fn(),
+    notify: jest.fn(),
   };
 
   // Runs both the callback form (used inside create/return) and the
@@ -1231,6 +1232,103 @@ describe('BorrowRecordsService', () => {
     });
   });
 
+  describe('getMyDuesSummary', () => {
+    const studentUser = {
+      sub: 40,
+      email: 'student@eos.test',
+      role: 'student',
+      roleId: 4,
+    };
+
+    it('sums an unpaid overdue fine into total_due and counts it as overdue', async () => {
+      mockPrismaService.students.findUnique.mockResolvedValue({ id: 7 });
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
+        {
+          status: 'borrowed',
+          due_date: daysFromNow(-3),
+          returned_date: null,
+          fine_paid: false,
+          damage_lost_charge_amount: null,
+          damage_lost_settled: false,
+        },
+      ]);
+
+      const result = await service.getMyDuesSummary(studentUser);
+
+      // 3 days overdue * finePerDay(5) = 15
+      expect(result).toEqual({
+        total_due: 15,
+        overdue_count: 1,
+        unpaid_fine_count: 1,
+      });
+    });
+
+    it('excludes an already-paid fine from total_due', async () => {
+      mockPrismaService.students.findUnique.mockResolvedValue({ id: 7 });
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
+        {
+          status: 'returned',
+          due_date: new Date('2026-07-01'),
+          returned_date: new Date('2026-07-05'),
+          fine_paid: true,
+          damage_lost_charge_amount: null,
+          damage_lost_settled: false,
+        },
+      ]);
+
+      const result = await service.getMyDuesSummary(studentUser);
+
+      expect(result).toEqual({
+        total_due: 0,
+        overdue_count: 0,
+        unpaid_fine_count: 0,
+      });
+    });
+
+    it('includes an unsettled damage/lost charge in total_due', async () => {
+      mockPrismaService.students.findUnique.mockResolvedValue({ id: 7 });
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
+        {
+          status: 'lost',
+          due_date: daysFromNow(-10),
+          returned_date: null,
+          fine_paid: false,
+          damage_lost_charge_amount: 250,
+          damage_lost_settled: false,
+        },
+      ]);
+
+      const result = await service.getMyDuesSummary(studentUser);
+
+      // status 'lost' is neither 'borrowed' nor 'returned' so the day-based
+      // fine formula contributes 0 — only the damage/lost charge counts.
+      expect(result.total_due).toBe(250);
+      expect(result.unpaid_fine_count).toBe(1);
+    });
+
+    it('returns an all-zero summary when nothing is due', async () => {
+      mockPrismaService.students.findUnique.mockResolvedValue({ id: 7 });
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
+        {
+          status: 'borrowed',
+          due_date: daysFromNow(14),
+          returned_date: null,
+          fine_paid: false,
+          damage_lost_charge_amount: null,
+          damage_lost_settled: false,
+        },
+      ]);
+
+      const result = await service.getMyDuesSummary(studentUser);
+
+      expect(result).toEqual({
+        total_due: 0,
+        overdue_count: 0,
+        unpaid_fine_count: 0,
+      });
+    });
+  });
+
   describe('remove', () => {
     it('should throw NotFoundException when the record does not exist', async () => {
       mockPrismaService.book_borrow_records.findUnique.mockResolvedValue(null);
@@ -1272,6 +1370,70 @@ describe('BorrowRecordsService', () => {
         mockPrismaService.book_borrow_records.delete,
       ).not.toHaveBeenCalled();
       expect(mockPrismaService.books.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('sendDueSoonReminders', () => {
+    it('notifies a student borrower, resolved via students.user_id', async () => {
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
+        makeRecord({
+          id: 10,
+          due_date: daysFromNow(2),
+          students: { ...includedStudent, user_id: 501 },
+          faculty: null,
+        }),
+      ]);
+
+      const result = await service.sendDueSoonReminders();
+
+      expect(mockNotificationsService.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 501,
+          type: 'library_due_reminder',
+          related_entity_type: 'book_borrow_record',
+          related_entity_id: 10,
+        }),
+      );
+      expect(result).toMatchObject({ sent: 1, checked: 1 });
+    });
+
+    it('falls back to faculty.user_id when the borrower is faculty, not a student', async () => {
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([
+        makeRecord({
+          id: 11,
+          due_date: daysFromNow(1),
+          students: null,
+          faculty: { user_id: 801 },
+        }),
+      ]);
+
+      await service.sendDueSoonReminders();
+
+      expect(mockNotificationsService.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: 801, related_entity_id: 11 }),
+      );
+    });
+
+    it('sends nothing when nothing is due soon', async () => {
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
+
+      const result = await service.sendDueSoonReminders();
+
+      expect(mockNotificationsService.notify).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ sent: 0, checked: 0 });
+    });
+
+    it('queries only still-borrowed records due within the next few days', async () => {
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
+
+      await service.sendDueSoonReminders();
+
+      const [args] = mockPrismaService.book_borrow_records.findMany.mock
+        .calls[0] as [{ where: Record<string, unknown> }];
+      expect(args.where).toMatchObject({
+        status: 'borrowed',
+        due_date: { gte: expect.any(Date), lte: expect.any(Date) },
+      });
     });
   });
 });

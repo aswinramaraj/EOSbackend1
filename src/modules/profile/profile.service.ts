@@ -239,9 +239,7 @@ export class ProfileService {
         profile_url: true,
         resume_url: true,
         users: { select: { email: true } },
-        departments: {
-          select: { name: true, code: true },
-        },
+        departments: { select: { name: true, code: true } },
         faculty: { select: { first_name: true, last_name: true } },
       },
     });
@@ -462,9 +460,7 @@ export class ProfileService {
         city: true,
         state: true,
         postal_code: true,
-        departments: {
-          select: { name: true, code: true },
-        },
+        departments: { select: { name: true, code: true } },
         faculty_id_card_issuances: {
           orderBy: { issued_at: 'desc' },
           take: 1,

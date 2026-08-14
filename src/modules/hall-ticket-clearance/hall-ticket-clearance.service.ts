@@ -165,8 +165,14 @@ export class HallTicketClearanceService {
       });
     }
 
+    // is_published gates on exam_subject_mapping (same "is this schedule
+    // real yet" signal used by MeExamScheduleService/SeatingArrangements) —
+    // a still-draft mapping's date shouldn't be able to block a clearance
+    // request. exam_timetable is a list relation (one row per timetable
+    // version), so every mapping can carry more than one date; flatMap
+    // across all of them rather than assuming a single row.
     const mappings = await this.prisma.exam_subject_mapping.findMany({
-      where: { exam_id: dto.exam_id },
+      where: { exam_id: dto.exam_id, is_published: true },
       select: { exam_timetable: { select: { exam_date: true } } },
     });
     const scheduledDates = mappings.flatMap((m) =>

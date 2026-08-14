@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../../prisma/prisma.module';
+import { NotificationsModule } from '../../notifications/notifications/notifications.module';
 import { CompaniesModule } from '../companies/companies.module';
 import { DrivesService } from './drives.service';
 import { DrivesController } from './drives.controller';
@@ -7,8 +8,9 @@ import { StudentDrivesController } from './student-drives.controller';
 import { MeDrivesController } from './me-drives.controller';
 
 @Module({
-  imports: [PrismaModule, CompaniesModule],
+  imports: [PrismaModule, CompaniesModule, NotificationsModule],
   controllers: [DrivesController, StudentDrivesController, MeDrivesController],
   providers: [DrivesService],
+  exports: [DrivesService],
 })
 export class DrivesModule {}

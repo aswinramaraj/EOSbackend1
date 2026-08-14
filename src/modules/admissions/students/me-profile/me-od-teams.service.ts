@@ -10,7 +10,9 @@ import {
 } from '@nestjs/common';
 import * as crypto from 'node:crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { JoinOdTeamDto } from './dto/join-od-team.dto';
+import { CreateOdTeamDto } from './dto/create-od-team.dto';
 import { CreateOdRequestDto } from './dto/create-od-request.dto';
 import { toTimeDate, formatTime } from './od-time.util';
 
@@ -43,7 +45,10 @@ function generateUniqueCode(): string {
 export class MeOdTeamsService {
   private readonly logger = new Logger(MeOdTeamsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * POST /me/od-teams
@@ -75,7 +80,7 @@ export class MeOdTeamsService {
    *  500 INTERNAL_ERROR    – unexpected DB failure, or unique_code
    *                          collision retries exhausted
    */
-  async createOdTeam(userId: number) {
+  async createOdTeam(userId: number, dto: CreateOdTeamDto) {
     const student = await this.prisma.students.findUnique({
       where: { user_id: userId },
       select: { id: true },
@@ -87,6 +92,28 @@ export class MeOdTeamsService {
       });
     }
 
+    const fromDate = new Date(dto.from_date);
+    const toDate = new Date(dto.to_date);
+    if (fromDate < startOfToday() || fromDate > toDate) {
+      throw new UnprocessableEntityException({
+        message:
+          'from_date must not be in the past and must be on or before to_date',
+        errorCode: 'INVALID_DATE_RANGE',
+      });
+    }
+
+    const guide = await this.prisma.faculty.findUnique({
+      where: { id: dto.faculty_guide_id },
+      select: { first_name: true, last_name: true },
+    });
+    if (!guide) {
+      throw new NotFoundException({
+        message: 'Faculty guide not found',
+        errorCode: 'FACULTY_NOT_FOUND',
+      });
+    }
+    const facultyGuideName = `${guide.first_name} ${guide.last_name ?? ''}`.trim();
+
     for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
       const uniqueCode = generateUniqueCode();
       try {
@@ -96,6 +123,14 @@ export class MeOdTeamsService {
               created_by_student_id: student.id,
               unique_code: uniqueCode,
               is_locked: false,
+              team_name: dto.team_name,
+              reason: dto.reason,
+              venue: dto.venue,
+              from_date: fromDate,
+              to_date: toDate,
+              from_time: toTimeDate(dto.from_time),
+              to_time: toTimeDate(dto.to_time),
+              faculty_guide_id: dto.faculty_guide_id,
             },
           });
           await tx.od_team_members.create({
@@ -113,6 +148,15 @@ export class MeOdTeamsService {
           unique_code: team.unique_code,
           is_locked: team.is_locked,
           created_at: team.created_at,
+          team_name: team.team_name,
+          reason: team.reason,
+          venue: team.venue,
+          from_date: toDateOnly(team.from_date!),
+          to_date: toDateOnly(team.to_date!),
+          from_time: formatTime(team.from_time),
+          to_time: formatTime(team.to_time),
+          faculty_guide_id: team.faculty_guide_id,
+          faculty_guide_name: facultyGuideName,
         };
       } catch (err) {
         if (
@@ -472,7 +516,7 @@ export class MeOdTeamsService {
 
     const caller = await this.prisma.students.findUnique({
       where: { user_id: userId },
-      select: { id: true },
+      select: { id: true, class_id: true },
     });
     if (!caller) {
       throw new NotFoundException({
@@ -483,7 +527,12 @@ export class MeOdTeamsService {
 
     const team = await this.prisma.od_teams.findUnique({
       where: { id: teamId },
-      select: { id: true, created_by_student_id: true, is_locked: true },
+      select: {
+        id: true,
+        created_by_student_id: true,
+        is_locked: true,
+        unique_code: true,
+      },
     });
     if (!team) {
       throw new NotFoundException({
@@ -567,6 +616,14 @@ export class MeOdTeamsService {
       dto.location ?? null,
     );
 
+    // Both reviewers below get notified right at submission - the
+    // od_request_hod_approvals rows are created immediately above (all
+    // 'pending'), not gated behind the mentor's decision, so a department's
+    // HoD already has something to review from this moment on, same as
+    // the mentor.
+    await this.notifyMentorOfNewRequest(caller.class_id, request.id, team.unique_code);
+    await this.notifyDepartmentHodsOfNewRequest(hodApprovals, request.id);
+
     return {
       id: request.id,
       team_id: request.team_id,
@@ -587,6 +644,73 @@ export class MeOdTeamsService {
         status: 'pending',
       })),
     };
+  }
+
+  /** No-op if the creator has no class (and therefore no mentor) assigned. */
+  private async notifyMentorOfNewRequest(
+    classId: number | null,
+    odRequestId: number,
+    teamCode: string,
+  ): Promise<void> {
+    if (classId === null) {
+      return;
+    }
+    const mentorMapping = await this.prisma.class_mentors.findFirst({
+      where: { class_id: classId },
+      select: { faculty_id: true },
+    });
+    if (!mentorMapping) {
+      return;
+    }
+    const mentor = await this.prisma.faculty.findUnique({
+      where: { id: mentorMapping.faculty_id },
+      select: { user_id: true },
+    });
+    if (!mentor) {
+      return;
+    }
+    await this.notifications.notify({
+      user_id: mentor.user_id,
+      title: 'New OD request to review',
+      message: `Team ${teamCode} submitted an OD request needing your review as mentor.`,
+      type: 'approval_request_pending',
+      related_entity_type: 'od_request',
+      related_entity_id: odRequestId,
+    });
+  }
+
+  /** One notification per distinct department, not per member row. */
+  private async notifyDepartmentHodsOfNewRequest(
+    hodApprovals: { department_id: number; department_name: string }[],
+    odRequestId: number,
+  ): Promise<void> {
+    const departments = new Map(
+      hodApprovals.map((a) => [a.department_id, a.department_name]),
+    );
+    for (const [departmentId, departmentName] of departments) {
+      const department = await this.prisma.departments.findUnique({
+        where: { id: departmentId },
+        select: { head_of_department_faculty_id: true },
+      });
+      if (!department?.head_of_department_faculty_id) {
+        continue;
+      }
+      const hod = await this.prisma.faculty.findUnique({
+        where: { id: department.head_of_department_faculty_id },
+        select: { user_id: true },
+      });
+      if (!hod) {
+        continue;
+      }
+      await this.notifications.notify({
+        user_id: hod.user_id,
+        title: 'New OD request to review',
+        message: `An OD request from ${departmentName} is pending your review.`,
+        type: 'approval_request_pending',
+        related_entity_type: 'od_request',
+        related_entity_id: odRequestId,
+      });
+    }
   }
 
   private async insertOdRequest(

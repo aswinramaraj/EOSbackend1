@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import {
   UpdateComplaintDto,
@@ -17,6 +18,7 @@ const COMPLAINT_INCLUDE = {
   students: {
     select: {
       id: true,
+      user_id: true,
       student_id_no: true,
       soa_applications: { select: { first_name: true, last_name: true } },
       student_hostel_mapping: {
@@ -59,7 +61,10 @@ function toComplaintResponse(complaint: ComplaintWithRelations) {
 export class ComplaintsService {
   private readonly logger = new Logger(ComplaintsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * POST /hostel/complaints
@@ -168,6 +173,22 @@ export class ComplaintsService {
         },
         include: COMPLAINT_INCLUDE,
       });
+
+      if (dto.status !== undefined) {
+        try {
+          await this.notifications.notify({
+            user_id: updated.students.user_id,
+            title: 'Hostel complaint status updated',
+            message: `Your complaint "${updated.title}" is now: ${updated.status}.`,
+            type: 'hostel_complaint_status_updated',
+            related_entity_type: 'hostel_complaint',
+            related_entity_id: updated.id,
+          });
+        } catch (notifyErr) {
+          this.logger.error(`Failed to notify student of hostel complaint ${id} status update`, notifyErr);
+        }
+      }
+
       return toComplaintResponse(updated);
     } catch (err) {
       this.logger.error('DB error while updating hostel complaint', err);

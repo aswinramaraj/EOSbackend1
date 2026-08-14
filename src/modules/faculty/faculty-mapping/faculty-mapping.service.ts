@@ -11,6 +11,7 @@ import { paginate } from 'src/common/dto/pagination.dto';
 import { CreateFacultyMappingDto } from './dto/create-faculty-mapping.dto';
 import { UpdateFacultyMappingDto } from './dto/update-faculty-mapping.dto';
 import { ListFacultyMappingQueryDto } from './dto/list-faculty-mapping-query.dto';
+import { ListMappingSubjectsQueryDto } from './dto/list-mapping-subjects-query.dto';
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -277,10 +278,151 @@ export class FacultyMappingService {
     }
     this.assertClassInDepartment(klass, hod.department_id);
 
+    const feedbackResponseCount =
+      await this.prisma.feedback_faculty_responses.count({
+        where: { mapping_id: id },
+      });
+    if (feedbackResponseCount > 0) {
+      throw new ConflictException(
+        'Cannot delete a faculty mapping that already has student feedback responses',
+      );
+    }
+
     await this.prisma.faculty_subject_class_mapping.delete({ where: { id } });
 
     this.logger.log(`Faculty mapping deleted: id=${id}`);
     return { id, deleted: true };
+  }
+
+  // ── "Assigned Faculty" screen lookups (HoD only) ─────────────────────────
+
+  /** GET /faculty-mapping/lookup/my-department (HoD only) — header info. */
+  async getMyDepartment(hodUserId: number) {
+    const hod = await this.resolveFacultyByUserId(hodUserId);
+    const department = await this.prisma.departments.findUnique({
+      where: { id: hod.department_id },
+      select: { id: true, name: true, code: true },
+    });
+    if (!department) {
+      throw new NotFoundException('Department not found');
+    }
+    return department;
+  }
+
+  /** GET /faculty-mapping/lookup/batches (HoD only) — batches with at least one class in the HoD's own department. */
+  async getMyDepartmentBatches(hodUserId: number) {
+    const hod = await this.resolveFacultyByUserId(hodUserId);
+
+    const classRows = await this.prisma.classes.findMany({
+      where: { department_id: hod.department_id },
+      select: { batch_id: true },
+      distinct: ['batch_id'],
+    });
+    const batchIds = classRows.map((c) => c.batch_id);
+    if (batchIds.length === 0) {
+      return [];
+    }
+
+    return this.prisma.batches.findMany({
+      where: { id: { in: batchIds } },
+      select: { id: true, name: true },
+      orderBy: { start_year: 'desc' },
+    });
+  }
+
+  /**
+   * GET /faculty-mapping/lookup/subjects?batch_id=&search= (HoD only).
+   *
+   * Every subject a class in the given batch actually has (class_subjects —
+   * the real source of truth for "which subjects does this class have",
+   * not just any subject that exists globally), across every class in the
+   * HoD's own department for that batch, each joined against its current
+   * assigned faculty if one exists. "Current" means the most recently
+   * created faculty_subject_class_mapping row for that class+subject pair
+   * (highest id) — there's no "current academic year" concept anywhere in
+   * this schema, so recency by id is the same convention already used
+   * elsewhere (e.g. class_mentors' "most recently assigned" mentor).
+   */
+  async findSubjectsForHod(query: ListMappingSubjectsQueryDto, hodUserId: number) {
+    const hod = await this.resolveFacultyByUserId(hodUserId);
+
+    const classes = await this.prisma.classes.findMany({
+      where: { department_id: hod.department_id, batch_id: query.batch_id },
+      select: {
+        id: true,
+        section: true,
+        courses: { select: { code: true } },
+        batches: { select: { name: true } },
+      },
+    });
+    if (classes.length === 0) {
+      return [];
+    }
+    const classesById = new Map(classes.map((c) => [c.id, c]));
+    const classIds = classes.map((c) => c.id);
+
+    const classSubjectRows = await this.prisma.class_subjects.findMany({
+      where: {
+        class_id: { in: classIds },
+        ...(query.search
+          ? { subjects: { name: { contains: query.search, mode: 'insensitive' } } }
+          : {}),
+      },
+      select: {
+        id: true,
+        class_id: true,
+        subject_id: true,
+        subjects: { select: { id: true, name: true, subject_code: true } },
+      },
+      orderBy: { id: 'asc' },
+    });
+    if (classSubjectRows.length === 0) {
+      return [];
+    }
+
+    const subjectIds = [...new Set(classSubjectRows.map((r) => r.subject_id))];
+    const mappingRows = await this.prisma.faculty_subject_class_mapping.findMany({
+      where: { class_id: { in: classIds }, subject_id: { in: subjectIds } },
+      select: {
+        id: true,
+        class_id: true,
+        subject_id: true,
+        academic_year: true,
+        faculty: {
+          select: { id: true, first_name: true, last_name: true, designation: true },
+        },
+      },
+      orderBy: { id: 'desc' },
+    });
+    const mappingByClassSubject = new Map<string, (typeof mappingRows)[number]>();
+    for (const row of mappingRows) {
+      const key = `${row.class_id}-${row.subject_id}`;
+      if (!mappingByClassSubject.has(key)) {
+        mappingByClassSubject.set(key, row);
+      }
+    }
+
+    return classSubjectRows.map((row) => {
+      const klass = classesById.get(row.class_id)!;
+      const mapping = mappingByClassSubject.get(`${row.class_id}-${row.subject_id}`);
+      return {
+        class_subject_id: row.id,
+        class: {
+          id: klass.id,
+          label: `${klass.courses.code}-${klass.section} (${klass.batches.name})`,
+        },
+        subject: row.subjects,
+        assigned_faculty: mapping
+          ? {
+              mapping_id: mapping.id,
+              id: mapping.faculty.id,
+              name: `${mapping.faculty.first_name} ${mapping.faculty.last_name}`,
+              designation: mapping.faculty.designation,
+              academic_year: mapping.academic_year,
+            }
+          : null,
+      };
+    });
   }
 
   private async assertForeignKeysExist(

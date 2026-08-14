@@ -5,6 +5,7 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { FacultyLeavesController } from './faculty-leaves.controller';
 import { FacultyLeavesService } from './faculty-leaves.service';
 
@@ -29,8 +30,13 @@ describe('FacultyLeavesController', () => {
               update: jest.fn(),
               delete: jest.fn(),
             },
+            departments: { findUnique: jest.fn() },
             $transaction: jest.fn(),
           },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { notify: jest.fn() },
         },
       ],
     }).compile();

@@ -1,11 +1,24 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { MeOdTeamsService } from './me-od-teams.service';
 
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
+const VALID_CREATE_DTO = {
+  team_name: 'Team Nexus',
+  reason: 'IEEE paper presentation',
+  venue: 'Anna University, Chennai',
+  from_date: '2999-01-10',
+  to_date: '2999-01-12',
+  from_time: '09:00',
+  to_time: '17:00',
+  faculty_guide_id: 41,
+};
+
 describe('MeOdTeamsService', () => {
   let service: MeOdTeamsService;
+  let notifications: { notify: jest.Mock };
   let tx: {
     od_teams: { create: jest.Mock; updateMany: jest.Mock };
     od_team_members: { create: jest.Mock };
@@ -22,6 +35,8 @@ describe('MeOdTeamsService', () => {
       delete: jest.Mock;
     };
     faculty: { findUnique: jest.Mock };
+    class_mentors: { findFirst: jest.Mock };
+    departments: { findUnique: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -45,13 +60,17 @@ describe('MeOdTeamsService', () => {
         delete: jest.fn(),
       },
       faculty: { findUnique: jest.fn() },
+      class_mentors: { findFirst: jest.fn() },
+      departments: { findUnique: jest.fn() },
       $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(tx)),
     };
+    notifications = { notify: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MeOdTeamsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
 
@@ -64,12 +83,21 @@ describe('MeOdTeamsService', () => {
 
   it('creates a team and auto-joins the creator as its first member, in one transaction', async () => {
     prisma.students.findUnique.mockResolvedValue({ id: 3310 });
+    prisma.faculty.findUnique.mockResolvedValue({ first_name: 'Kavitha', last_name: 'R' });
     tx.od_teams.create.mockResolvedValue({
       id: 61,
       created_by_student_id: 3310,
       unique_code: 'X7K9QT',
       is_locked: false,
       created_at: new Date('2026-07-26T10:15:00.000Z'),
+      team_name: VALID_CREATE_DTO.team_name,
+      reason: VALID_CREATE_DTO.reason,
+      venue: VALID_CREATE_DTO.venue,
+      from_date: new Date(VALID_CREATE_DTO.from_date),
+      to_date: new Date(VALID_CREATE_DTO.to_date),
+      from_time: new Date('1970-01-01T09:00:00.000Z'),
+      to_time: new Date('1970-01-01T17:00:00.000Z'),
+      faculty_guide_id: 41,
     });
     tx.od_team_members.create.mockResolvedValue({
       id: 1,
@@ -77,7 +105,7 @@ describe('MeOdTeamsService', () => {
       student_id: 3310,
     });
 
-    const result = await service.createOdTeam(7);
+    const result = await service.createOdTeam(7, VALID_CREATE_DTO);
 
     expect(prisma.students.findUnique).toHaveBeenCalledWith({
       where: { user_id: 7 },
@@ -90,11 +118,15 @@ describe('MeOdTeamsService', () => {
           created_by_student_id: number;
           unique_code: string;
           is_locked: boolean;
+          team_name: string;
+          faculty_guide_id: number;
         };
       },
     ];
     expect(teamCreateArgs.data.created_by_student_id).toBe(3310);
     expect(teamCreateArgs.data.is_locked).toBe(false);
+    expect(teamCreateArgs.data.team_name).toBe('Team Nexus');
+    expect(teamCreateArgs.data.faculty_guide_id).toBe(41);
     expect(teamCreateArgs.data.unique_code).toHaveLength(6);
     for (const char of teamCreateArgs.data.unique_code) {
       expect(CODE_ALPHABET).toContain(char);
@@ -111,13 +143,24 @@ describe('MeOdTeamsService', () => {
       unique_code: 'X7K9QT',
       is_locked: false,
       created_at: new Date('2026-07-26T10:15:00.000Z'),
+      team_name: 'Team Nexus',
+      reason: 'IEEE paper presentation',
+      venue: 'Anna University, Chennai',
+      from_date: '2999-01-10',
+      to_date: '2999-01-12',
+      from_time: '09:00',
+      to_time: '17:00',
+      faculty_guide_id: 41,
+      faculty_guide_name: 'Kavitha R',
     });
   });
 
   it('throws 404 STUDENT_NOT_FOUND when the JWT user has no linked student record', async () => {
     prisma.students.findUnique.mockResolvedValue(null);
 
-    await expect(service.createOdTeam(999)).rejects.toMatchObject({
+    await expect(
+      service.createOdTeam(999, VALID_CREATE_DTO),
+    ).rejects.toMatchObject({
       status: 404,
       response: { errorCode: 'STUDENT_NOT_FOUND' },
     });
@@ -126,6 +169,7 @@ describe('MeOdTeamsService', () => {
 
   it('retries with a freshly generated unique_code on a P2002 collision', async () => {
     prisma.students.findUnique.mockResolvedValue({ id: 3310 });
+    prisma.faculty.findUnique.mockResolvedValue({ first_name: 'Kavitha', last_name: 'R' });
     const conflict = Object.assign(new Error('Unique constraint failed'), {
       code: 'P2002',
     });
@@ -138,10 +182,18 @@ describe('MeOdTeamsService', () => {
       unique_code: 'ABCDEF',
       is_locked: false,
       created_at: new Date(),
+      team_name: VALID_CREATE_DTO.team_name,
+      reason: VALID_CREATE_DTO.reason,
+      venue: VALID_CREATE_DTO.venue,
+      from_date: new Date(VALID_CREATE_DTO.from_date),
+      to_date: new Date(VALID_CREATE_DTO.to_date),
+      from_time: new Date('1970-01-01T09:00:00.000Z'),
+      to_time: new Date('1970-01-01T17:00:00.000Z'),
+      faculty_guide_id: 41,
     });
     tx.od_team_members.create.mockResolvedValue({});
 
-    const result = await service.createOdTeam(7);
+    const result = await service.createOdTeam(7, VALID_CREATE_DTO);
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(result.id).toBe(62);
@@ -149,12 +201,15 @@ describe('MeOdTeamsService', () => {
 
   it('gives up and throws 500 INTERNAL_ERROR after exhausting all retry attempts on repeated collisions', async () => {
     prisma.students.findUnique.mockResolvedValue({ id: 3310 });
+    prisma.faculty.findUnique.mockResolvedValue({ first_name: 'Kavitha', last_name: 'R' });
     const conflict = Object.assign(new Error('Unique constraint failed'), {
       code: 'P2002',
     });
     prisma.$transaction.mockImplementation(() => Promise.reject(conflict));
 
-    await expect(service.createOdTeam(7)).rejects.toMatchObject({
+    await expect(
+      service.createOdTeam(7, VALID_CREATE_DTO),
+    ).rejects.toMatchObject({
       status: 500,
       response: { errorCode: 'INTERNAL_ERROR' },
     });
@@ -163,9 +218,12 @@ describe('MeOdTeamsService', () => {
 
   it('wraps a non-collision DB failure as 500 INTERNAL_ERROR without retrying', async () => {
     prisma.students.findUnique.mockResolvedValue({ id: 3310 });
+    prisma.faculty.findUnique.mockResolvedValue({ first_name: 'Kavitha', last_name: 'R' });
     prisma.$transaction.mockRejectedValue(new Error('connection lost'));
 
-    await expect(service.createOdTeam(7)).rejects.toMatchObject({
+    await expect(
+      service.createOdTeam(7, VALID_CREATE_DTO),
+    ).rejects.toMatchObject({
       status: 500,
       response: { errorCode: 'INTERNAL_ERROR' },
     });
@@ -1009,6 +1067,90 @@ describe('MeOdTeamsService', () => {
       });
 
       expect(result.hod_approvals).toEqual([]);
+    });
+
+    it("notifies the creator's mentor and every distinct department's HoD, right at submission", async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 7, class_id: 5 });
+      prisma.od_teams.findUnique.mockResolvedValue({
+        id: 61,
+        created_by_student_id: 7,
+        is_locked: false,
+        unique_code: 'X7K9QT',
+      });
+      prisma.od_team_members.findMany.mockResolvedValue([
+        { student_id: 7 },
+        { student_id: 8 },
+      ]);
+      prisma.students.findMany.mockResolvedValue([
+        { id: 7, classes: { department_id: 1, departments: { name: 'CSE' } } },
+        { id: 8, classes: { department_id: 2, departments: { name: 'Mechanical' } } },
+      ]);
+      tx.od_requests.create.mockResolvedValue({
+        id: 61,
+        team_id: 61,
+        from_date: new Date('2099-08-12T00:00:00.000Z'),
+        to_date: new Date('2099-08-13T00:00:00.000Z'),
+        reason: null,
+        mentor_approval_status: 'pending',
+      });
+      tx.od_request_hod_approvals.createMany.mockResolvedValue({ count: 2 });
+      prisma.class_mentors.findFirst.mockResolvedValue({ faculty_id: 30 });
+      prisma.faculty.findUnique.mockResolvedValue({ user_id: 300 });
+      prisma.departments.findUnique
+        .mockResolvedValueOnce({ head_of_department_faculty_id: 40 })
+        .mockResolvedValueOnce({ head_of_department_faculty_id: 41 });
+
+      await service.submitOdRequest(103, 61, {
+        from_date: '2099-08-12',
+        to_date: '2099-08-13',
+      });
+
+      expect(prisma.class_mentors.findFirst).toHaveBeenCalledWith({
+        where: { class_id: 5 },
+        select: { faculty_id: true },
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 300,
+          type: 'approval_request_pending',
+          related_entity_type: 'od_request',
+          related_entity_id: 61,
+        }),
+      );
+      // Once per distinct department (1 and 2), plus once for the mentor = 3 total.
+      expect(notifications.notify).toHaveBeenCalledTimes(3);
+    });
+
+    it('skips the mentor notification (without erroring) when the creator has no class assigned', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 7, class_id: null });
+      prisma.od_teams.findUnique.mockResolvedValue({
+        id: 61,
+        created_by_student_id: 7,
+        is_locked: false,
+        unique_code: 'X7K9QT',
+      });
+      prisma.od_team_members.findMany.mockResolvedValue([{ student_id: 7 }]);
+      prisma.students.findMany.mockResolvedValue([
+        { id: 7, classes: { department_id: 1, departments: { name: 'CSE' } } },
+      ]);
+      tx.od_requests.create.mockResolvedValue({
+        id: 61,
+        team_id: 61,
+        from_date: new Date('2099-08-12T00:00:00.000Z'),
+        to_date: new Date('2099-08-13T00:00:00.000Z'),
+        reason: null,
+        mentor_approval_status: 'pending',
+      });
+      tx.od_request_hod_approvals.createMany.mockResolvedValue({ count: 1 });
+      prisma.departments.findUnique.mockResolvedValue({ head_of_department_faculty_id: null });
+
+      await service.submitOdRequest(103, 61, {
+        from_date: '2099-08-12',
+        to_date: '2099-08-13',
+      });
+
+      expect(prisma.class_mentors.findFirst).not.toHaveBeenCalled();
+      expect(notifications.notify).not.toHaveBeenCalled();
     });
   });
 });

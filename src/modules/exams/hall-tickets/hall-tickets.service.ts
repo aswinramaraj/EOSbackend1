@@ -1,14 +1,21 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 
 @Injectable()
 export class HallTicketsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(HallTicketsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async generate(examId: number, studentId: number) {
     const exam = await this.prisma.exams.findUnique({ where: { id: examId } });
@@ -52,13 +59,30 @@ export class HallTicketsService {
       });
     }
 
-    return this.prisma.hall_tickets.create({
+    const hallTicket = await this.prisma.hall_tickets.create({
       data: {
         exam_id: examId,
         student_id: studentId,
         file_url: `/documents/hall-tickets/${studentId}_${examId}.pdf`,
       },
     });
+
+    try {
+      await this.notifications.notify({
+        user_id: student.user_id,
+        title: 'Hall ticket issued',
+        message: `Your hall ticket for ${exam.title ?? 'your exam'} is ready.`,
+        type: 'hall_ticket_issued',
+        related_entity_type: 'hall_ticket',
+        related_entity_id: hallTicket.id,
+      });
+    } catch (err) {
+      // Never fail the issuance itself - the hall ticket has already
+      // committed by this point.
+      this.logger.error(`Failed to notify student ${studentId} of hall ticket issuance`, err);
+    }
+
+    return hallTicket;
   }
 
   async findOne(examId: number, studentId: number) {

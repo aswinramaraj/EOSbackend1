@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from 'src/prisma/prisma.module';
+import { NotificationsModule } from 'src/modules/notifications/notifications/notifications.module';
 import { StorageModule } from 'src/modules/storage/storage.module';
 import { MeController } from './me-profile.controller';
 import { MeProfileService } from './me-profile.service';
@@ -13,6 +14,7 @@ import { MeOdRequestsService } from './me-od-requests.service';
 import { MeOdRequestsListService } from './me-od-requests-list.service';
 import { MeOdAttachmentsService } from './me-od-attachments.service';
 import { MeHostelOutingsService } from './me-hostel-outings.service';
+import { MeCampusOutingsService } from './me-campus-outings.service';
 import { MeBonafideRequestsService } from './me-bonafide-requests.service';
 import { MeProjectsService } from './me-projects.service';
 import { MeFacultyDirectoryService } from './me-faculty-directory.service';
@@ -22,9 +24,10 @@ import { MeHostelRoomService } from './me-hostel-room.service';
 import { MeHostelComplaintsService } from './me-hostel-complaints.service';
 import { MeMessFeedbackService } from './me-mess-feedback.service';
 import { MeAcademicCalendarService } from './me-academic-calendar.service';
+import { MeAcademicClearanceService } from './me-academic-clearance.service';
 
 @Module({
-  imports: [PrismaModule, StorageModule],
+  imports: [PrismaModule, NotificationsModule, StorageModule],
   controllers: [MeController],
   providers: [
     MeProfileService,
@@ -38,6 +41,7 @@ import { MeAcademicCalendarService } from './me-academic-calendar.service';
     MeOdRequestsListService,
     MeOdAttachmentsService,
     MeHostelOutingsService,
+    MeCampusOutingsService,
     MeBonafideRequestsService,
     MeProjectsService,
     MeFacultyDirectoryService,
@@ -47,6 +51,7 @@ import { MeAcademicCalendarService } from './me-academic-calendar.service';
     MeHostelComplaintsService,
     MeMessFeedbackService,
     MeAcademicCalendarService,
+    MeAcademicClearanceService,
   ],
   exports: [
     MeAttendanceService,

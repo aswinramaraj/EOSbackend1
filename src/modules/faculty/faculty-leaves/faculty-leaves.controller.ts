@@ -28,12 +28,16 @@ import { ListFacultyLeafQueryDto } from './dto/list-faculty-leaf-query.dto';
 export class FacultyLeavesController {
   constructor(private readonly facultyLeavesService: FacultyLeavesService) {}
 
-  /** POST /api/v1/faculty-leaves — Faculty only, for the caller's own record. */
+  /**
+   * POST /api/v1/faculty-leaves — Faculty or HoD, for the caller's own
+   * record. An HoD's own request skips the HoD-review stage entirely (see
+   * FacultyLeavesService.create) since they can't review their own leave.
+   */
   @Post('create-leaves')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateFacultyLeafDto, @CurrentUser() user: JwtPayload) {
-    return this.facultyLeavesService.create(dto, user.sub);
+    return this.facultyLeavesService.create(dto, user);
   }
 
   /** GET /api/v1/faculty-leaves — Faculty (own only)/HoD/HR Payroll. Paginated, filterable. */
@@ -67,9 +71,9 @@ export class FacultyLeavesController {
     return this.facultyLeavesService.update(id, dto, user);
   }
 
-  /** DELETE /api/v1/faculty-leaves/:id — Faculty only, own request, only while fully pending. */
+  /** DELETE /api/v1/faculty-leaves/:id — Faculty or HoD, own request, only while fully pending. */
   @Delete('faculty-leaves/:id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
