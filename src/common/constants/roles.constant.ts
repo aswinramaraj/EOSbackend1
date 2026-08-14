@@ -21,6 +21,7 @@ export const ROLES = {
   FINANCE: 'finance',
   IQAC: 'iqac',
   SECRETARY: 'secretary',
+  WARDEN: 'warden',
   GATE_WARDEN: 'gate_warden',
   MEDIA_ROOM: 'media_room',
   ACADEMIC_COORDINATOR: 'academic_coordinator',

@@ -116,7 +116,7 @@ export class FeePaymentService {
 
       return payments.map(({ fee_structure_items, ...payment }) => ({
         ...payment,
-        demand_category_name: fee_structure_items?.demand_categories.name ?? null,
+        demand_category_name: fee_structure_items?.demand_categories?.name ?? null,
       }));
     } catch (err) {
       this.logger.error('DB error while fetching fee payments', err);
@@ -190,7 +190,7 @@ export class FeePaymentService {
 
       return {
         fee_structure_item_id: item.id,
-        demand_category_name: item.demand_categories.name,
+        demand_category_name: item.demand_categories?.name ?? null,
         original_amount: item.amount.toString(),
         already_paid: alreadyPaid.toString(),
         outstanding_amount: outstanding.toString(),

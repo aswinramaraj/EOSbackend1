@@ -8,7 +8,7 @@ import { SearchHostelFeesDto } from './dto/search-hostel-fees.dto';
 
 @Controller('hostel/fees')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 export class HostelFeesController {
   constructor(private readonly feesService: HostelFeesService) {}
 

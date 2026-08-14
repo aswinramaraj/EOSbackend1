@@ -7,7 +7,7 @@ import { HostelDashboardService } from './dashboard.service';
 
 @Controller('hostel/dashboard')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 export class HostelDashboardController {
   constructor(private readonly dashboardService: HostelDashboardService) {}
 

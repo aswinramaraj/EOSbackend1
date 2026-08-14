@@ -20,7 +20,7 @@ import { DecideOutingDto } from './dto/decide-outing.dto';
 
 @Controller('hostel/outings')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 export class OutingsController {
   constructor(private readonly outingsService: OutingsService) {}
 

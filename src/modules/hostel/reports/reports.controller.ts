@@ -24,7 +24,7 @@ function slugify(title: string): string {
 
 @Controller('hostel/reports')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 export class HostelReportsController {
   constructor(private readonly reportsService: HostelReportsService) {}
 

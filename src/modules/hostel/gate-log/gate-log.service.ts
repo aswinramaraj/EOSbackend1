@@ -10,6 +10,103 @@ import type { Prisma } from 'generated/prisma/client';
 import { CreateGateLogDto } from './dto/create-gate-log.dto';
 import { SearchGateLogDto } from './dto/search-gate-log.dto';
 
+function toDateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function toTimeOnly(date: Date): string {
+  return date.toISOString().slice(11, 16);
+}
+
+const PENDING_EXIT_STUDENT_SELECT = {
+  id: true,
+  student_id_no: true,
+  roll_no: true,
+  soa_applications: { select: { first_name: true, last_name: true } },
+  student_hostel_mapping: {
+    select: {
+      hostel_rooms: {
+        select: {
+          room_number: true,
+          hostels: { select: { id: true, name: true, code: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.studentsSelect;
+
+// Full identity check for the gate — everything the Gate Warden needs to
+// confirm this is actually the person named on the roll number, plus who to
+// call if something's wrong. There is no parent photo anywhere in the
+// schema (parents are bare `users` rows with no profile of their own) —
+// only `soa_applications`' father/mother name and parent_contact exist, so
+// that's what's returned instead of a photo.
+const LOOKUP_STUDENT_SELECT = {
+  id: true,
+  student_id_no: true,
+  roll_no: true,
+  register_no: true,
+  admission_no: true,
+  gender: true,
+  date_of_birth: true,
+  blood_group: true,
+  student_type: true,
+  dayscholar_mode: true,
+  vehicle_number: true,
+  status: true,
+  photo_url: true,
+  users: { select: { email: true } },
+  soa_applications: {
+    select: {
+      first_name: true,
+      last_name: true,
+      father_name: true,
+      mother_name: true,
+      parent_contact: true,
+      student_contact: true,
+      student_whatsapp: true,
+      student_email: true,
+    },
+  },
+  classes: {
+    select: {
+      section: true,
+      current_semester: true,
+      courses: { select: { name: true, code: true } },
+      departments: { select: { name: true, code: true } },
+    },
+  },
+  student_hostel_mapping: {
+    select: {
+      hostel_rooms: {
+        select: {
+          room_number: true,
+          hostels: { select: { id: true, name: true, code: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.studentsSelect;
+
+// An outing counts as "still pending exit" once approved as long as no
+// check-out ledger entry has been recorded against it yet — there's no
+// separate "gate_cleared" status; the Gate Warden's own check-out entry
+// (created below in create()) is itself the record that they let this
+// specific person out.
+const PENDING_EXIT_WHERE = {
+  status: 'approved',
+  hostel_in_out_ledger: { none: { entry_type: 'out' } },
+} satisfies Prisma.hostel_outingsWhereInput;
+
+function studentDisplayName(student: {
+  student_id_no: string;
+  soa_applications: { first_name: string; last_name: string | null } | null;
+}): string {
+  return student.soa_applications
+    ? `${student.soa_applications.first_name} ${student.soa_applications.last_name ?? ''}`.trim()
+    : `Student ${student.student_id_no}`;
+}
+
 const LOG_INCLUDE = {
   students: {
     select: {
@@ -161,5 +258,227 @@ export class GateLogService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  /**
+   * GET /hostel/gate-log/pending-exits — the Gate Warden's queue: every
+   * outing the Hostel Warden has approved that hasn't been checked out
+   * through the gate yet. Populates automatically off hostel_outings.status
+   * — there's no separate hand-off step the Warden has to trigger.
+   */
+  async findPendingExits() {
+    try {
+      const outings = await this.prisma.hostel_outings.findMany({
+        where: PENDING_EXIT_WHERE,
+        include: { students: { select: PENDING_EXIT_STUDENT_SELECT } },
+        orderBy: { created_at: 'asc' },
+      });
+
+      return outings.map((outing) => {
+        const room = outing.students.student_hostel_mapping?.hostel_rooms;
+        return {
+          outing_id: outing.id,
+          student: {
+            id: outing.students.id,
+            name: studentDisplayName(outing.students),
+            student_id_no: outing.students.student_id_no,
+            roll_no: outing.students.roll_no,
+          },
+          hostel: room?.hostels ?? null,
+          room_number: room?.room_number ?? null,
+          from_date: toDateOnly(outing.from_date),
+          to_date: toDateOnly(outing.to_date),
+          start_time: toTimeOnly(outing.start_time),
+          return_time: outing.return_time ? toTimeOnly(outing.return_time) : null,
+          reason: outing.reason,
+        };
+      });
+    } catch (err) {
+      this.logger.error('DB error while fetching pending exits', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * GET /hostel/gate-log/pending-returns — the mirror of pending-exits: every
+   * student whose *most recent* gate movement is a check-out with no check-in
+   * after it, i.e. currently outside campus. Not restricted to outing-linked
+   * exits — a day scholar checked out with no outing on file still counts,
+   * since they're just as much "expected back" as a hosteller. There's no
+   * separate "currently out" flag anywhere; this is derived by taking each
+   * student's latest ledger row and checking whether it's an "out".
+   */
+  async findPendingReturns() {
+    let latestEntries: Prisma.hostel_in_out_ledgerGetPayload<{
+      include: {
+        students: { select: typeof PENDING_EXIT_STUDENT_SELECT };
+        hostel_outings: { select: { to_date: true; return_time: true } };
+      };
+    }>[];
+
+    try {
+      latestEntries = await this.prisma.hostel_in_out_ledger.findMany({
+        distinct: ['student_id'],
+        orderBy: [{ student_id: 'asc' }, { recorded_at: 'desc' }],
+        include: {
+          students: { select: PENDING_EXIT_STUDENT_SELECT },
+          hostel_outings: { select: { to_date: true, return_time: true } },
+        },
+      });
+    } catch (err) {
+      this.logger.error('DB error while fetching pending returns', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    return latestEntries
+      .filter((entry) => entry.entry_type === 'out')
+      .map((entry) => {
+        const room = entry.students.student_hostel_mapping?.hostel_rooms;
+        return {
+          student: {
+            id: entry.students.id,
+            name: studentDisplayName(entry.students),
+            student_id_no: entry.students.student_id_no,
+            roll_no: entry.students.roll_no,
+          },
+          hostel: room?.hostels ?? null,
+          room_number: room?.room_number ?? null,
+          outing_id: entry.outing_id,
+          checked_out_at: entry.recorded_at.toISOString(),
+          expected_return: entry.hostel_outings
+            ? {
+                to_date: toDateOnly(entry.hostel_outings.to_date),
+                return_time: entry.hostel_outings.return_time
+                  ? toTimeOnly(entry.hostel_outings.return_time)
+                  : null,
+              }
+            : null,
+        };
+      })
+      .sort((a, b) => a.checked_out_at.localeCompare(b.checked_out_at));
+  }
+
+  /**
+   * GET /hostel/gate-log/lookup?roll_no= — what the Gate Warden pulls up
+   * when a student physically reaches the gate. Works for any student, not
+   * just hostellers with an approved outing (day scholars have no
+   * hostel_outings row at all and still need to be logged through) —
+   * `pending_outing` is just extra context to verify against when present.
+   *
+   * Error cases:
+   *  404 STUDENT_NOT_FOUND – no student has this roll number
+   */
+  async lookupByRollNo(rollNo: string) {
+    let student: Prisma.studentsGetPayload<{
+      select: typeof LOOKUP_STUDENT_SELECT & {
+        hostel_outings: { where: typeof PENDING_EXIT_WHERE; take: 1 };
+        hostel_in_out_ledger: {
+          orderBy: { recorded_at: 'desc' };
+          take: 1;
+          select: { entry_type: true };
+        };
+      };
+    }> | null;
+
+    try {
+      student = await this.prisma.students.findFirst({
+        where: { roll_no: rollNo },
+        select: {
+          ...LOOKUP_STUDENT_SELECT,
+          hostel_outings: {
+            where: PENDING_EXIT_WHERE,
+            orderBy: { created_at: 'desc' },
+            take: 1,
+          },
+          hostel_in_out_ledger: {
+            orderBy: { recorded_at: 'desc' },
+            take: 1,
+            select: { entry_type: true },
+          },
+        },
+      });
+    } catch (err) {
+      this.logger.error(`DB error while looking up roll_no ${rollNo}`, err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (!student) {
+      throw new NotFoundException({
+        message: 'No student found with this roll number',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const room = student.student_hostel_mapping?.hostel_rooms;
+    const outing = student.hostel_outings[0];
+    const soa = student.soa_applications;
+    const klass = student.classes;
+
+    return {
+      student: {
+        id: student.id,
+        name: studentDisplayName(student),
+        student_id_no: student.student_id_no,
+        roll_no: student.roll_no,
+        register_no: student.register_no,
+        admission_no: student.admission_no,
+        photo_url: student.photo_url,
+        gender: student.gender,
+        date_of_birth: student.date_of_birth ? toDateOnly(student.date_of_birth) : null,
+        blood_group: student.blood_group,
+        student_type: student.student_type,
+        dayscholar_mode: student.dayscholar_mode,
+        vehicle_number: student.vehicle_number,
+        status: student.status,
+        contact: soa?.student_contact ?? null,
+        whatsapp: soa?.student_whatsapp ?? null,
+        email: soa?.student_email ?? student.users.email,
+      },
+      academics: klass
+        ? {
+            course: klass.courses.name,
+            department: klass.departments.name,
+            section: klass.section,
+            semester: klass.current_semester,
+          }
+        : null,
+      // No parent photo exists anywhere in the schema — parents are bare
+      // `users` rows with no profile of their own. Name + contact number is
+      // all that's available.
+      parent: soa
+        ? {
+            father_name: soa.father_name,
+            mother_name: soa.mother_name,
+            contact: soa.parent_contact,
+            photo_url: null,
+          }
+        : null,
+      hostel: room?.hostels ?? null,
+      room_number: room?.room_number ?? null,
+      is_hosteller: student.student_hostel_mapping !== null,
+      // Whether this student's own most recent gate movement is a check-out
+      // with no check-in since — drives which direction (in/out) the Gate
+      // Warden's UI defaults to when they pull this student up.
+      is_currently_out: student.hostel_in_out_ledger[0]?.entry_type === 'out',
+      pending_outing: outing
+        ? {
+            outing_id: outing.id,
+            from_date: toDateOnly(outing.from_date),
+            to_date: toDateOnly(outing.to_date),
+            start_time: toTimeOnly(outing.start_time),
+            return_time: outing.return_time ? toTimeOnly(outing.return_time) : null,
+            reason: outing.reason,
+          }
+        : null,
+    };
   }
 }

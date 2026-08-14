@@ -20,7 +20,7 @@ import { SearchComplaintsDto } from './dto/search-complaints.dto';
 
 @Controller('hostel/complaints')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 export class ComplaintsController {
   constructor(private readonly complaintsService: ComplaintsService) {}
 

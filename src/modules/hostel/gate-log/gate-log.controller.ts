@@ -8,10 +8,11 @@ import { ROLES } from 'src/common/constants/roles.constant';
 import { GateLogService } from './gate-log.service';
 import { CreateGateLogDto } from './dto/create-gate-log.dto';
 import { SearchGateLogDto } from './dto/search-gate-log.dto';
+import { LookupStudentDto } from './dto/lookup-student.dto';
 
 @Controller('hostel/gate-log')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN, ROLES.GATE_WARDEN)
 export class GateLogController {
   constructor(private readonly gateLogService: GateLogService) {}
 
@@ -23,5 +24,20 @@ export class GateLogController {
   @Get()
   findAll(@Query() query: SearchGateLogDto) {
     return this.gateLogService.findAll(query);
+  }
+
+  @Get('pending-exits')
+  findPendingExits() {
+    return this.gateLogService.findPendingExits();
+  }
+
+  @Get('pending-returns')
+  findPendingReturns() {
+    return this.gateLogService.findPendingReturns();
+  }
+
+  @Get('lookup')
+  lookup(@Query() query: LookupStudentDto) {
+    return this.gateLogService.lookupByRollNo(query.roll_no);
   }
 }

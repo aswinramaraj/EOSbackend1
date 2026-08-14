@@ -8,7 +8,7 @@ import { UpdateHostelSettingsDto } from './dto/update-hostel-settings.dto';
 
 @Controller('hostel/settings')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 export class HostelSettingsController {
   constructor(private readonly settingsService: HostelSettingsService) {}
 

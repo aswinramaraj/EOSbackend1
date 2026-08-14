@@ -21,7 +21,7 @@ import { CreateHostelRoomTypeDto } from './dto/create-hostel-room-type.dto';
 import { UpdateHostelRoomTypeDto } from './dto/update-hostel-room-type.dto';
 
 @Controller('hostel-room-types')
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class HostelRoomTypeController {
   constructor(private readonly hostelRoomTypeService: HostelRoomTypeService) {}

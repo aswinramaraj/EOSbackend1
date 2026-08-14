@@ -9,7 +9,7 @@ import { SearchMessFeedbackDto } from './dto/search-mess-feedback.dto';
 
 @Controller('hostel/mess-feedback')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 export class MessFeedbackController {
   constructor(private readonly messFeedbackService: MessFeedbackService) {}
 

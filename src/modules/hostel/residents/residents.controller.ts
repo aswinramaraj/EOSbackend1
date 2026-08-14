@@ -8,7 +8,7 @@ import { SearchResidentsDto } from './dto/search-residents.dto';
 
 @Controller('hostel/residents')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 export class ResidentsController {
   constructor(private readonly residentsService: ResidentsService) {}
 

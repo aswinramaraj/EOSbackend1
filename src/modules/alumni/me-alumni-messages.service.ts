@@ -20,6 +20,44 @@ function resolveStudentName(student: {
 }
 
 /**
+ * A message's poster is either the alumni_members row (student side, the
+ * normal path via createMessage below) or a plain `users` row (staff/admin
+ * posting directly — no alumni_members link). Same faculty-then-
+ * non_teaching_staff-then-email fallback as VenuesService.resolveBookerName.
+ */
+function resolvePosterName(message: {
+  alumni_members: {
+    students: {
+      soa_applications: { first_name: string; last_name: string | null } | null;
+      users: { email: string };
+    };
+  } | null;
+  users: {
+    email: string;
+    faculty: { first_name: string; last_name: string } | null;
+    non_teaching_staff: { first_name: string; last_name: string | null }[];
+  } | null;
+}): string {
+  if (message.alumni_members) {
+    return resolveStudentName(message.alumni_members.students);
+  }
+  const user = message.users;
+  if (!user) {
+    return 'Unknown';
+  }
+  if (user.faculty) {
+    return `${user.faculty.first_name} ${user.faculty.last_name}`;
+  }
+  if (user.non_teaching_staff[0]) {
+    const staff = user.non_teaching_staff[0];
+    return staff.last_name
+      ? `${staff.first_name} ${staff.last_name}`
+      : staff.first_name;
+  }
+  return user.email;
+}
+
+/**
  * Alumni group chat, scoped to the caller's own batch.
  *
  * Critical isolation rule: a member of batch A must never read or post into
@@ -58,21 +96,23 @@ export class MeAlumniMessagesService {
               },
             },
           },
-          users: { select: { email: true } },
+          users: {
+            select: {
+              email: true,
+              faculty: { select: { first_name: true, last_name: true } },
+              non_teaching_staff: {
+                select: { first_name: true, last_name: true },
+              },
+            },
+          },
         },
       }),
       this.prisma.alumni_group_messages.count({ where }),
     ]);
 
-    // alumni_members is null for messages posted directly via posted_by_user_id
-    // (see the model comment on alumni_group_messages) rather than through the
-    // poster's own alumni_members row — fall back to that user's email, same
-    // convention resolveStudentName already uses when soa_applications is missing.
     const data = rows.map(({ alumni_members, users, ...message }) => ({
       ...message,
-      posted_by_name: alumni_members
-        ? resolveStudentName(alumni_members.students)
-        : (users?.email ?? 'Unknown'),
+      posted_by_name: resolvePosterName({ alumni_members, users }),
     }));
 
     return paginate(data, total, dto);

@@ -91,7 +91,7 @@ export class OutingsService {
     }
 
     try {
-      const [outings, total] = await this.prisma.$transaction([
+      const [outings, total] = await Promise.all([
         this.prisma.hostel_outings.findMany({
           where,
           include: OUTING_INCLUDE,
