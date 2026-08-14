@@ -4,17 +4,20 @@ import { SupabaseStorageProvider } from './providers/supabase-storage.provider';
 import { StorageService } from './storage.service';
 
 /**
- * Two storage APIs live here, both backed by Supabase Storage, kept side by
- * side rather than merged into one:
- *  - StorageProvider (abstract, multi-bucket, signed-URL capable) — the
- *    newer pattern; faculty-files is its only consumer today. To switch
- *    backends later (e.g. to S3/R2), write a new class implementing
- *    StorageProvider and change the `useClass` line below — every consumer
- *    injects the abstract class and never needs to change.
+ * Two storage abstractions coexist in *this* module (src/modules/storage),
+ * distinct from the separate, generic Supabase-S3 StorageService at
+ * src/common/storage — see that file's own comment. Both are exported so
+ * each consumer keeps injecting whichever one it already depends on:
+ *  - StorageProvider (abstract, multi-bucket, signed-URL capable) — used by
+ *    faculty-files. To switch backends later (e.g. to S3/R2), write a new
+ *    class implementing StorageProvider and change the `useClass` line
+ *    below — every consumer injects the abstract class and never needs to
+ *    change.
  *  - StorageService (concrete, single hardcoded bucket) — the older,
  *    simpler pattern still used by appraisal/faculty-od/me-od-attachments.
- * Consolidating these onto one API is a real future cleanup, not something
- * to do silently while resolving an unrelated merge.
+ * Consolidating these (and the separate common/storage service) onto one
+ * API is a real future cleanup, not something to do silently while
+ * resolving an unrelated merge.
  */
 @Module({
   providers: [

@@ -58,6 +58,9 @@ interface MediaRequestRow {
   coordinator_name: string | null;
   contact_number: string | null;
   media_types: string[];
+  // requested_by_faculty_id (schema.prisma) is nullable — every request
+  // created through this service sets it (faculty-only endpoint), but the
+  // column itself allows null, so the relation must be typed that way too.
   faculty: {
     id: number;
     first_name: string;

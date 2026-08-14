@@ -20,41 +20,29 @@ function resolveStudentName(student: {
 }
 
 /**
- * A message's poster is either the alumni_members row (student side, the
- * normal path via createMessage below) or a plain `users` row (staff/admin
- * posting directly — no alumni_members link). Same faculty-then-
- * non_teaching_staff-then-email fallback as VenuesService.resolveBookerName.
+ * A message's sender is either a real alumnus (alumni_members) or a
+ * non-alumnus staff member like Principal (users, via
+ * AdminAlumniGroupsService) - never both, never neither. The role name is
+ * shown (capitalized) rather than a personal name for the staff case, since
+ * `users` has no name column of its own.
  */
-function resolvePosterName(message: {
+function resolveSenderName(message: {
   alumni_members: {
     students: {
       soa_applications: { first_name: string; last_name: string | null } | null;
       users: { email: string };
     };
   } | null;
-  users: {
-    email: string;
-    faculty: { first_name: string; last_name: string } | null;
-    non_teaching_staff: { first_name: string; last_name: string | null }[];
-  } | null;
+  users: { roles: { name: string } } | null;
 }): string {
   if (message.alumni_members) {
     return resolveStudentName(message.alumni_members.students);
   }
-  const user = message.users;
-  if (!user) {
-    return 'Unknown';
+  if (message.users) {
+    const { name } = message.users.roles;
+    return name.charAt(0).toUpperCase() + name.slice(1);
   }
-  if (user.faculty) {
-    return `${user.faculty.first_name} ${user.faculty.last_name}`;
-  }
-  if (user.non_teaching_staff[0]) {
-    const staff = user.non_teaching_staff[0];
-    return staff.last_name
-      ? `${staff.first_name} ${staff.last_name}`
-      : staff.first_name;
-  }
-  return user.email;
+  return 'Unknown';
 }
 
 /**
@@ -96,15 +84,7 @@ export class MeAlumniMessagesService {
               },
             },
           },
-          users: {
-            select: {
-              email: true,
-              faculty: { select: { first_name: true, last_name: true } },
-              non_teaching_staff: {
-                select: { first_name: true, last_name: true },
-              },
-            },
-          },
+          users: { select: { roles: { select: { name: true } } } },
         },
       }),
       this.prisma.alumni_group_messages.count({ where }),
@@ -112,7 +92,7 @@ export class MeAlumniMessagesService {
 
     const data = rows.map(({ alumni_members, users, ...message }) => ({
       ...message,
-      posted_by_name: resolvePosterName({ alumni_members, users }),
+      posted_by_name: resolveSenderName({ alumni_members, users }),
     }));
 
     return paginate(data, total, dto);

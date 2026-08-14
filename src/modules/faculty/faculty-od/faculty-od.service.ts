@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -13,6 +14,7 @@ import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { CreateFacultyOdDto } from './dto/create-faculty-od.dto';
 import { ListFacultyOdQueryDto } from './dto/list-faculty-od-query.dto';
+import { UpdateFacultyOdDto } from './dto/update-faculty-od.dto';
 import { UploadFacultyOdAttachmentDto } from './dto/upload-faculty-od-attachment.dto';
 import { VerifyFacultyOdDto } from './dto/verify-faculty-od.dto';
 
@@ -58,7 +60,7 @@ const FACULTY_OD_SELECT = {
       designation: true,
       user_id: true,
       department_id: true,
-      departments: { select: { id: true, name: true } },
+      departments: { select: { id: true, name: true, code: true } },
     },
   },
 } as const;
@@ -95,7 +97,7 @@ interface FacultyOdRow {
     designation: string;
     user_id: number;
     department_id: number;
-    departments: { id: number; name: string };
+    departments: { id: number; name: string; code: string };
   };
 }
 
@@ -165,9 +167,17 @@ export class FacultyOdService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  /** POST /me/create-od (Faculty only — always for the caller's own faculty record). */
-  async create(dto: CreateFacultyOdDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  /**
+   * POST /me/create-od (Faculty or HoD — always for the caller's own
+   * faculty record).
+   *
+   * An HoD's own OD has no one to fill the HoD-review stage (they can't
+   * review their own request) - so for an HoD-created request,
+   * hod_approval_status is set to 'approved' immediately at creation,
+   * sending it straight to HR Payroll.
+   */
+  async create(dto: CreateFacultyOdDto, currentUser: JwtPayload) {
+    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
 
     const fromDate = new Date(dto.from_date);
     const toDate = new Date(dto.to_date);
@@ -193,6 +203,8 @@ export class FacultyOdService {
         organization_visited: dto.organization_visited,
         students_guided: dto.students_guided,
         sanction_order: dto.sanction_order,
+        hod_approval_status:
+          currentUser.role === ROLES.HOD ? 'approved' : undefined,
       },
       select: FACULTY_OD_SELECT,
     });
@@ -203,10 +215,18 @@ export class FacultyOdService {
 
   /**
    * GET /me/faculty-od (Faculty/HoD/HR Payroll/IQAC). Faculty is always
-   * scoped to their own records. department_id/from/to/verification_status
-   * are IQAC admin-portal filters (worflow.md: "IQAC can view ... On-Duty of
-   * students" — faculty OD visibility follows the same "IQAC sees
-   * everything" precedent already established for student OD and venues).
+   * scoped to their own records. HoD is scoped to their own department
+   * (previously unscoped). HR Payroll only ever sees requests the HoD has
+   * already approved - a request still awaiting HoD review has nothing for
+   * HR to act on yet (update() below 409s "HR approval requires HoD
+   * approval first" anyway), so it's hidden from HR's list entirely rather
+   * than shown as an unactionable "pending" row. This overrides whatever
+   * hod_approval_status the HR caller passes - it is never allowed to see
+   * pending/rejected-by-HoD requests. department_id/from/to/
+   * verification_status are IQAC admin-portal filters (worflow.md: "IQAC
+   * can view ... On-Duty of students" — faculty OD visibility follows the
+   * same "IQAC sees everything" precedent already established for student
+   * OD and venues).
    */
   async findAll(query: ListFacultyOdQueryDto, currentUser: JwtPayload) {
     const where: Record<string, unknown> = {
@@ -218,6 +238,11 @@ export class FacultyOdService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      where.faculty = { department_id: hod.department_id };
+    } else if (currentUser.role === ROLES.HR_PAYROLL) {
+      where.hod_approval_status = 'approved';
     }
 
     if (currentUser.role === ROLES.IQAC) {
@@ -237,18 +262,98 @@ export class FacultyOdService {
       }
     }
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.faculty_od_requests.findMany({
-        where,
-        skip: query.skip,
-        take: query.limit,
-        orderBy: { created_at: 'desc' },
-        select: FACULTY_OD_SELECT,
-      }),
-      this.prisma.faculty_od_requests.count({ where }),
-    ], TRANSACTION_OPTIONS);
+    const [rows, total] = await this.prisma.$transaction(
+      [
+        this.prisma.faculty_od_requests.findMany({
+          where,
+          skip: query.skip,
+          take: query.limit,
+          orderBy: { created_at: 'desc' },
+          select: FACULTY_OD_SELECT,
+        }),
+        this.prisma.faculty_od_requests.count({ where }),
+      ],
+      TRANSACTION_OPTIONS,
+    );
 
     return paginate(rows.map(toResponse), total, query);
+  }
+
+  /**
+   * PATCH /me/faculty-od/:id (HoD or HR Payroll only).
+   * HoD may only set hod_approval_status. HR Payroll may only set
+   * hr_approval_status, and only once hod_approval_status is 'approved'.
+   * Mirrors FacultyLeavesService.update() exactly — same two-column,
+   * two-role gate, same HoD-must-approve-before-HR ordering, same
+   * department scoping and self-review guard for HoD.
+   */
+  async update(id: number, dto: UpdateFacultyOdDto, currentUser: JwtPayload) {
+    if (!dto || Object.keys(dto).length === 0) {
+      throw new BadRequestException('No fields provided to update');
+    }
+
+    const existing = await this.prisma.faculty_od_requests.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Faculty OD request not found');
+    }
+
+    const data: {
+      hod_approval_status?: 'approved' | 'rejected';
+      hr_approval_status?: 'approved' | 'rejected';
+    } = {};
+
+    if (currentUser.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (existing.faculty_id === hod.id) {
+        throw new ForbiddenException({
+          message: 'You cannot review your own OD request',
+          errorCode: 'CANNOT_REVIEW_OWN_REQUEST',
+        });
+      }
+      const requestingFaculty = await this.prisma.faculty.findUnique({
+        where: { id: existing.faculty_id },
+        select: { department_id: true },
+      });
+      if (requestingFaculty?.department_id !== hod.department_id) {
+        throw new ForbiddenException(
+          'You may only approve OD requests from your own department',
+        );
+      }
+      if (dto.hr_approval_status !== undefined) {
+        throw new ForbiddenException('HoD may only set hod_approval_status');
+      }
+      if (dto.hod_approval_status !== undefined) {
+        data.hod_approval_status = dto.hod_approval_status;
+      }
+    } else if (currentUser.role === ROLES.HR_PAYROLL) {
+      if (dto.hod_approval_status !== undefined) {
+        throw new ForbiddenException(
+          'HR Payroll may only set hr_approval_status',
+        );
+      }
+      if (dto.hr_approval_status !== undefined) {
+        if (existing.hod_approval_status !== 'approved') {
+          throw new ConflictException(
+            'HR approval requires HoD approval first',
+          );
+        }
+        data.hr_approval_status = dto.hr_approval_status;
+      }
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('No permitted fields provided to update');
+    }
+
+    const od = await this.prisma.faculty_od_requests.update({
+      where: { id },
+      data,
+      select: FACULTY_OD_SELECT,
+    });
+
+    return toResponse(od);
   }
 
   /**
@@ -288,7 +393,11 @@ export class FacultyOdService {
     if (files.photo?.[0]) {
       const file = files.photo[0];
       const path = `faculty-od/${id}/photo-${Date.now()}-${file.originalname}`;
-      const { url } = await this.storage.upload(file.buffer, path, file.mimetype);
+      const { url } = await this.storage.upload(
+        file.buffer,
+        path,
+        file.mimetype,
+      );
       data.photo_url = url;
       data.photo_uploaded_at = new Date();
     }
@@ -296,7 +405,11 @@ export class FacultyOdService {
     if (files.certificate?.[0]) {
       const file = files.certificate[0];
       const path = `faculty-od/${id}/certificate-${Date.now()}-${file.originalname}`;
-      const { url } = await this.storage.upload(file.buffer, path, file.mimetype);
+      const { url } = await this.storage.upload(
+        file.buffer,
+        path,
+        file.mimetype,
+      );
       data.certificate_url = url;
       data.certificate_uploaded_at = new Date();
     }
@@ -314,7 +427,9 @@ export class FacultyOdService {
       select: FACULTY_OD_SELECT,
     });
 
-    this.logger.log(`Faculty OD request ${id} attachments updated by faculty=${faculty.id}`);
+    this.logger.log(
+      `Faculty OD request ${id} attachments updated by faculty=${faculty.id}`,
+    );
     return toResponse(updated);
   }
 
@@ -322,7 +437,11 @@ export class FacultyOdService {
   async verify(id: number, dto: VerifyFacultyOdDto, userId: number) {
     const existing = await this.prisma.faculty_od_requests.findUnique({
       where: { id },
-      select: { id: true, purpose: true, faculty: { select: { user_id: true } } },
+      select: {
+        id: true,
+        purpose: true,
+        faculty: { select: { user_id: true } },
+      },
     });
     if (!existing) {
       throw new NotFoundException({

@@ -620,6 +620,7 @@ export class SoaApplicationsService {
       values: dto.values as Prisma.InputJsonValue,
       marks: dto.marks as Prisma.InputJsonValue,
       saved_categories: dto.saved_categories,
+      updated_at: new Date(),
     };
 
     return this.prisma.admission_profile_drafts.upsert({

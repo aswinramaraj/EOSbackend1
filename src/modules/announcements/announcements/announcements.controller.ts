@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -11,8 +12,11 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -22,6 +26,9 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { AnnouncementsService } from './announcements.service';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
+import { ListAnnouncementsQueryDto } from './dto/list-announcements-query.dto';
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
 
 @Controller('announcements')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -29,21 +36,35 @@ export class AnnouncementsController {
   constructor(private readonly announcementsService: AnnouncementsService) {}
 
   /**
+   * GET /api/v1/announcements/lookup/roles
+   * Admin/Principal only — every backend role, for the "Target roles"
+   * checkbox grid (target_audience: 'roles').
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
+   */
+  @Get('lookup/roles')
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL)
+  lookupRoles() {
+    return this.announcementsService.lookupRoles();
+  }
+
+  /**
    * GET /api/v1/announcements/lookup/departments
-   * Admin only — departments that have at least one class in the given batch.
+   * Admin/Principal only — departments that have at least one class in the given batch.
    *
    * Error responses:
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
    */
   @Get('lookup/departments')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL)
   lookupDepartments(@Query('batch_id', ParseIntPipe) batchId: number) {
     return this.announcementsService.lookupDepartmentsForBatch(batchId);
   }
 
   /**
    * GET /api/v1/announcements/lookup/classes
-   * Admin: batch_id + department_id required, used as supplied.
+   * Admin/Principal: batch_id + department_id required, used as supplied.
    * HOD: batch_id required; department_id must NOT be supplied — it is always
    * resolved from the HOD's own department.
    *
@@ -52,7 +73,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 404 HOD_FACULTY_RECORD_NOT_FOUND, 500 INTERNAL_ERROR
    */
   @Get('lookup/classes')
-  @Roles(ROLES.ADMIN, ROLES.HOD)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD)
   lookupClasses(
     @Query('batch_id', ParseIntPipe) batchId: number,
     @Query('department_id', new ParseIntPipe({ optional: true }))
@@ -64,15 +85,55 @@ export class AnnouncementsController {
 
   /**
    * GET /api/v1/announcements/lookup/assigned-classes
-   * Faculty only.
+   * Faculty or HoD - an HoD who is themselves mapped to teach/mentor a
+   * class gets the same real list; one who isn't just gets an empty array.
    *
    * Error responses:
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 404 FACULTY_RECORD_NOT_FOUND, 500 INTERNAL_ERROR
    */
   @Get('lookup/assigned-classes')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   lookupAssignedClasses(@CurrentUser() user: JwtPayload) {
     return this.announcementsService.lookupAssignedClasses(user);
+  }
+
+  /**
+   * GET /api/v1/announcements/lookup/my-department
+   * HOD only — their own department, for the "Target faculty" toggle
+   * (an HOD may only ever broadcast to their own department's faculty).
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED, 403 FORBIDDEN, 404 DEPARTMENT_NOT_FOUND, 500 INTERNAL_ERROR
+   */
+  @Get('lookup/my-department')
+  @Roles(ROLES.HOD)
+  lookupMyDepartment(@CurrentUser() user: JwtPayload) {
+    return this.announcementsService.lookupMyDepartment(user);
+  }
+
+  /**
+   * POST /api/v1/announcements/attachments
+   * Admin/HOD/Faculty — uploads a single file to Supabase Storage (private
+   * bucket, see StorageService) and returns its storage key + a short-lived
+   * signed URL. The key is what gets attached to an announcement's
+   * file_key column on create/update — this endpoint itself never touches
+   * the announcements table.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR – no file, or file too large (>10MB)
+   *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
+   */
+  @Post('attachments')
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
+  uploadAttachment(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.announcementsService.uploadAttachment(file);
   }
 
   /**
@@ -87,13 +148,17 @@ export class AnnouncementsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
   create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     return this.announcementsService.create(dto, user);
   }
 
   /**
-   * GET /api/v1/announcements
+   * GET /api/v1/announcements?status=
+   * `status` is an optional filter (e.g. status=draft for the "Drafts"
+   * tab) — regardless of role, a draft is only ever visible to its own
+   * author (see buildVisibilityQuery), so this can never leak someone
+   * else's drafts.
    *
    * Error responses:
    *  401 UNAUTHORIZED
@@ -101,8 +166,11 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Get()
-  findAll(@CurrentUser() user: JwtPayload) {
-    return this.announcementsService.findAll(user);
+  findAll(
+    @Query() query: ListAnnouncementsQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.announcementsService.findAll(user, query.status);
   }
 
   /**
@@ -132,7 +200,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Put(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -150,7 +218,7 @@ export class AnnouncementsController {
    * Error responses: see PUT /api/v1/announcements/:id
    */
   @Patch(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -169,7 +237,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Delete(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

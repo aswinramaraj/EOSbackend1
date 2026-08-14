@@ -86,18 +86,51 @@ export class AttendanceController {
   }
 
   /**
-   * GET /api/v1/me/staff-attendance?year=&month= — Faculty only.
+   * GET /api/v1/me/staff-attendance?year=&month= — Faculty/HoD/HR Payroll.
    * Self-scoped, best-effort staff attendance derived from approved leaves
    * and holiday-slot opt-ins (see MeStaffAttendanceService for details).
+   * HoD and HR Payroll staff also have their own faculty row (same table,
+   * same faculty_daily_attendance source) - resolveFacultyByUserId() 404s
+   * with FACULTY_NOT_FOUND for any of these three roles if that row doesn't
+   * exist, so widening the roles here never fabricates data for an account
+   * that has none.
    */
   @Get('staff-attendance')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL)
   getStaffAttendance(
     @Query() query: GetStaffAttendanceDto,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.meStaffAttendanceService.getMyStaffAttendance(
       user.sub,
+      query,
+    );
+  }
+
+  /**
+   * GET /api/v1/me/staff-attendance-review?year=&month= — HoD/HR Payroll
+   * only. One row per active faculty member with that month's stats - backs
+   * the HR attendance roster list.
+   */
+  @Get('staff-attendance-review')
+  @Roles(ROLES.HOD, ROLES.HR_PAYROLL)
+  listStaffAttendanceForReview(@Query() query: GetStaffAttendanceDto) {
+    return this.meStaffAttendanceService.listStaffAttendanceForReview(query);
+  }
+
+  /**
+   * GET /api/v1/me/staff-attendance/:facultyId?year=&month= — HoD/HR
+   * Payroll only. Same shape as GET /me/staff-attendance but for a faculty
+   * member chosen by id - backs the drill-down calendar from the roster.
+   */
+  @Get('staff-attendance/:facultyId')
+  @Roles(ROLES.HOD, ROLES.HR_PAYROLL)
+  getStaffAttendanceForFaculty(
+    @Param('facultyId', ParseIntPipe) facultyId: number,
+    @Query() query: GetStaffAttendanceDto,
+  ) {
+    return this.meStaffAttendanceService.getStaffAttendanceForFacultyId(
+      facultyId,
       query,
     );
   }

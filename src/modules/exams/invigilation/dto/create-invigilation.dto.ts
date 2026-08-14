@@ -2,6 +2,8 @@ import { IsDateString, IsEnum, IsInt, IsPositive } from 'class-validator';
 import { Type } from 'class-transformer';
 import { exam_session_enum } from 'generated/prisma/client';
 
+// exam_session_enum (schema.prisma) — FN (forenoon) / AN (afternoon).
+
 export class CreateInvigilationDto {
   @IsInt()
   @IsPositive()

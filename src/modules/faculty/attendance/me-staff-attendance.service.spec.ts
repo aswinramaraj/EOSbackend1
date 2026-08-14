@@ -5,7 +5,7 @@ import { MeStaffAttendanceService } from './me-staff-attendance.service';
 describe('MeStaffAttendanceService', () => {
   let service: MeStaffAttendanceService;
   let prisma: {
-    faculty: { findUnique: jest.Mock };
+    faculty: { findUnique: jest.Mock; findMany: jest.Mock };
     faculty_daily_attendance: { findMany: jest.Mock };
     faculty_leaves: { findMany: jest.Mock };
     faculty_holiday_mapping: { findMany: jest.Mock };
@@ -13,7 +13,7 @@ describe('MeStaffAttendanceService', () => {
 
   beforeEach(async () => {
     prisma = {
-      faculty: { findUnique: jest.fn() },
+      faculty: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
       faculty_daily_attendance: { findMany: jest.fn().mockResolvedValue([]) },
       faculty_leaves: { findMany: jest.fn().mockResolvedValue([]) },
       faculty_holiday_mapping: { findMany: jest.fn().mockResolvedValue([]) },
@@ -216,6 +216,96 @@ describe('MeStaffAttendanceService', () => {
     ).rejects.toMatchObject({
       status: 500,
       response: { errorCode: 'INTERNAL_ERROR' },
+    });
+  });
+
+  describe('getStaffAttendanceForFacultyId', () => {
+    it('throws 404 when the faculty does not exist', async () => {
+      prisma.faculty.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getStaffAttendanceForFacultyId(999, {}),
+      ).rejects.toThrow('Faculty not found');
+    });
+
+    it('returns the same shape as the self-scoped lookup, plus the faculty record', async () => {
+      const facultyRow = {
+        id: 5,
+        first_name: 'Deepa',
+        last_name: 'Kannan',
+        designation: 'Professor',
+      };
+      prisma.faculty.findUnique.mockResolvedValue(facultyRow);
+      prisma.faculty_daily_attendance.findMany.mockResolvedValue([
+        { attendance_date: new Date('2026-08-10T00:00:00.000Z'), status: 'full_day' },
+      ]);
+
+      const result = await service.getStaffAttendanceForFacultyId(5, {
+        year: 2026,
+        month: 8,
+      });
+
+      expect(result.faculty).toEqual(facultyRow);
+      expect(result.marks).toEqual({ '2026-08-10': 'present' });
+      expect(result.stats).toEqual({
+        present: 1,
+        absent: 0,
+        onDuty: 0,
+        overallPercent: 100,
+      });
+      expect(prisma.faculty_daily_attendance.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ faculty_id: 5 }),
+        }),
+      );
+    });
+  });
+
+  describe('listStaffAttendanceForReview', () => {
+    it('returns one row per active faculty member with that month\'s stats', async () => {
+      prisma.faculty.findMany.mockResolvedValue([
+        { id: 1, first_name: 'Bala', last_name: 'Murugan', designation: 'Professor' },
+        { id: 2, first_name: 'Deepa', last_name: 'Kannan', designation: 'Professor' },
+      ]);
+      prisma.faculty_daily_attendance.findMany.mockResolvedValue([
+        { faculty_id: 2, attendance_date: new Date('2026-08-10T00:00:00.000Z'), status: 'full_day' },
+      ]);
+      prisma.faculty_leaves.findMany.mockResolvedValue([]);
+      prisma.faculty_holiday_mapping.findMany.mockResolvedValue([]);
+
+      const result = await service.listStaffAttendanceForReview({
+        year: 2026,
+        month: 8,
+      });
+
+      expect(result).toEqual([
+        {
+          faculty: { id: 1, first_name: 'Bala', last_name: 'Murugan', designation: 'Professor' },
+          year: 2026,
+          month: 8,
+          stats: { present: 0, absent: 0, onDuty: 0, overallPercent: 100 },
+        },
+        {
+          faculty: { id: 2, first_name: 'Deepa', last_name: 'Kannan', designation: 'Professor' },
+          year: 2026,
+          month: 8,
+          stats: { present: 1, absent: 0, onDuty: 0, overallPercent: 100 },
+        },
+      ]);
+      expect(prisma.faculty.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { status: 'active' } }),
+      );
+    });
+
+    it('wraps a DB failure as 500 INTERNAL_ERROR', async () => {
+      prisma.faculty.findMany.mockRejectedValue(new Error('connection lost'));
+
+      await expect(
+        service.listStaffAttendanceForReview({ year: 2026, month: 8 }),
+      ).rejects.toMatchObject({
+        status: 500,
+        response: { errorCode: 'INTERNAL_ERROR' },
+      });
     });
   });
 });
