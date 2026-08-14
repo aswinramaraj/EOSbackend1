@@ -5,6 +5,7 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { MediaRequestsController } from './media-requests.controller';
 import { MediaRequestsService } from './media-requests.service';
 
@@ -16,6 +17,7 @@ describe('MediaRequestsController', () => {
       controllers: [MediaRequestsController],
       providers: [
         MediaRequestsService,
+        { provide: NotificationsService, useValue: { create: jest.fn() } },
         {
           provide: PrismaService,
           useValue: {

@@ -5,13 +5,26 @@ import { ROLES_KEY } from 'src/auth/decorators/roles.decorator';
 import { MeController } from './me-profile.controller';
 import { MeProfileService } from './me-profile.service';
 import { MeAttendanceService } from './me-attendance.service';
+import { MeExamResultsService } from './me-exam-results.service';
 import { MeLeavesService } from './me-leaves.service';
 import { MeLeavesListService } from './me-leaves-list.service';
 import { MeOdTeamsService } from './me-od-teams.service';
+import { MeOdTeamsListService } from './me-od-teams-list.service';
 import { MeOdRequestsService } from './me-od-requests.service';
+import { MeOdRequestsListService } from './me-od-requests-list.service';
+import { MeOdAttachmentsService } from './me-od-attachments.service';
 import { MeHostelOutingsService } from './me-hostel-outings.service';
+import { MeCampusOutingsService } from './me-campus-outings.service';
 import { MeBonafideRequestsService } from './me-bonafide-requests.service';
 import { MeProjectsService } from './me-projects.service';
+import { MeFacultyDirectoryService } from './me-faculty-directory.service';
+import { MeFeesService } from './me-fees.service';
+import { MeExamScheduleService } from './me-exam-schedule.service';
+import { MeHostelRoomService } from './me-hostel-room.service';
+import { MeHostelComplaintsService } from './me-hostel-complaints.service';
+import { MeMessFeedbackService } from './me-mess-feedback.service';
+import { MeAcademicCalendarService } from './me-academic-calendar.service';
+import { MeAcademicClearanceService } from './me-academic-clearance.service';
 import { student_leave_status_enum } from 'generated/prisma/client';
 
 describe('MeController', () => {
@@ -38,9 +51,16 @@ describe('MeController', () => {
   const meOdRequestsService = {
     getOdRequestStatus: jest.fn(),
   };
+  const meOdAttachmentsService = {
+    upload: jest.fn(),
+  };
   const meHostelOutingsService = {
     createHostelOuting: jest.fn(),
     getMyHostelOutings: jest.fn(),
+  };
+  const meCampusOutingsService = {
+    createCampusOuting: jest.fn(),
+    getMyCampusOutings: jest.fn(),
   };
   const meBonafideRequestsService = {
     createBonafideRequest: jest.fn(),
@@ -50,6 +70,39 @@ describe('MeController', () => {
     createProject: jest.fn(),
     getMyProjects: jest.fn(),
   };
+  const meExamResultsService = {
+    getMyExamResults: jest.fn(),
+  };
+  const meOdTeamsListService = {
+    getMyOdTeams: jest.fn(),
+  };
+  const meOdRequestsListService = {
+    getMyOdRequests: jest.fn(),
+  };
+  const meFacultyDirectoryService = {
+    getFacultyDirectory: jest.fn(),
+  };
+  const meFeesService = {
+    getMyFees: jest.fn(),
+  };
+  const meExamScheduleService = {
+    getMyExamSchedule: jest.fn(),
+  };
+  const meHostelRoomService = {
+    getMyHostelRoom: jest.fn(),
+  };
+  const meHostelComplaintsService = {
+    createComplaint: jest.fn(),
+  };
+  const meMessFeedbackService = {
+    createFeedback: jest.fn(),
+  };
+  const meAcademicCalendarService = {
+    getMyAcademicCalendar: jest.fn(),
+  };
+  const meAcademicClearanceService = {
+    getMyAcademicClearance: jest.fn(),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -57,16 +110,47 @@ describe('MeController', () => {
       providers: [
         { provide: MeProfileService, useValue: meProfileService },
         { provide: MeAttendanceService, useValue: meAttendanceService },
+        { provide: MeExamResultsService, useValue: meExamResultsService },
         { provide: MeLeavesService, useValue: meLeavesService },
         { provide: MeLeavesListService, useValue: meLeavesListService },
         { provide: MeOdTeamsService, useValue: meOdTeamsService },
+        { provide: MeOdTeamsListService, useValue: meOdTeamsListService },
         { provide: MeOdRequestsService, useValue: meOdRequestsService },
+        {
+          provide: MeOdRequestsListService,
+          useValue: meOdRequestsListService,
+        },
+        { provide: MeOdAttachmentsService, useValue: meOdAttachmentsService },
         { provide: MeHostelOutingsService, useValue: meHostelOutingsService },
+        {
+          provide: MeCampusOutingsService,
+          useValue: meCampusOutingsService,
+        },
         {
           provide: MeBonafideRequestsService,
           useValue: meBonafideRequestsService,
         },
         { provide: MeProjectsService, useValue: meProjectsService },
+        {
+          provide: MeFacultyDirectoryService,
+          useValue: meFacultyDirectoryService,
+        },
+        { provide: MeFeesService, useValue: meFeesService },
+        { provide: MeExamScheduleService, useValue: meExamScheduleService },
+        { provide: MeHostelRoomService, useValue: meHostelRoomService },
+        {
+          provide: MeHostelComplaintsService,
+          useValue: meHostelComplaintsService,
+        },
+        { provide: MeMessFeedbackService, useValue: meMessFeedbackService },
+        {
+          provide: MeAcademicCalendarService,
+          useValue: meAcademicCalendarService,
+        },
+        {
+          provide: MeAcademicClearanceService,
+          useValue: meAcademicClearanceService,
+        },
       ],
     }).compile();
 
@@ -237,7 +321,11 @@ describe('MeController', () => {
   });
 
   it('resolves student_id from the JWT and delegates submitOdRequest() to MeOdTeamsService with the team id', () => {
-    const dto = { from_date: '2099-08-12', to_date: '2099-08-13' };
+    const dto = {
+      from_date: '2099-08-12',
+      to_date: '2099-08-13',
+      reason: 'Inter-college hackathon',
+    };
     void controller.submitOdRequest(
       { sub: 7, email: 'a@b.com', role: 'student', roleId: 4 },
       61,

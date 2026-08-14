@@ -7,7 +7,10 @@ export class CreateSocialLinkDto {
   @MaxLength(100)
   title: string;
 
-  @IsUrl({ require_protocol: true }, { message: 'url must be a valid URL including http(s)://' })
+  @IsUrl(
+    { require_protocol: true },
+    { message: 'url must be a valid URL including http(s)://' },
+  )
   @MaxLength(500)
   url: string;
 }

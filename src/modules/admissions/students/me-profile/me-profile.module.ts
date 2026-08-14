@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { NotificationsModule } from 'src/modules/notifications/notifications/notifications.module';
+import { StorageModule } from 'src/modules/storage/storage.module';
 import { MeController } from './me-profile.controller';
 import { MeProfileService } from './me-profile.service';
 import { MeAttendanceService } from './me-attendance.service';
@@ -11,6 +12,7 @@ import { MeOdTeamsService } from './me-od-teams.service';
 import { MeOdTeamsListService } from './me-od-teams-list.service';
 import { MeOdRequestsService } from './me-od-requests.service';
 import { MeOdRequestsListService } from './me-od-requests-list.service';
+import { MeOdAttachmentsService } from './me-od-attachments.service';
 import { MeHostelOutingsService } from './me-hostel-outings.service';
 import { MeCampusOutingsService } from './me-campus-outings.service';
 import { MeBonafideRequestsService } from './me-bonafide-requests.service';
@@ -25,7 +27,7 @@ import { MeAcademicCalendarService } from './me-academic-calendar.service';
 import { MeAcademicClearanceService } from './me-academic-clearance.service';
 
 @Module({
-  imports: [PrismaModule, NotificationsModule],
+  imports: [PrismaModule, NotificationsModule, StorageModule],
   controllers: [MeController],
   providers: [
     MeProfileService,
@@ -37,6 +39,7 @@ import { MeAcademicClearanceService } from './me-academic-clearance.service';
     MeOdTeamsListService,
     MeOdRequestsService,
     MeOdRequestsListService,
+    MeOdAttachmentsService,
     MeHostelOutingsService,
     MeCampusOutingsService,
     MeBonafideRequestsService,

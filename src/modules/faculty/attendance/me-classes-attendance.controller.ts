@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
@@ -41,5 +42,12 @@ export class MeClassesAttendanceController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.attendanceService.markForClass(classId, dto, user.sub);
+  }
+
+  /** GET /api/v1/me/classes/:class_id/roster — Faculty / Secretary. */
+  @Get(':class_id/roster')
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY)
+  getRoster(@Param('class_id', ParseIntPipe) classId: number) {
+    return this.attendanceService.getClassRoster(classId);
   }
 }

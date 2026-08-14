@@ -1,4 +1,12 @@
-import { IsDateString, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsDateString,
+  IsInt,
+  IsOptional,
+  IsPositive,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 /**
  * POST /me/create-od (Faculty only).
@@ -24,4 +32,21 @@ export class CreateFacultyOdDto {
   @IsString()
   @MaxLength(255)
   purpose?: string;
+
+  /** IQAC admin portal detail fields - additive, optional. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  organization_visited?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  students_guided?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  sanction_order?: string;
 }

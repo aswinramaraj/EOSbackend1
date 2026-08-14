@@ -53,4 +53,15 @@ export class CreateOdRequestDto {
   @IsInt()
   @IsPositive()
   faculty_guide_id?: number;
+
+  /** IQAC admin portal's "Organization"/"Location" detail fields - additive, optional. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  organization?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  location?: string;
 }

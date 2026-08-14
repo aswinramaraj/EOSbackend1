@@ -20,6 +20,7 @@ const FACULTY_LEAVE_SELECT = {
   from_date: true,
   to_date: true,
   reason: true,
+  leave_type_id: true,
   hod_approval_status: true,
   hr_approval_status: true,
   created_at: true,
@@ -29,9 +30,12 @@ const FACULTY_LEAVE_SELECT = {
       first_name: true,
       last_name: true,
       designation: true,
-      departments: { select: { id: true, name: true, code: true } },
+      departments: {
+        select: { id: true, name: true, code: true },
+      },
     },
   },
+  leave_types: { select: { id: true, name: true } },
 } as const;
 
 interface FacultyLeaveRow {
@@ -39,6 +43,7 @@ interface FacultyLeaveRow {
   from_date: Date;
   to_date: Date;
   reason: string | null;
+  leave_type_id: number | null;
   hod_approval_status: string;
   hr_approval_status: string;
   created_at: Date;
@@ -47,8 +52,13 @@ interface FacultyLeaveRow {
     first_name: string;
     last_name: string;
     designation: string;
-    departments: { id: number; name: string; code: string } | null;
+    departments: {
+      id: number;
+      name: string;
+      code: string;
+    } | null;
   };
+  leave_types: { id: number; name: string } | null;
 }
 
 function computeOverallStatus(
@@ -70,6 +80,7 @@ function toResponse(leave: FacultyLeaveRow) {
     from_date: leave.from_date,
     to_date: leave.to_date,
     reason: leave.reason,
+    leave_type: leave.leave_types,
     hod_approval_status: leave.hod_approval_status,
     hr_approval_status: leave.hr_approval_status,
     overall_status: computeOverallStatus(
@@ -124,6 +135,7 @@ export class FacultyLeavesService {
         from_date: fromDate,
         to_date: toDate,
         reason: dto.reason,
+        leave_type_id: dto.leave_type_id,
         hod_approval_status:
           currentUser.role === ROLES.HOD ? 'approved' : undefined,
       },
@@ -139,7 +151,9 @@ export class FacultyLeavesService {
     // role, not one specific person, is a different shape of problem than
     // every other notification here).
     if (currentUser.role !== ROLES.HOD) {
-      const hodUserId = await this.resolveDepartmentHodUserId(faculty.department_id);
+      const hodUserId = await this.resolveDepartmentHodUserId(
+        faculty.department_id,
+      );
       if (hodUserId) {
         await this.notifications.notify({
           user_id: hodUserId,
@@ -309,12 +323,19 @@ export class FacultyLeavesService {
         select: { user_id: true },
       });
       if (requester) {
-        const stage = data.hod_approval_status !== undefined ? 'HoD' : 'HR Payroll';
+        const stage =
+          data.hod_approval_status !== undefined ? 'HoD' : 'HR Payroll';
         await this.notifications.notify({
           user_id: requester.user_id,
-          title: decidedStatus === 'approved' ? 'Leave request approved' : 'Leave request rejected',
+          title:
+            decidedStatus === 'approved'
+              ? 'Leave request approved'
+              : 'Leave request rejected',
           message: `Your leave request (${existing.from_date.toISOString().slice(0, 10)} to ${existing.to_date.toISOString().slice(0, 10)}) was ${decidedStatus} by ${stage}.`,
-          type: decidedStatus === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+          type:
+            decidedStatus === 'approved'
+              ? 'approval_request_approved'
+              : 'approval_request_rejected',
           related_entity_type: 'faculty_leave',
           related_entity_id: id,
         });

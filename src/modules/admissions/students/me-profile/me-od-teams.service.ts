@@ -612,6 +612,8 @@ export class MeOdTeamsService {
       dto.reason,
       dto.faculty_guide_id ?? null,
       hodApprovals,
+      dto.organization ?? null,
+      dto.location ?? null,
     );
 
     // Both reviewers below get notified right at submission - the
@@ -630,6 +632,8 @@ export class MeOdTeamsService {
       from_time: formatTime(request.from_time),
       to_time: formatTime(request.to_time),
       reason: request.reason,
+      organization: request.organization,
+      location: request.location,
       faculty_guide_id: request.faculty_guide_id,
       faculty_guide_name: facultyGuideName,
       mentor_approval_status: request.mentor_approval_status,
@@ -719,6 +723,8 @@ export class MeOdTeamsService {
     reason: string,
     facultyGuideId: number | null,
     hodApprovals: { student_id: number; department_id: number }[],
+    organization: string | null,
+    location: string | null,
   ) {
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -753,6 +759,8 @@ export class MeOdTeamsService {
             reason,
             faculty_guide_id: facultyGuideId,
             mentor_approval_status: 'pending',
+            organization,
+            location,
           },
         });
 

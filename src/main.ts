@@ -28,6 +28,12 @@ async function bootstrap() {
   app.useBodyParser('json', { limit: '20mb' });
   app.useBodyParser('urlencoded', { limit: '20mb', extended: true });
 
+  // Without this, SIGTERM/SIGINT (including nest's own --watch restarts)
+  // kill the process without running onModuleDestroy, so PrismaService never
+  // closes its pool — each restart leaks connections at the DB pooler until
+  // its low connection ceiling is exhausted.
+  app.enableShutdownHooks();
+
   // ── Global prefix ────────────────────────────────────────────────────────────
   app.setGlobalPrefix('api/v1');
 

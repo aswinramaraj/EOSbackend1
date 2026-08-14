@@ -29,13 +29,21 @@ function degreeAbbreviation(courseName: string): string {
 
 function formatAddress(
   address:
-    | { address_line: string | null; city: string | null; state: string | null; pincode: string | null }
+    | {
+        address_line: string | null;
+        city: string | null;
+        state: string | null;
+        pincode: string | null;
+      }
     | undefined,
 ): string | null {
   if (!address) return null;
-  const parts = [address.address_line, address.city, address.state, address.pincode].filter(
-    (part): part is string => Boolean(part && part.trim()),
-  );
+  const parts = [
+    address.address_line,
+    address.city,
+    address.state,
+    address.pincode,
+  ].filter((part): part is string => Boolean(part && part.trim()));
   return parts.length > 0 ? parts.join(', ') : null;
 }
 
@@ -390,7 +398,12 @@ export class ProfileService {
           },
           student_addresses: {
             where: { address_type: 'permanent' },
-            select: { address_line: true, city: true, state: true, pincode: true },
+            select: {
+              address_line: true,
+              city: true,
+              state: true,
+              pincode: true,
+            },
           },
         },
       });

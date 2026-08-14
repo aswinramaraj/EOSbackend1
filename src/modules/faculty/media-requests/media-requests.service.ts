@@ -10,6 +10,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { CreateMediaRequestDto } from './dto/create-media-request.dto';
 import { UpdateMediaRequestDto } from './dto/update-media-request.dto';
 import { ListMediaRequestQueryDto } from './dto/list-media-request-query.dto';
@@ -20,10 +21,31 @@ const MEDIA_REQUEST_SELECT = {
   status: true,
   media_file_url: true,
   created_at: true,
+  event_name: true,
+  event_date: true,
+  coordinator_name: true,
+  contact_number: true,
+  media_types: true,
   faculty: {
     select: { id: true, first_name: true, last_name: true, designation: true },
   },
+  venues: { select: { id: true, name: true, location: true } },
+  users: {
+    select: {
+      id: true,
+      email: true,
+      faculty: { select: { first_name: true, last_name: true } },
+      non_teaching_staff: { select: { first_name: true, last_name: true } },
+    },
+  },
 } as const;
+
+interface MediaRequestMarkerRow {
+  id: number;
+  email: string;
+  faculty: { first_name: string; last_name: string } | null;
+  non_teaching_staff: { first_name: string; last_name: string | null }[];
+}
 
 interface MediaRequestRow {
   id: number;
@@ -31,6 +53,11 @@ interface MediaRequestRow {
   status: string;
   media_file_url: string | null;
   created_at: Date;
+  event_name: string | null;
+  event_date: Date | null;
+  coordinator_name: string | null;
+  contact_number: string | null;
+  media_types: string[];
   // requested_by_faculty_id (schema.prisma) is nullable — every request
   // created through this service sets it (faculty-only endpoint), but the
   // column itself allows null, so the relation must be typed that way too.
@@ -40,6 +67,28 @@ interface MediaRequestRow {
     last_name: string;
     designation: string;
   } | null;
+  venues: { id: number; name: string; location: string | null } | null;
+  users: MediaRequestMarkerRow;
+}
+
+/**
+ * Same faculty-then-non_teaching_staff-then-email fallback as
+ * AttendanceService's resolveMarkerName — `requested_by_user_id` (generic,
+ * any role) is always present; the direct `faculty` relation (via
+ * requested_by_faculty_id) is only set when the requester is teaching staff
+ * (null for Secretary-submitted requests).
+ */
+function resolveRequesterName(requester: MediaRequestMarkerRow): string {
+  if (requester.faculty) {
+    return `${requester.faculty.first_name} ${requester.faculty.last_name}`;
+  }
+  const staff = requester.non_teaching_staff[0];
+  if (staff) {
+    return staff.last_name
+      ? `${staff.first_name} ${staff.last_name}`
+      : staff.first_name;
+  }
+  return requester.email;
 }
 
 function toResponse(request: MediaRequestRow) {
@@ -49,7 +98,17 @@ function toResponse(request: MediaRequestRow) {
     status: request.status,
     media_file_url: request.media_file_url,
     created_at: request.created_at,
+    event_name: request.event_name,
+    event_date: request.event_date,
+    venue: request.venues,
+    coordinator_name: request.coordinator_name,
+    contact_number: request.contact_number,
+    media_types: request.media_types,
     faculty: request.faculty,
+    requested_by: {
+      id: request.users.id,
+      name: resolveRequesterName(request.users),
+    },
   };
 }
 
@@ -57,37 +116,66 @@ function toResponse(request: MediaRequestRow) {
 export class MediaRequestsService {
   private readonly logger = new Logger(MediaRequestsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
-  /** POST /media-requests (Faculty only). */
-  async create(dto: CreateMediaRequestDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  /**
+   * POST /media-requests (Faculty / Secretary).
+   *
+   * `requested_by_user_id` is always set from the caller; `requested_by_faculty_id`
+   * is only populated when the caller actually has a faculty profile (Secretary
+   * doesn't). `event_name`/`event_date`/`venue_id`/`coordinator_name`/
+   * `contact_number`/`media_types` are optional so Faculty's existing simple
+   * `{ description }` submissions keep working unchanged.
+   */
+  async create(dto: CreateMediaRequestDto, currentUser: JwtPayload) {
+    const userId = currentUser.sub;
+    const faculty =
+      currentUser.role === ROLES.FACULTY
+        ? await this.resolveFacultyByUserId(userId)
+        : null;
+
+    if (dto.venue_id !== undefined) {
+      const venue = await this.prisma.venues.findUnique({
+        where: { id: dto.venue_id },
+      });
+      if (!venue) {
+        throw new NotFoundException('Venue not found');
+      }
+    }
 
     const request = await this.prisma.media_requests.create({
       data: {
-        requested_by_faculty_id: faculty.id,
+        requested_by_faculty_id: faculty?.id,
         requested_by_user_id: userId,
         description: dto.description,
         status: 'pending',
+        event_name: dto.event_name,
+        event_date: dto.event_date ? new Date(dto.event_date) : undefined,
+        venue_id: dto.venue_id,
+        coordinator_name: dto.coordinator_name,
+        contact_number: dto.contact_number,
+        media_types: dto.media_types ?? [],
       },
       select: MEDIA_REQUEST_SELECT,
     });
 
     this.logger.log(
-      `Media request created: id=${request.id} faculty=${faculty.id}`,
+      `Media request created: id=${request.id} requested_by_user=${userId}`,
     );
     return toResponse(request);
   }
 
-  /** GET /media-requests (Faculty own-only / Media Room all). Paginated, filterable. */
+  /** GET /media-requests (Media Room sees all; every other allowed role is own-only). Paginated, filterable. */
   async findAll(query: ListMediaRequestQueryDto, currentUser: JwtPayload) {
     const where: Record<string, unknown> = {
       status: query.status,
     };
 
-    if (currentUser.role === ROLES.FACULTY) {
-      const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-      where.requested_by_faculty_id = faculty.id;
+    if (currentUser.role !== ROLES.MEDIA_ROOM) {
+      where.requested_by_user_id = currentUser.sub;
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -104,11 +192,11 @@ export class MediaRequestsService {
     return paginate(rows.map(toResponse), total, query);
   }
 
-  /** GET /media-requests/:id (Faculty own-only / Media Room all). */
+  /** GET /media-requests/:id (Media Room sees any; every other allowed role only their own). */
   async findOne(id: number, currentUser: JwtPayload) {
     const request = await this.prisma.media_requests.findUnique({
       where: { id },
-      select: MEDIA_REQUEST_SELECT,
+      select: { ...MEDIA_REQUEST_SELECT, requested_by_user_id: true },
     });
     if (!request) {
       throw new NotFoundException('Media request not found');
@@ -165,13 +253,18 @@ export class MediaRequestsService {
     });
 
     this.logger.log(`Media request ${id} updated to status=${dto.status}`);
+
+    await this.notifications.create({
+      user_id: existing.requested_by_user_id,
+      title: `Media request ${dto.status}`,
+      message: `Your media request has been ${dto.status}.`,
+    });
+
     return toResponse(request);
   }
 
-  /** DELETE /media-requests/:id (Faculty only — own request, only while still 'pending'). */
+  /** DELETE /media-requests/:id (Faculty / Secretary — own request, only while still 'pending'). */
   async remove(id: number, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
-
     const existing = await this.prisma.media_requests.findUnique({
       where: { id },
     });
@@ -179,7 +272,7 @@ export class MediaRequestsService {
       throw new NotFoundException('Media request not found');
     }
 
-    if (existing.requested_by_faculty_id !== faculty.id) {
+    if (existing.requested_by_user_id !== userId) {
       throw new ForbiddenException(
         'You may only withdraw your own media requests',
       );

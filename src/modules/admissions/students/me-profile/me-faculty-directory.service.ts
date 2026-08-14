@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
@@ -39,7 +43,9 @@ export class MeFacultyDirectoryService {
           id: true,
           first_name: true,
           last_name: true,
-          departments: { select: { name: true } },
+          departments: {
+            select: { name: true },
+          },
         },
         orderBy: [{ first_name: 'asc' }, { last_name: 'asc' }],
       });
