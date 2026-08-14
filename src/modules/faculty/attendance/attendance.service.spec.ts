@@ -5,6 +5,7 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { AttendanceService } from './attendance.service';
 
 describe('AttendanceService', () => {
@@ -94,7 +95,7 @@ describe('AttendanceService', () => {
           date: '2026-08-08',
           records: [{ student_id: 121, status: 'present' }],
         },
-        42,
+        { sub: 42, email: 'faculty@example.com', role: ROLES.FACULTY, roleId: 1 },
       );
 
       expect(tx.attendance_records.create).toHaveBeenCalledWith(

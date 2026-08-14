@@ -1,9 +1,11 @@
 // dto/create-exam-timetable.dto.ts
 import {
+  IsBoolean,
   IsDateString,
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsPositive,
   Matches,
 } from 'class-validator';
@@ -53,4 +55,14 @@ export class CreateExamTimetableDto {
     message: 'end_time must be in HH:mm or HH:mm:ss format',
   })
   end_time!: string;
+
+  /**
+   * Optional passthrough: when provided, create()/update() also flip
+   * exam_subject_mapping.is_published (and published_at) for this slot's
+   * mapping, per the note on version_id above — is_published itself no
+   * longer lives on exam_timetable.
+   */
+  @IsOptional()
+  @IsBoolean({ message: 'is_published must be a boolean' })
+  is_published?: boolean;
 }

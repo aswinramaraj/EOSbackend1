@@ -5,6 +5,17 @@ import { MeOdTeamsService } from './me-od-teams.service';
 
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
+const VALID_CREATE_DTO = {
+  team_name: 'Team Nexus',
+  reason: 'IEEE paper presentation',
+  venue: 'Anna University, Chennai',
+  from_date: '2999-01-10',
+  to_date: '2999-01-12',
+  from_time: '09:00',
+  to_time: '17:00',
+  faculty_guide_id: 41,
+};
+
 describe('MeOdTeamsService', () => {
   let service: MeOdTeamsService;
   let notifications: { notify: jest.Mock };
@@ -72,12 +83,21 @@ describe('MeOdTeamsService', () => {
 
   it('creates a team and auto-joins the creator as its first member, in one transaction', async () => {
     prisma.students.findUnique.mockResolvedValue({ id: 3310 });
+    prisma.faculty.findUnique.mockResolvedValue({ first_name: 'Kavitha', last_name: 'R' });
     tx.od_teams.create.mockResolvedValue({
       id: 61,
       created_by_student_id: 3310,
       unique_code: 'X7K9QT',
       is_locked: false,
       created_at: new Date('2026-07-26T10:15:00.000Z'),
+      team_name: VALID_CREATE_DTO.team_name,
+      reason: VALID_CREATE_DTO.reason,
+      venue: VALID_CREATE_DTO.venue,
+      from_date: new Date(VALID_CREATE_DTO.from_date),
+      to_date: new Date(VALID_CREATE_DTO.to_date),
+      from_time: new Date('1970-01-01T09:00:00.000Z'),
+      to_time: new Date('1970-01-01T17:00:00.000Z'),
+      faculty_guide_id: 41,
     });
     tx.od_team_members.create.mockResolvedValue({
       id: 1,
@@ -85,7 +105,7 @@ describe('MeOdTeamsService', () => {
       student_id: 3310,
     });
 
-    const result = await service.createOdTeam(7);
+    const result = await service.createOdTeam(7, VALID_CREATE_DTO);
 
     expect(prisma.students.findUnique).toHaveBeenCalledWith({
       where: { user_id: 7 },
@@ -98,11 +118,15 @@ describe('MeOdTeamsService', () => {
           created_by_student_id: number;
           unique_code: string;
           is_locked: boolean;
+          team_name: string;
+          faculty_guide_id: number;
         };
       },
     ];
     expect(teamCreateArgs.data.created_by_student_id).toBe(3310);
     expect(teamCreateArgs.data.is_locked).toBe(false);
+    expect(teamCreateArgs.data.team_name).toBe('Team Nexus');
+    expect(teamCreateArgs.data.faculty_guide_id).toBe(41);
     expect(teamCreateArgs.data.unique_code).toHaveLength(6);
     for (const char of teamCreateArgs.data.unique_code) {
       expect(CODE_ALPHABET).toContain(char);
@@ -119,13 +143,24 @@ describe('MeOdTeamsService', () => {
       unique_code: 'X7K9QT',
       is_locked: false,
       created_at: new Date('2026-07-26T10:15:00.000Z'),
+      team_name: 'Team Nexus',
+      reason: 'IEEE paper presentation',
+      venue: 'Anna University, Chennai',
+      from_date: '2999-01-10',
+      to_date: '2999-01-12',
+      from_time: '09:00',
+      to_time: '17:00',
+      faculty_guide_id: 41,
+      faculty_guide_name: 'Kavitha R',
     });
   });
 
   it('throws 404 STUDENT_NOT_FOUND when the JWT user has no linked student record', async () => {
     prisma.students.findUnique.mockResolvedValue(null);
 
-    await expect(service.createOdTeam(999)).rejects.toMatchObject({
+    await expect(
+      service.createOdTeam(999, VALID_CREATE_DTO),
+    ).rejects.toMatchObject({
       status: 404,
       response: { errorCode: 'STUDENT_NOT_FOUND' },
     });
@@ -134,6 +169,7 @@ describe('MeOdTeamsService', () => {
 
   it('retries with a freshly generated unique_code on a P2002 collision', async () => {
     prisma.students.findUnique.mockResolvedValue({ id: 3310 });
+    prisma.faculty.findUnique.mockResolvedValue({ first_name: 'Kavitha', last_name: 'R' });
     const conflict = Object.assign(new Error('Unique constraint failed'), {
       code: 'P2002',
     });
@@ -146,10 +182,18 @@ describe('MeOdTeamsService', () => {
       unique_code: 'ABCDEF',
       is_locked: false,
       created_at: new Date(),
+      team_name: VALID_CREATE_DTO.team_name,
+      reason: VALID_CREATE_DTO.reason,
+      venue: VALID_CREATE_DTO.venue,
+      from_date: new Date(VALID_CREATE_DTO.from_date),
+      to_date: new Date(VALID_CREATE_DTO.to_date),
+      from_time: new Date('1970-01-01T09:00:00.000Z'),
+      to_time: new Date('1970-01-01T17:00:00.000Z'),
+      faculty_guide_id: 41,
     });
     tx.od_team_members.create.mockResolvedValue({});
 
-    const result = await service.createOdTeam(7);
+    const result = await service.createOdTeam(7, VALID_CREATE_DTO);
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(result.id).toBe(62);
@@ -157,12 +201,15 @@ describe('MeOdTeamsService', () => {
 
   it('gives up and throws 500 INTERNAL_ERROR after exhausting all retry attempts on repeated collisions', async () => {
     prisma.students.findUnique.mockResolvedValue({ id: 3310 });
+    prisma.faculty.findUnique.mockResolvedValue({ first_name: 'Kavitha', last_name: 'R' });
     const conflict = Object.assign(new Error('Unique constraint failed'), {
       code: 'P2002',
     });
     prisma.$transaction.mockImplementation(() => Promise.reject(conflict));
 
-    await expect(service.createOdTeam(7)).rejects.toMatchObject({
+    await expect(
+      service.createOdTeam(7, VALID_CREATE_DTO),
+    ).rejects.toMatchObject({
       status: 500,
       response: { errorCode: 'INTERNAL_ERROR' },
     });
@@ -171,9 +218,12 @@ describe('MeOdTeamsService', () => {
 
   it('wraps a non-collision DB failure as 500 INTERNAL_ERROR without retrying', async () => {
     prisma.students.findUnique.mockResolvedValue({ id: 3310 });
+    prisma.faculty.findUnique.mockResolvedValue({ first_name: 'Kavitha', last_name: 'R' });
     prisma.$transaction.mockRejectedValue(new Error('connection lost'));
 
-    await expect(service.createOdTeam(7)).rejects.toMatchObject({
+    await expect(
+      service.createOdTeam(7, VALID_CREATE_DTO),
+    ).rejects.toMatchObject({
       status: 500,
       response: { errorCode: 'INTERNAL_ERROR' },
     });
@@ -717,6 +767,7 @@ describe('MeOdTeamsService', () => {
         to_date: '2099-08-13',
         from_time: '09:30',
         to_time: '17:00',
+        reason: 'Inter-college hackathon',
       });
 
       const [createArgs] = tx.od_requests.create.mock.calls[0] as [
@@ -755,6 +806,7 @@ describe('MeOdTeamsService', () => {
       await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Inter-college hackathon',
       });
 
       const [createArgs] = tx.od_requests.create.mock.calls[0] as [
@@ -791,6 +843,7 @@ describe('MeOdTeamsService', () => {
       await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Inter-college hackathon',
       });
 
       const [createManyArgs] = tx.od_request_hod_approvals.createMany.mock
@@ -805,6 +858,7 @@ describe('MeOdTeamsService', () => {
         service.submitOdRequest(103, 61, {
           from_date: '2020-01-01',
           to_date: '2020-01-05',
+          reason: 'Inter-college hackathon',
         }),
       ).rejects.toMatchObject({
         status: 422,
@@ -818,6 +872,7 @@ describe('MeOdTeamsService', () => {
         service.submitOdRequest(103, 61, {
           from_date: '2099-08-10',
           to_date: '2099-08-05',
+          reason: 'Inter-college hackathon',
         }),
       ).rejects.toMatchObject({
         status: 422,
@@ -1008,6 +1063,7 @@ describe('MeOdTeamsService', () => {
       const result = await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Inter-college hackathon',
       });
 
       expect(result.hod_approvals).toEqual([]);

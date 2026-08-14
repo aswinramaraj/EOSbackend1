@@ -1,5 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/common/storage/storage.service';
+import { SmsService } from 'src/common/sms/sms.service';
 import {
   dayscholar_mode_enum,
   soa_status_enum,
@@ -34,6 +36,8 @@ describe('SoaApplicationsService', () => {
     student_family_details: { create: jest.Mock };
     student_contacts: { create: jest.Mock };
     student_addresses: { createMany: jest.Mock };
+    student_certificates: { createMany: jest.Mock };
+    admission_profile_drafts: { deleteMany: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -57,6 +61,8 @@ describe('SoaApplicationsService', () => {
       student_family_details: { create: jest.fn() },
       student_contacts: { create: jest.fn() },
       student_addresses: { createMany: jest.fn() },
+      student_certificates: { createMany: jest.fn() },
+      admission_profile_drafts: { deleteMany: jest.fn() },
       $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(prisma)),
     };
 
@@ -64,6 +70,11 @@ describe('SoaApplicationsService', () => {
       providers: [
         SoaApplicationsService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: StorageService,
+          useValue: { upload: jest.fn(), getSignedDownloadUrl: jest.fn() },
+        },
+        { provide: SmsService, useValue: { send: jest.fn() } },
       ],
     }).compile();
 

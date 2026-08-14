@@ -76,7 +76,10 @@ export class MeHostelComplaintsService {
         created_at: complaint.created_at.toISOString(),
       };
     } catch (err) {
-      this.logger.error(`Failed to create hostel complaint for user ${userId}`, err);
+      this.logger.error(
+        `Failed to create hostel complaint for user ${userId}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

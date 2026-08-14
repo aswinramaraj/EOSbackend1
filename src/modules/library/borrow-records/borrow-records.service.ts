@@ -403,6 +403,74 @@ export class BorrowRecordsService {
     };
   }
 
+  /**
+   * GET /me/library/dues-summary — a student's own outstanding library
+   * dues, for the No-due clearance dashboard. Reuses the exact same
+   * fine/charge formula as formatRecord() above (overdue/late fine =
+   * days * finePerDay) and NoDueService.getStudents()'s
+   * unsettled-damage/lost-charge logic, just scoped to one student instead
+   * of every student, and summarized rather than itemized.
+   */
+  async getMyDuesSummary(currentUser: JwtPayload) {
+    const ownStudentId =
+      (await this.resolveOwnStudentId(currentUser.sub)) ?? -1;
+    const { finePerDay } = await this.librarySettings.getRules();
+
+    const records = await this.prisma.book_borrow_records.findMany({
+      where: { student_id: ownStudentId },
+      select: {
+        status: true,
+        due_date: true,
+        returned_date: true,
+        fine_paid: true,
+        damage_lost_charge_amount: true,
+        damage_lost_settled: true,
+      },
+    });
+
+    let totalDue = 0;
+    let overdueCount = 0;
+    let unpaidFineCount = 0;
+
+    for (const record of records) {
+      const isOverdue =
+        record.status === 'borrowed' &&
+        startOfDay(record.due_date) < startOfDay(new Date());
+      const returnedLate =
+        record.status === 'returned' &&
+        record.returned_date &&
+        startOfDay(record.returned_date) > startOfDay(record.due_date);
+
+      const daysOverdue = isOverdue
+        ? daysBetween(new Date(), record.due_date)
+        : 0;
+      const daysLate =
+        returnedLate && record.returned_date
+          ? daysBetween(record.returned_date, record.due_date)
+          : 0;
+      const fineAmount = (isOverdue ? daysOverdue : daysLate) * finePerDay;
+
+      if (isOverdue) overdueCount += 1;
+      if (fineAmount > 0 && !record.fine_paid) {
+        totalDue += fineAmount;
+        unpaidFineCount += 1;
+      }
+      if (
+        record.damage_lost_charge_amount !== null &&
+        !record.damage_lost_settled
+      ) {
+        totalDue += Number(record.damage_lost_charge_amount);
+        unpaidFineCount += 1;
+      }
+    }
+
+    return {
+      total_due: totalDue,
+      overdue_count: overdueCount,
+      unpaid_fine_count: unpaidFineCount,
+    };
+  }
+
   async findAll(searchDto: SearchBorrowRecordsDto, currentUser: JwtPayload) {
     const {
       borrower_type,
@@ -882,7 +950,9 @@ export class BorrowRecordsService {
   async sendDueSoonReminders() {
     const DUE_SOON_WINDOW_DAYS = 3;
     const now = new Date();
-    const windowEnd = new Date(now.getTime() + DUE_SOON_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const windowEnd = new Date(
+      now.getTime() + DUE_SOON_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    );
 
     const dueSoonRecords = await this.prisma.book_borrow_records.findMany({
       where: { status: 'borrowed', due_date: { gte: now, lte: windowEnd } },

@@ -18,8 +18,11 @@ import { BonafideModule } from './modules/admissions/bonafide/bonafide.module';
 import { BonafideReasonsModule } from './modules/admissions/bonafide-reasons/bonafide-reasons.module';
 import { CertificatesModule } from './modules/admissions/certificates/certificates.module';
 import { OdModule } from './modules/admissions/od/od.module';
+import { OdHodApprovalsModule } from './modules/admissions/od-hod-approvals/od-hod-approvals.module';
+import { IqacStudentOdsModule } from './modules/admissions/iqac-student-ods/iqac-student-ods.module';
 import { SoaApplicationsModule } from './modules/admissions/soa-applications/soa-applications.module';
 import { StudentLeavesModule } from './modules/admissions/student-leaves/student-leaves.module';
+import { CampusOutingRequestsModule } from './modules/admissions/campus-outing-requests/campus-outing-requests.module';
 import { StudentOdsModule } from './modules/admissions/student-ods/student-ods.module';
 import { StudentsModule } from './modules/admissions/students/students.module';
 import { MeProfileModule } from './modules/admissions/students/me-profile/me-profile.module';
@@ -59,6 +62,7 @@ import { RevaluationModule } from './modules/exams/revaluation/revaluation.modul
 import { SeatingArrangementsModule } from './modules/exams/seating-arrangements/seating-arrangements.module';
 
 import { AppraisalModule } from './modules/faculty/appraisal/appraisal.module';
+import { AppraisalCriteriaModule } from './modules/faculty/appraisal-criteria/appraisal-criteria.module';
 import { AssignmentsModule } from './modules/faculty/assignments/assignments.module';
 import { AttendanceModule } from './modules/faculty/attendance/attendance.module';
 import { AttendanceCvModule } from './modules/faculty/attendance-cv/attendance-cv.module';
@@ -68,11 +72,13 @@ import { FacultyAttendanceModule } from './modules/faculty/faculty-attendance/fa
 import { FacultyFilesModule } from './modules/faculty/faculty-files/faculty-files.module';
 import { FacultyIdCardModule } from './modules/faculty/faculty-id-card/faculty-id-card.module';
 import { FacultyLeavesModule } from './modules/faculty/faculty-leaves/faculty-leaves.module';
+import { FacultyOdRequestsModule } from './modules/faculty/faculty-od-requests/faculty-od-requests.module';
 import { FacultyOdModule } from './modules/faculty/faculty-od/faculty-od.module';
 import { FacultyMappingModule } from './modules/faculty/faculty-mapping/faculty-mapping.module';
 import { FacultyVerificationModule } from './modules/faculty/faculty-verification/faculty-verification.module';
 import { FacultyModule } from './modules/faculty/faculty/faculty.module';
 import { HolidaySlotsModule } from './modules/faculty/holiday-slots/holiday-slots.module';
+import { LeaveTypesModule } from './modules/faculty/leave-types/leave-types.module';
 import { HrPayrollModule } from './modules/faculty/hr-payroll/hr-payroll.module';
 import { LessonPlansModule } from './modules/faculty/lesson-plans/lesson-plans.module';
 import { LmsNotesModule } from './modules/faculty/lms-notes/lms-notes.module';
@@ -126,14 +132,19 @@ import { VendorQuotationsModule } from './modules/procurement/vendor-quotations/
 import { VendorsModule } from './modules/procurement/vendors/vendors.module';
 
 import { PurchaseRequestsModule } from './modules/procurement/purchase-requests/purchase-requests.module';
-import { ServiceRequestsModule } from './modules/procurement/service-requests/service-requests.module';
+import { ServiceRequestsModule as ProcurementServiceRequestsModule } from './modules/procurement/service-requests/service-requests.module';
 
 import { WalletModule } from './modules/wallet/wallet.module';
 
 import { VenuesModule } from './modules/venues/venues/venues.module';
+import { ServiceRequestsModule as SecretaryServiceRequestsModule } from './modules/secretary/service-requests/service-requests.module';
+import { ProductRequestsModule } from './modules/secretary/product-requests/product-requests.module';
+import { SecretaryDashboardModule } from './modules/secretary/dashboard/dashboard.module';
+import { SecretaryReportsModule } from './modules/secretary/reports/reports.module';
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
+import { IqacReportsModule } from './modules/iqac/reports/iqac-reports.module';
 
 import { AlumniModule } from './modules/alumni/alumni.module';
 import { AchievementsModule } from './modules/achievements/achievements.module';
@@ -141,6 +152,7 @@ import { AchievementsModule } from './modules/achievements/achievements.module';
 import { HostelsModule } from './modules/hostel/hostels/hostels.module';
 import { ResidentsModule } from './modules/hostel/residents/residents.module';
 import { OutingsModule } from './modules/hostel/outings/outings.module';
+import { LeaveRequestsModule } from './modules/hostel/leave-requests/leave-requests.module';
 import { GateLogModule } from './modules/hostel/gate-log/gate-log.module';
 import { HostelDashboardModule } from './modules/hostel/dashboard/dashboard.module';
 import { ComplaintsModule } from './modules/hostel/complaints/complaints.module';
@@ -148,6 +160,10 @@ import { MessFeedbackModule } from './modules/hostel/mess-feedback/mess-feedback
 import { HostelFeesModule } from './modules/hostel/fees/fees.module';
 import { HostelSettingsModule } from './modules/hostel/settings/settings.module';
 import { HostelReportsModule } from './modules/hostel/reports/reports.module';
+
+import { HrDepartmentsModule } from './modules/hr/hr-departments/hr-departments.module';
+import { HrRequestsModule } from './modules/hr/hr-requests/hr-requests.module';
+import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module';
 
 @Module({
   imports: [
@@ -170,8 +186,11 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     BonafideReasonsModule,
     CertificatesModule,
     OdModule,
+    OdHodApprovalsModule,
+    IqacStudentOdsModule,
     SoaApplicationsModule,
     StudentLeavesModule,
+    CampusOutingRequestsModule,
     StudentOdsModule,
     StudentsModule,
     MeProfileModule,
@@ -211,6 +230,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     SeatingArrangementsModule,
 
     AppraisalModule,
+    AppraisalCriteriaModule,
     AssignmentsModule,
     AttendanceModule,
     AttendanceCvModule,
@@ -220,6 +240,8 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     FacultyFilesModule,
     FacultyIdCardModule,
     FacultyLeavesModule,
+    LeaveTypesModule,
+    FacultyOdRequestsModule,
     FacultyOdModule,
     FacultyMappingModule,
     FacultyVerificationModule,
@@ -278,14 +300,19 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     VendorsModule,
 
     PurchaseRequestsModule,
-    ServiceRequestsModule,
+    ProcurementServiceRequestsModule,
 
     WalletModule,
 
     VenuesModule,
+    SecretaryServiceRequestsModule,
+    ProductRequestsModule,
+    SecretaryDashboardModule,
+    SecretaryReportsModule,
     NotificationsModule,
     FeedbackModule,
     HallTicketClearanceModule,
+    IqacReportsModule,
 
     AlumniModule,
     AchievementsModule,
@@ -293,6 +320,7 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     HostelsModule,
     ResidentsModule,
     OutingsModule,
+    LeaveRequestsModule,
     GateLogModule,
     HostelDashboardModule,
     ComplaintsModule,
@@ -300,6 +328,10 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     HostelFeesModule,
     HostelSettingsModule,
     HostelReportsModule,
+
+    HrDepartmentsModule,
+    HrRequestsModule,
+    HrDashboardModule,
   ],
 
   controllers: [AppController],

@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import {
   S3Client,
   PutObjectCommand,
@@ -32,7 +36,14 @@ export class StorageService {
     const bucket = process.env.SUPABASE_S3_BUCKET;
     const supabaseUrl = process.env.SUPABASE_URL;
 
-    if (!endpoint || !region || !accessKeyId || !secretAccessKey || !bucket || !supabaseUrl) {
+    if (
+      !endpoint ||
+      !region ||
+      !accessKeyId ||
+      !secretAccessKey ||
+      !bucket ||
+      !supabaseUrl
+    ) {
       throw new Error(
         'Missing SUPABASE_* env vars (SUPABASE_URL, SUPABASE_S3_ENDPOINT/REGION/ACCESS_KEY_ID/SECRET_ACCESS_KEY/BUCKET) — storage features are unavailable until these are set.',
       );
@@ -50,10 +61,14 @@ export class StorageService {
 
   /**
    * Stable public URL for a stored key — the bucket is public, so this is
-   * a plain URL construction, not a signed/expiring one.
+   * a plain URL construction, not a signed/expiring one. `bucket` defaults
+   * to the env-configured one (announcement_attachments today) so every
+   * existing caller (resumes, announcements, LMS) is unaffected; pass an
+   * explicit bucket name (e.g. "students_photos") to target a different
+   * bucket without needing a whole second StorageService instance.
    */
-  getPublicUrl(key: string): string {
-    return `${this.supabaseUrl}/storage/v1/object/public/${this.bucket}/${key}`;
+  getPublicUrl(key: string, bucket: string = this.bucket): string {
+    return `${this.supabaseUrl}/storage/v1/object/public/${bucket}/${key}`;
   }
 
   /**
@@ -66,6 +81,7 @@ export class StorageService {
     originalName: string,
     buffer: Buffer,
     contentType: string,
+    bucket: string = this.bucket,
   ): Promise<{ key: string }> {
     const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const key = `${folder}/${randomUUID()}-${safeName}`;
@@ -73,7 +89,7 @@ export class StorageService {
     try {
       await this.client.send(
         new PutObjectCommand({
-          Bucket: this.bucket,
+          Bucket: bucket,
           Key: key,
           Body: buffer,
           ContentType: contentType,
@@ -81,20 +97,27 @@ export class StorageService {
       );
       return { key };
     } catch (err) {
-      this.logger.error(`Failed to upload object key=${key}`, err);
+      this.logger.error(
+        `Failed to upload object key=${key} to bucket=${bucket}`,
+        err,
+      );
       throw new InternalServerErrorException({
-        message: 'Something went wrong while uploading the file. Please try again.',
+        message:
+          'Something went wrong while uploading the file. Please try again.',
         errorCode: 'STORAGE_UPLOAD_FAILED',
       });
     }
   }
 
   /** Fresh signed GET URL for a stored key — expires after SIGNED_URL_TTL_SECONDS. */
-  async getSignedDownloadUrl(key: string): Promise<string> {
+  async getSignedDownloadUrl(
+    key: string,
+    bucket: string = this.bucket,
+  ): Promise<string> {
     try {
       return await getSignedUrl(
         this.client,
-        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
         { expiresIn: SIGNED_URL_TTL_SECONDS },
       );
     } catch (err) {
@@ -106,13 +129,16 @@ export class StorageService {
     }
   }
 
-  async delete(key: string): Promise<void> {
+  async delete(key: string, bucket: string = this.bucket): Promise<void> {
     try {
       await this.client.send(
-        new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+        new DeleteObjectCommand({ Bucket: bucket, Key: key }),
       );
     } catch (err) {
-      this.logger.error(`Failed to delete object key=${key}`, err);
+      this.logger.error(
+        `Failed to delete object key=${key} from bucket=${bucket}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'STORAGE_DELETE_FAILED',

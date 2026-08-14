@@ -82,18 +82,31 @@ export class FacultyFilesService {
       orderBy: { uploaded_at: 'desc' },
     });
 
+    // A signed URL can fail for a row whose underlying object is missing
+    // from storage (e.g. seeded/test rows with no real upload behind them).
+    // That one row's URL failing shouldn't 500 the whole list and hide every
+    // other — genuinely-uploaded — document for this faculty; `url: null`
+    // lets the row still show up with its metadata intact.
     return Promise.all(
-      rows.map(async (row) => ({
-        id: row.id,
-        document_type: row.document_type,
-        file_name: row.file_name,
-        uploaded_at: row.uploaded_at,
-        url: await this.storage.getSignedUrl(
-          DOCUMENT_BUCKET,
-          row.file_url,
-          DOCUMENT_SIGNED_URL_TTL_SECONDS,
-        ),
-      })),
+      rows.map(async (row) => {
+        let url: string | null;
+        try {
+          url = await this.storage.getSignedUrl(
+            DOCUMENT_BUCKET,
+            row.file_url,
+            DOCUMENT_SIGNED_URL_TTL_SECONDS,
+          );
+        } catch {
+          url = null;
+        }
+        return {
+          id: row.id,
+          document_type: row.document_type,
+          file_name: row.file_name,
+          uploaded_at: row.uploaded_at,
+          url,
+        };
+      }),
     );
   }
 

@@ -9,10 +9,13 @@ import {
   Put,
   Query,
   Res,
+  UploadedFiles,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { renderFeeReceiptPdf } from './receipt-pdf.util';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -30,10 +33,14 @@ import { CreateOdRequestDto } from './dto/create-od-request.dto';
 import { GetOdRequestsDto } from './dto/get-od-requests.dto';
 import { CreateHostelOutingDto } from './dto/create-hostel-outing.dto';
 import { GetHostelOutingsDto } from './dto/get-hostel-outings.dto';
+import { CreateCampusOutingDto } from './dto/create-campus-outing.dto';
+import { GetCampusOutingsDto } from './dto/get-campus-outings.dto';
 import { CreateBonafideRequestDto } from './dto/create-bonafide-request.dto';
 import { GetBonafideRequestsDto } from './dto/get-bonafide-requests.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { GetProjectsDto } from './dto/get-projects.dto';
+import { CreateMyHostelComplaintDto } from './dto/create-my-hostel-complaint.dto';
+import { CreateMyMessFeedbackDto } from './dto/create-my-mess-feedback.dto';
 import { MeProfileService } from './me-profile.service';
 import { MeAttendanceService } from './me-attendance.service';
 import { MeExamResultsService } from './me-exam-results.service';
@@ -43,7 +50,10 @@ import { MeOdTeamsService } from './me-od-teams.service';
 import { MeOdTeamsListService } from './me-od-teams-list.service';
 import { MeOdRequestsService } from './me-od-requests.service';
 import { MeOdRequestsListService } from './me-od-requests-list.service';
+import { MeOdAttachmentsService } from './me-od-attachments.service';
+import { UploadOdAttachmentDto } from './dto/upload-od-attachment.dto';
 import { MeHostelOutingsService } from './me-hostel-outings.service';
+import { MeCampusOutingsService } from './me-campus-outings.service';
 import { MeBonafideRequestsService } from './me-bonafide-requests.service';
 import { MeProjectsService } from './me-projects.service';
 import { MeFacultyDirectoryService } from './me-faculty-directory.service';
@@ -53,8 +63,8 @@ import { MeHostelRoomService } from './me-hostel-room.service';
 import { MeHostelComplaintsService } from './me-hostel-complaints.service';
 import { MeMessFeedbackService } from './me-mess-feedback.service';
 import { MeAcademicCalendarService } from './me-academic-calendar.service';
-import { CreateMyHostelComplaintDto } from './dto/create-my-hostel-complaint.dto';
-import { CreateMyMessFeedbackDto } from './dto/create-my-mess-feedback.dto';
+import { MeAcademicClearanceService } from './me-academic-clearance.service';
+import { GetAcademicClearanceDto } from './dto/get-academic-clearance.dto';
 
 @Controller('me')
 export class MeController {
@@ -68,7 +78,9 @@ export class MeController {
     private readonly meOdTeamsListService: MeOdTeamsListService,
     private readonly meOdRequestsService: MeOdRequestsService,
     private readonly meOdRequestsListService: MeOdRequestsListService,
+    private readonly meOdAttachmentsService: MeOdAttachmentsService,
     private readonly meHostelOutingsService: MeHostelOutingsService,
+    private readonly meCampusOutingsService: MeCampusOutingsService,
     private readonly meBonafideRequestsService: MeBonafideRequestsService,
     private readonly meProjectsService: MeProjectsService,
     private readonly meFacultyDirectoryService: MeFacultyDirectoryService,
@@ -78,6 +90,7 @@ export class MeController {
     private readonly meHostelComplaintsService: MeHostelComplaintsService,
     private readonly meMessFeedbackService: MeMessFeedbackService,
     private readonly meAcademicCalendarService: MeAcademicCalendarService,
+    private readonly meAcademicClearanceService: MeAcademicClearanceService,
   ) {}
 
   /**
@@ -184,10 +197,16 @@ export class MeController {
   /**
    * POST /api/v1/me/leaves
    *
-   * Self-scoped: student_id resolved from the JWT. Always starts the
-   * two-stage approval chain at status='pending', both approval columns
-   * null. Does not check for an assigned mentor or overlapping requests —
-   * both explicitly out of scope per todo.md/7-POST-me-leaves.md.
+   * Self-scoped: student_id resolved from the JWT. Always starts at
+   * status='pending', every approval column null. Does not check for an
+   * assigned mentor or overlapping requests — both explicitly out of scope
+   * per todo.md/7-POST-me-leaves.md.
+   *
+   * Backs BOTH the academic Leave tab and the Hostel tab's own Leave form —
+   * `routed_to_warden: true` (set only by the Hostel tab) skips Faculty/HoD
+   * entirely and is decided by the Warden alone, via the hostel/leave-
+   * requests module; everything else about creation is identical. See
+   * prisma/README.md for the schema rationale.
    *
    * Error responses:
    *  400 VALIDATION_ERROR    – missing/malformed from_date/to_date
@@ -195,6 +214,8 @@ export class MeController {
    *  403 FORBIDDEN           – authenticated but not a student
    *  404 STUDENT_NOT_FOUND   – authenticated user has no linked student record
    *  422 INVALID_DATE_RANGE  – from_date in the past, or from_date > to_date
+   *  422 NOT_A_HOSTELLER     – routed_to_warden=true but the caller has no
+   *                            student_hostel_mapping row
    *  500 INTERNAL_ERROR      – unexpected server failure
    */
   @Post('leaves')
@@ -205,11 +226,13 @@ export class MeController {
   }
 
   /**
-   * GET /api/v1/me/leaves?status=&page=&page_size=
+   * GET /api/v1/me/leaves?status=&routed_to_warden=&page=&page_size=
    *
    * Self-scoped: student_id resolved from the JWT. Lists the caller's own
    * leave requests, most-recent-first, with resolved approver display
-   * strings for the mentor-faculty and HoD stages.
+   * strings for the mentor-faculty/HoD/Warden stages. Returns both academic
+   * and Hostel-tab leaves mixed together unless `routed_to_warden` narrows
+   * to one or the other.
    *
    * Error responses:
    *  400 VALIDATION_ERROR   – status isn't a real enum value
@@ -274,26 +297,25 @@ export class MeController {
    * Self-scoped: created_by_student_id resolved from the JWT. Auto-joins
    * the creator as the team's first od_team_members row (see
    * MeOdTeamsService for the rationale) and generates a collision-checked
-   * unique_code server-side. Request body is empty per
-   * todo.md/9-POST-me-od-teams.md — CreateOdTeamDto has no properties so
-   * the global whitelist rejects any attempt to inject
-   * created_by_student_id/unique_code/is_locked.
+   * unique_code server-side. The creator now supplies the full event brief
+   * (team_name/reason/venue/dates/times/faculty_guide_id) up front — these
+   * are stored on od_teams itself so joining members see them immediately,
+   * without locking the team (only the later POST .../requests does that).
    *
    * Error responses:
-   *  401 UNAUTHORIZED       – missing/invalid JWT
-   *  403 FORBIDDEN          – authenticated but not a student
-   *  404 STUDENT_NOT_FOUND  – authenticated user has no linked student record
-   *  500 INTERNAL_ERROR     – unexpected server failure
+   *  400 VALIDATION_ERROR    – missing/malformed fields
+   *  401 UNAUTHORIZED        – missing/invalid JWT
+   *  403 FORBIDDEN           – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND   – authenticated user has no linked student record
+   *  404 FACULTY_NOT_FOUND   – faculty_guide_id doesn't reference a real faculty row
+   *  422 INVALID_DATE_RANGE  – from_date in the past, or from_date > to_date
+   *  500 INTERNAL_ERROR      – unexpected server failure
    */
   @Post('od-teams')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.STUDENT)
-  createOdTeam(
-    @CurrentUser() user: JwtPayload,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- CreateOdTeamDto has no properties; binding it here is what makes the global whitelist/forbidNonWhitelisted pipe reject any smuggled created_by_student_id/unique_code/is_locked in the body
-    @Body() dto: CreateOdTeamDto,
-  ) {
-    return this.meOdTeamsService.createOdTeam(user.sub);
+  createOdTeam(@CurrentUser() user: JwtPayload, @Body() dto: CreateOdTeamDto) {
+    return this.meOdTeamsService.createOdTeam(user.sub, dto);
   }
 
   /**
@@ -390,10 +412,10 @@ export class MeController {
   /**
    * GET /api/v1/me/od-requests?page=&page_size=
    *
-   * Self-scoped: lists every od_request for a team the caller is (or was)
-   * a member of, most-recent-first — the History tab's data source. See
-   * MeOdRequestsListService for why this stays lighter than the
-   * per-request GET (approval counts, not every teammate's name).
+   * Self-scoped: lists every OD request across every team the caller
+   * belongs to, most-recently-created first. See MeOdRequestsListService
+   * for the overall_status precedence decision (shared with the
+   * single-request GET below).
    *
    * Error responses:
    *  400 VALIDATION_ERROR   – page/page_size out of range
@@ -437,6 +459,38 @@ export class MeController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.meOdRequestsService.getOdRequestStatus(user.sub, id);
+  }
+
+  /**
+   * POST /api/v1/me/od-requests/:id/attachments
+   *
+   * multipart/form-data: an optional single "photo" file, an optional
+   * single "certificate" file, plus optional "latitude"/"longitude" text
+   * fields — the IQAC admin portal's geo-tagged photo + certificate fields,
+   * which had no submission path at all before this. Any member of the
+   * request's team may upload (not creator-only — see
+   * MeOdAttachmentsService.upload).
+   */
+  @Post('od-requests/:id/attachments')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'photo', maxCount: 1 },
+      { name: 'certificate', maxCount: 1 },
+    ]),
+  )
+  uploadOdAttachments(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UploadOdAttachmentDto,
+    @UploadedFiles()
+    files: {
+      photo?: Array<Express.Multer.File>;
+      certificate?: Array<Express.Multer.File>;
+    },
+  ) {
+    return this.meOdAttachmentsService.upload(id, user.sub, dto, files ?? {});
   }
 
   /**
@@ -489,6 +543,57 @@ export class MeController {
     @Query() dto: GetHostelOutingsDto,
   ) {
     return this.meHostelOutingsService.getMyHostelOutings(user.sub, dto);
+  }
+
+  /**
+   * POST /api/v1/me/campus-outings
+   *
+   * The "In / out" tab's campus gate pass — open to every student (day
+   * scholar or hosteller), unlike hostel-outings above. Routes to the
+   * Faculty mentor ("Advisor") then the HoD via the new
+   * campus-outing-requests module, not the Warden. Self-scoped: student_id
+   * resolved from the JWT.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR   – missing/malformed from_date/to_date/start_time
+   *  401 UNAUTHORIZED       – missing/invalid JWT
+   *  403 FORBIDDEN          – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND  – authenticated user has no linked student record
+   *  422 INVALID_DATE_RANGE – from_date in the past, from_date > to_date, or
+   *                           (same-day outing) return_time < start_time
+   *  500 INTERNAL_ERROR     – unexpected server failure
+   */
+  @Post('campus-outings')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  createCampusOuting(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateCampusOutingDto,
+  ) {
+    return this.meCampusOutingsService.createCampusOuting(user.sub, dto);
+  }
+
+  /**
+   * GET /api/v1/me/campus-outings?status=&page=&page_size=
+   *
+   * Self-scoped: student_id resolved from the JWT. Own gate-pass history,
+   * with resolved approver display strings for the Advisor/HoD stages.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR   – status isn't a real enum value
+   *  401 UNAUTHORIZED       – missing/invalid JWT
+   *  403 FORBIDDEN          – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND  – authenticated user has no linked student record
+   *  500 INTERNAL_ERROR     – unexpected server failure
+   */
+  @Get('campus-outings')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  getCampusOutings(
+    @CurrentUser() user: JwtPayload,
+    @Query() dto: GetCampusOutingsDto,
+  ) {
+    return this.meCampusOutingsService.getMyCampusOutings(user.sub, dto);
   }
 
   /**
@@ -636,7 +741,10 @@ export class MeController {
     @CurrentUser() user: JwtPayload,
     @Res() res: Response,
   ) {
-    const receipt = await this.meFeesService.getReceiptData(user.sub, paymentId);
+    const receipt = await this.meFeesService.getReceiptData(
+      user.sub,
+      paymentId,
+    );
     const buffer = await renderFeeReceiptPdf(receipt);
     res.set({
       'Content-Type': 'application/pdf',
@@ -752,5 +860,31 @@ export class MeController {
   @Roles(ROLES.STUDENT)
   getAcademicCalendar(@CurrentUser() user: JwtPayload) {
     return this.meAcademicCalendarService.getMyAcademicCalendar(user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/academic-clearance?semester=<n>
+   *
+   * Self-scoped: every subject the student's class has for the given (or
+   * current) semester, each with its real assignments + this student's own
+   * submission status, plus attendance aggregated over that semester's
+   * date range. Omit `semester` to default to the class's current semester.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED      – missing/invalid JWT
+   *  403 FORBIDDEN         – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND – authenticated user has no linked student record
+   */
+  @Get('academic-clearance')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  getAcademicClearance(
+    @Query() query: GetAcademicClearanceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.meAcademicClearanceService.getMyAcademicClearance(
+      user.sub,
+      query,
+    );
   }
 }
