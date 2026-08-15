@@ -493,6 +493,9 @@ export class AnnouncementsService {
       case ROLES.PRINCIPAL:
         return { role: ROLES.PRINCIPAL, userId: user.sub, roleId: user.roleId };
 
+      case ROLES.PLACEMENT:
+        return { role: ROLES.PLACEMENT, userId: user.sub, roleId: user.roleId };
+
       case ROLES.NON_TEACHING_STAFF:
         return { role: ROLES.NON_TEACHING_STAFF, userId: user.sub };
 
@@ -581,6 +584,25 @@ export class AnnouncementsService {
           ],
         };
 
+      // Placement Cell has no class/department scope of its own (it targets
+      // students across every department for drives, not one class) —
+      // visibility is its own posts, Admin's, Principal's, plus anything
+      // explicitly targeted at the Placement role via announcement_role_mapping
+      // (the reference design's "Placement cell staff" audience option).
+      case ROLES.PLACEMENT:
+        return {
+          OR: [
+            { posted_by_user_id: context.userId },
+            { users: { roles: { name: ROLES.ADMIN } } },
+            { users: { roles: { name: ROLES.PRINCIPAL } } },
+            {
+              announcement_role_mapping: {
+                some: { role_id: context.roleId ?? -1 },
+              },
+            },
+          ],
+        };
+
       // Non-teaching staff have no class/department scope either (3 real
       // accounts hold this role today) and previously fell through to
       // `default` — seeing nothing, ever, regardless of what was posted.
@@ -640,7 +662,14 @@ export class AnnouncementsService {
       return;
     }
 
-    if (context.role === ROLES.ADMIN || context.role === ROLES.PRINCIPAL) {
+    // Placement Cell reaches students across every department for drives —
+    // same unrestricted class selection as Admin/Principal, not scoped to
+    // one department the way HOD/Faculty are.
+    if (
+      context.role === ROLES.ADMIN ||
+      context.role === ROLES.PRINCIPAL ||
+      context.role === ROLES.PLACEMENT
+    ) {
       return;
     }
 

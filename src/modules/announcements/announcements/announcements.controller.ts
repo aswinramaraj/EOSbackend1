@@ -91,7 +91,13 @@ export class AnnouncementsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.PRINCIPAL)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PRINCIPAL,
+    ROLES.PLACEMENT,
+  )
   create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     return this.announcementsService.create(dto, user);
   }
@@ -109,7 +115,13 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
    */
   @Post(':id/attachment')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.PRINCIPAL)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PRINCIPAL,
+    ROLES.PLACEMENT,
+  )
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }),
   )
@@ -167,7 +179,13 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Put(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.PRINCIPAL)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PRINCIPAL,
+    ROLES.PLACEMENT,
+  )
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -185,7 +203,13 @@ export class AnnouncementsController {
    * Error responses: see PUT /api/v1/announcements/:id
    */
   @Patch(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.PRINCIPAL)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PRINCIPAL,
+    ROLES.PLACEMENT,
+  )
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -204,7 +228,13 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Delete(':id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.PRINCIPAL)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PRINCIPAL,
+    ROLES.PLACEMENT,
+  )
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

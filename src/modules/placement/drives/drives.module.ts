@@ -10,5 +10,6 @@ import { MeDrivesController } from './me-drives.controller';
   imports: [PrismaModule, CompaniesModule],
   controllers: [DrivesController, StudentDrivesController, MeDrivesController],
   providers: [DrivesService],
+  exports: [DrivesService],
 })
 export class DrivesModule {}

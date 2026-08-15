@@ -96,6 +96,7 @@ import { LibraryReportsModule } from './modules/library/reports/reports.module';
 
 import { CompaniesModule } from './modules/placement/companies/companies.module';
 import { DrivesModule } from './modules/placement/drives/drives.module';
+import { InterviewsModule } from './modules/placement/interviews/interviews.module';
 import { StudentProfilesModule } from './modules/placement/student-profiles/student-profiles.module';
 
 import { GrnModule } from './modules/procurement/grn/grn.module';
@@ -251,6 +252,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
 
     CompaniesModule,
     DrivesModule,
+    InterviewsModule,
     StudentProfilesModule,
 
     GrnModule,
