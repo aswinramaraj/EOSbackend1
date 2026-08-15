@@ -16,7 +16,7 @@ const USER = { sub: 7, email: 'a@b.com', role: 'student', roleId: 5 };
 
 interface PrismaMock {
   feedback_forms: {
-    create: jest.Mock<unknown, unknown[]>;
+    create: jest.Mock;
     findMany: jest.Mock;
     findUnique: jest.Mock;
     count: jest.Mock;
@@ -38,7 +38,7 @@ interface PrismaMock {
   feedback_faculty_responses: {
     count: jest.Mock;
     findMany: jest.Mock;
-    createMany: jest.Mock<unknown, unknown[]>;
+    createMany: jest.Mock;
   };
   feedback_rating_scales: { findUnique: jest.Mock };
   classes: { findUnique: jest.Mock; findMany: jest.Mock };
@@ -55,7 +55,7 @@ describe('FeedbackService', () => {
   beforeEach(async () => {
     prisma = {
       feedback_forms: {
-        create: jest.fn<unknown, unknown[]>(),
+        create: jest.fn(),
         findMany: jest.fn(),
         findUnique: jest.fn(),
         count: jest.fn(),
@@ -77,7 +77,7 @@ describe('FeedbackService', () => {
       feedback_faculty_responses: {
         count: jest.fn(),
         findMany: jest.fn(),
-        createMany: jest.fn<unknown, unknown[]>(),
+        createMany: jest.fn(),
       },
       feedback_rating_scales: { findUnique: jest.fn() },
       classes: { findUnique: jest.fn(), findMany: jest.fn() },
@@ -439,8 +439,8 @@ describe('FeedbackService', () => {
       expect(result.respondent_count).toBe(1);
       expect(result.target_student_count).toBe(30);
       expect(result.rows).toHaveLength(1);
-      expect(result.rows[0].mapping_id).toBe(100);
-      expect(result.rows[0].questions[0]).toEqual(
+      expect(result.rows![0].mapping_id).toBe(100);
+      expect(result.rows![0].questions[0]).toEqual(
         expect.objectContaining({
           id: 1,
           response_count: 2,

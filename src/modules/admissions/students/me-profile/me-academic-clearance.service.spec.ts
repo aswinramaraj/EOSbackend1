@@ -135,8 +135,8 @@ describe('MeAcademicClearanceService', () => {
 
     const result = await service.getMyAcademicClearance(100, { semester: 5 });
 
-    const subj1 = result.subjects.find((s) => s.subject_id === 1);
-    const subj2 = result.subjects.find((s) => s.subject_id === 2);
+    const subj1 = result.subjects.find((s) => s.subject_id === 1)!;
+    const subj2 = result.subjects.find((s) => s.subject_id === 2)!;
 
     expect(subj1.assignments).toEqual([
       { id: 101, title: 'Assignment 1', sequence_no: 1, is_submitted: true },

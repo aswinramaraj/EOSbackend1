@@ -1103,6 +1103,7 @@ describe('MeOdTeamsService', () => {
       await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Workshop attendance',
       });
 
       expect(prisma.class_mentors.findFirst).toHaveBeenCalledWith({
@@ -1147,6 +1148,7 @@ describe('MeOdTeamsService', () => {
       await service.submitOdRequest(103, 61, {
         from_date: '2099-08-12',
         to_date: '2099-08-13',
+        reason: 'Workshop attendance',
       });
 
       expect(prisma.class_mentors.findFirst).not.toHaveBeenCalled();

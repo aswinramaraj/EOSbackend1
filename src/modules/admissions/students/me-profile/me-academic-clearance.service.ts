@@ -17,6 +17,27 @@ function round2(value: number): number {
  */
 const MIN_ATTENDANCE_PERCENT = 75;
 
+interface SubjectClearance {
+  subject_id: number;
+  subject_name: string;
+  subject_code: string;
+  assignments: {
+    id: number;
+    title: string | null;
+    sequence_no: number;
+    is_submitted: boolean;
+  }[];
+  all_assignments_submitted: boolean;
+  attendance_percentage: number | null;
+  attendance_cleared: boolean;
+  cleared: boolean;
+}
+
+export interface AcademicClearanceResult {
+  semester: number | null;
+  subjects: SubjectClearance[];
+}
+
 @Injectable()
 export class MeAcademicClearanceService {
   private readonly logger = new Logger(MeAcademicClearanceService.name);
@@ -39,7 +60,10 @@ export class MeAcademicClearanceService {
    * A semester with no academic_calendars row yet returns
    * attendance_percentage: null rather than a fabricated number.
    */
-  async getMyAcademicClearance(userId: number, dto: GetAcademicClearanceDto) {
+  async getMyAcademicClearance(
+    userId: number,
+    dto: GetAcademicClearanceDto,
+  ): Promise<AcademicClearanceResult> {
     const student = await this.prisma.students.findUnique({
       where: { user_id: userId },
       select: { id: true, class_id: true },
