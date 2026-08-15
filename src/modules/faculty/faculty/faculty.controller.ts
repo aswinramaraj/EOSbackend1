@@ -29,17 +29,17 @@ import { ListFacultyQueryDto } from './dto/list-faculty-query.dto';
 export class FacultyController {
   constructor(private readonly facultyService: FacultyService) {}
 
-  /** POST /api/v1/faculty — Admin only. */
+  /** POST /api/v1/faculty — Admin/HR Payroll. */
   @Post('faculty')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.HR_PAYROLL)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateFacultyDto, @CurrentUser() user: JwtPayload) {
     return this.facultyService.create(dto, user.sub);
   }
 
-  /** GET /api/v1/faculty — Admin/HoD only. Paginated list, filterable by department_id/status. */
+  /** GET /api/v1/faculty — Admin/HoD/HR Payroll. Paginated list, filterable by department_id/status. */
   @Get('faculty')
-  @Roles(ROLES.ADMIN, ROLES.HOD)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
   findAll(@Query() query: ListFacultyQueryDto) {
     return this.facultyService.findAll(query);
   }
@@ -56,16 +56,16 @@ export class FacultyController {
 
   /** PATCH /api/v1/faculty/profile — faculty self-service update of editable fields only. */
 
-  /** GET /api/v1/faculty/:id — Admin/HoD only. Excludes sensitive HR information. */
+  /** GET /api/v1/faculty/:id — Admin/HoD/HR Payroll. Excludes sensitive HR information. */
   @Get('faculty/:id')
-  @Roles(ROLES.ADMIN, ROLES.HOD)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.facultyService.findOneForAdmin(id);
   }
 
-  /** PATCH /api/v1/faculty/:id — Admin only. Distinct from the faculty's own /profile update. */
+  /** PATCH /api/v1/faculty/:id — Admin/HR Payroll. Distinct from the faculty's own /profile update. */
   @Patch('faculty/:id')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.HR_PAYROLL)
   updateByAdmin(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AdminUpdateFacultyDto,
@@ -84,9 +84,9 @@ export class FacultyController {
     return this.facultyService.removeByAdmin(id, user.sub);
   }
 
-  /** GET /api/v1/faculty/:id/activity — Admin/HoD. Most recent audit-trail entries for this faculty. */
+  /** GET /api/v1/faculty/:id/activity — Admin/HoD/HR Payroll. Most recent audit-trail entries for this faculty. */
   @Get('faculty/:id/activity')
-  @Roles(ROLES.ADMIN, ROLES.HOD)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
   listActivity(@Param('id', ParseIntPipe) id: number) {
     return this.facultyService.listActivity(id);
   }

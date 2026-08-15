@@ -41,7 +41,13 @@ export class ProfileController {
 
   /** GET /api/v1/me/my-profile */
   @Get()
-  @Roles(ROLES.STUDENT, ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.PARENT)
+  @Roles(
+    ROLES.STUDENT,
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.HR_PAYROLL,
+    ROLES.PARENT,
+  )
   getMyProfile(@CurrentUser() user: JwtPayload) {
     return this.profileService.getMyProfile(user);
   }
@@ -49,7 +55,9 @@ export class ProfileController {
   /** POST /api/v1/me/my-profile/resume */
   @Post('resume')
   @Roles(ROLES.STUDENT, ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL)
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_RESUME_BYTES } }))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_RESUME_BYTES } }),
+  )
   uploadResume(
     @UploadedFile() file: Express.Multer.File,
     @CurrentUser() user: JwtPayload,
@@ -65,7 +73,13 @@ export class ProfileController {
 
   /** POST /api/v1/me/my-profile/social-links */
   @Post('social-links')
-  @Roles(ROLES.STUDENT, ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.PARENT)
+  @Roles(
+    ROLES.STUDENT,
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.HR_PAYROLL,
+    ROLES.PARENT,
+  )
   @HttpCode(HttpStatus.CREATED)
   addSocialLink(
     @Body() dto: CreateSocialLinkDto,
@@ -76,7 +90,13 @@ export class ProfileController {
 
   /** DELETE /api/v1/me/my-profile/social-links/:id */
   @Delete('social-links/:id')
-  @Roles(ROLES.STUDENT, ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.PARENT)
+  @Roles(
+    ROLES.STUDENT,
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.HR_PAYROLL,
+    ROLES.PARENT,
+  )
   removeSocialLink(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

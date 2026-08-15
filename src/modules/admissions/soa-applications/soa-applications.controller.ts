@@ -1,23 +1,34 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
+  Put,
   Body,
   Patch,
   Param,
   Delete,
   ParseIntPipe,
+  Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { SoaApplicationsService } from './soa-applications.service';
 import { CreateSoaApplicationDto } from './dto/create-soa-application.dto';
 import { UpdateSoaApplicationDto } from './dto/update-soa-application.dto';
 import { UpdateSoaStatusDto } from './dto/update-soa-status.dto';
 import { CreatePerfectEntryDto } from './dto/create-perfect-entry.dto';
+import { ListSoaApplicationsQueryDto } from './dto/list-soa-applications-query.dto';
+import { SaveProfileDraftDto } from './dto/save-profile-draft.dto';
+import { UploadDocumentDto } from './dto/upload-document.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
+
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 @Controller('soa-applications')
 export class SoaApplicationsController {
@@ -92,26 +103,148 @@ export class SoaApplicationsController {
     return this.soaApplicationsService.perfectEntry(id, dto);
   }
 
+  /**
+   * GET /api/v1/soa-applications/:id/draft
+   * The Complete Profile wizard's saved in-progress state, or null if
+   * nothing has been saved yet.
+   *
+   * Error responses:
+   *  404 SOA_APPLICATION_NOT_FOUND
+   */
+  @Get(':id/draft')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  getDraft(@Param('id', ParseIntPipe) id: number) {
+    return this.soaApplicationsService.getDraft(id);
+  }
+
+  /**
+   * PUT /api/v1/soa-applications/:id/draft
+   * Upserts the wizard's in-progress state — called after every category
+   * save so nobody loses progress by closing the tab.
+   *
+   * Error responses:
+   *  404 SOA_APPLICATION_NOT_FOUND
+   */
+  @Put(':id/draft')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  saveDraft(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SaveProfileDraftDto,
+  ) {
+    return this.soaApplicationsService.saveDraft(id, dto);
+  }
+
+  /**
+   * POST /api/v1/soa-applications/:id/photo (multipart, field "file")
+   * Uploads only — no students row exists yet to attach photo_url to at
+   * this point in the wizard. Returns {url}; the frontend folds it into the
+   * wizard's draft state and it rides along in the perfect-entry payload.
+   */
+  @Post(':id/photo')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }),
+  )
+  uploadPhoto(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.soaApplicationsService.uploadPhoto(id, file);
+  }
+
+  /**
+   * POST /api/v1/soa-applications/:id/documents (multipart, field "file",
+   * body field certificate_type_id)
+   * Same "upload now, attach at perfect-entry" pattern as :id/photo.
+   */
+  @Post(':id/documents')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }),
+  )
+  uploadDocument(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UploadDocumentDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.soaApplicationsService.uploadDocument(
+      id,
+      dto.certificate_type_id,
+      file,
+    );
+  }
+
+  /**
+   * GET /api/v1/soa-applications
+   * The admissions pipeline: every application, filterable by status and
+   * searchable by name/email/contact, with pagination.
+   */
   @Get()
-  findAll() {
-    return this.soaApplicationsService.findAll();
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  findAll(@Query() query: ListSoaApplicationsQueryDto) {
+    return this.soaApplicationsService.findAll(query);
   }
 
+  /**
+   * GET /api/v1/soa-applications/:id
+   *
+   * Error responses:
+   *  404 SOA_APPLICATION_NOT_FOUND
+   */
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.soaApplicationsService.findOne(+id);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.soaApplicationsService.findOne(id);
   }
 
+  /**
+   * PATCH /api/v1/soa-applications/:id
+   * Corrects the draft's own fields. Locked once admission_confirmed.
+   *
+   * Error responses:
+   *  404 SOA_APPLICATION_NOT_FOUND
+   *  422 APPLICATION_NOT_EDITABLE / INVALID_CUTOFF_RANGE
+   */
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
   update(
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() updateSoaApplicationDto: UpdateSoaApplicationDto,
   ) {
-    return this.soaApplicationsService.update(+id, updateSoaApplicationDto);
+    return this.soaApplicationsService.update(id, updateSoaApplicationDto);
   }
 
+  /**
+   * DELETE /api/v1/soa-applications/:id
+   * Hard delete — restricted to untouched drafts still in 'applied' status.
+   *
+   * Error responses:
+   *  404 SOA_APPLICATION_NOT_FOUND
+   *  409 APPLICATION_NOT_DELETABLE
+   */
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.soaApplicationsService.remove(+id);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.soaApplicationsService.remove(id);
   }
 }

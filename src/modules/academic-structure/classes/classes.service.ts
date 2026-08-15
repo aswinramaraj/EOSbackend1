@@ -10,6 +10,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
 import { AssignMentorDto } from './dto/assign-mentor.dto';
+import { MentorQueryDto } from './dto/mentor-query.dto';
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -240,6 +241,33 @@ export class ClassesService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  /**
+   * GET /classes/:id/mentor — omit academic_year for the full assignment
+   * history (ordered most-recent academic_year first); pass academic_year to
+   * scope to that one year. `class_mentors` has @@unique([class_id,
+   * academic_year]), so at most one row comes back per requested year.
+   */
+  async findMentor(classId: number, query: MentorQueryDto) {
+    const classRecord = await this.prisma.classes.findUnique({
+      where: { id: classId },
+    });
+    if (!classRecord) {
+      throw new NotFoundException({
+        message: 'Class not found',
+        errorCode: 'CLASS_NOT_FOUND',
+      });
+    }
+
+    return this.prisma.class_mentors.findMany({
+      where: {
+        class_id: classId,
+        ...(query.academic_year && { academic_year: query.academic_year }),
+      },
+      select: MENTOR_SELECT,
+      orderBy: { academic_year: 'desc' },
+    });
   }
 
   async remove(id: number) {

@@ -58,7 +58,7 @@ interface StudentFeeRow {
   fee_amount: string;
   cnt: bigint;
 }
-interface BusFee {
+export interface BusFee {
   per_student: number | null;
   range: { min: number; max: number } | null;
   total_due: number;

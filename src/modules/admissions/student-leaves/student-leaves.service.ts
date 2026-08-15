@@ -137,6 +137,7 @@ export class StudentLeavesService {
       const hod = await this.resolveFacultyByUserId(user.sub);
       where = {
         status: query.status ?? { not: 'pending' },
+        routed_to_warden: false,
         students: { classes: { department_id: hod.department_id } },
       };
     } else {
@@ -154,6 +155,7 @@ export class StudentLeavesService {
 
       where = {
         status: query.status,
+        routed_to_warden: false,
         students: { class_id: { in: classIds } },
       };
     }
@@ -216,6 +218,14 @@ export class StudentLeavesService {
       });
     }
 
+    if (leave.routed_to_warden) {
+      throw new UnprocessableEntityException({
+        message:
+          'This leave is routed to the Warden and cannot be approved here',
+        errorCode: 'ROUTED_TO_WARDEN',
+      });
+    }
+
     const classId = leave.students.class_id;
     const mentorMapping =
       classId !== null
@@ -273,6 +283,14 @@ export class StudentLeavesService {
       throw new NotFoundException({
         message: 'Leave request not found',
         errorCode: 'LEAVE_REQUEST_NOT_FOUND',
+      });
+    }
+
+    if (leave.routed_to_warden) {
+      throw new UnprocessableEntityException({
+        message:
+          'This leave is routed to the Warden and cannot be approved here',
+        errorCode: 'ROUTED_TO_WARDEN',
       });
     }
 

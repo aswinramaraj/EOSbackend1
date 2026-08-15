@@ -278,6 +278,16 @@ export class FacultyMappingService {
     }
     this.assertClassInDepartment(klass, hod.department_id);
 
+    const feedbackResponseCount =
+      await this.prisma.feedback_faculty_responses.count({
+        where: { mapping_id: id },
+      });
+    if (feedbackResponseCount > 0) {
+      throw new ConflictException(
+        'Cannot delete a faculty mapping that already has student feedback responses',
+      );
+    }
+
     await this.prisma.faculty_subject_class_mapping.delete({ where: { id } });
 
     this.logger.log(`Faculty mapping deleted: id=${id}`);

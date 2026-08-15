@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import {
@@ -57,7 +61,9 @@ export class FinanceOverviewService {
    */
   async getOverview(batchName?: string): Promise<FinanceOverviewResponseDto> {
     let mappings: Awaited<ReturnType<typeof this.queryMappings>>;
-    let educationLoanDds: Awaited<ReturnType<typeof this.queryEducationLoanDds>>;
+    let educationLoanDds: Awaited<
+      ReturnType<typeof this.queryEducationLoanDds>
+    >;
     let concessions: Awaited<ReturnType<typeof this.queryConcessions>>;
     let activeFeeStructures: number;
 
@@ -66,43 +72,52 @@ export class FinanceOverviewService {
       // concession scoping below depends on this run's own mapping results —
       // still one consistent snapshot, just sequenced instead of parallel.
       ({ mappings, educationLoanDds, concessions, activeFeeStructures } =
-        await this.prisma.$transaction(async (tx) => {
-          const mappingsResult = await this.queryMappings(tx, batchName);
+        await this.prisma.$transaction(
+          async (tx) => {
+            const mappingsResult = await this.queryMappings(tx, batchName);
 
-          // education_loan_dd has no batch column of its own — scoped via
-          // the same students→batches chain, independently of the mappings
-          // above (identical filter, just its own query, since a DD isn't
-          // reachable by walking the mappings' own relations here).
-          const educationLoanDdsResult = await this.queryEducationLoanDds(
-            tx,
-            batchName,
-          );
+            // education_loan_dd has no batch column of its own — scoped via
+            // the same students→batches chain, independently of the mappings
+            // above (identical filter, just its own query, since a DD isn't
+            // reachable by walking the mappings' own relations here).
+            const educationLoanDdsResult = await this.queryEducationLoanDds(
+              tx,
+              batchName,
+            );
 
-          // fee_concessions has no student/batch column either — it's
-          // scoped via fee_structure_id, which even a single student can
-          // share with others outside the selected batch. Restricting to
-          // the fee_structure_ids actually used by this batch's own mappings
-          // is the closest correct scoping without a schema change (same
-          // known limitation already documented elsewhere: concessions are
-          // structure-scoped, not student-scoped). Omitted entirely for
-          // "All", so that case stays byte-identical to before.
-          const structureIds = batchName
-            ? [...new Set(mappingsResult.map((m) => m.fee_structure_id))]
-            : undefined;
-          const concessionsResult = await this.queryConcessions(
-            tx,
-            structureIds,
-          );
+            // fee_concessions has no student/batch column either — it's
+            // scoped via fee_structure_id, which even a single student can
+            // share with others outside the selected batch. Restricting to
+            // the fee_structure_ids actually used by this batch's own mappings
+            // is the closest correct scoping without a schema change (same
+            // known limitation already documented elsewhere: concessions are
+            // structure-scoped, not student-scoped). Omitted entirely for
+            // "All", so that case stays byte-identical to before.
+            const structureIds = batchName
+              ? [...new Set(mappingsResult.map((m) => m.fee_structure_id))]
+              : undefined;
+            const concessionsResult = await this.queryConcessions(
+              tx,
+              structureIds,
+            );
 
-          const activeFeeStructuresResult = await tx.fee_structures.count();
+            const activeFeeStructuresResult = await tx.fee_structures.count();
 
-          return {
-            mappings: mappingsResult,
-            educationLoanDds: educationLoanDdsResult,
-            concessions: concessionsResult,
-            activeFeeStructures: activeFeeStructuresResult,
-          };
-        }));
+            return {
+              mappings: mappingsResult,
+              educationLoanDds: educationLoanDdsResult,
+              concessions: concessionsResult,
+              activeFeeStructures: activeFeeStructuresResult,
+            };
+          },
+          // The 5s/2s defaults (timeout/maxWait) are too tight against the
+          // current DB link (free-tier Supabase, cold-start/network latency
+          // observed up to ~7s for a single query) — both raised so a
+          // slow-but-healthy round trip doesn't get killed mid-transaction
+          // or rejected before it even starts while waiting for a
+          // connection to free up.
+          { timeout: 20_000, maxWait: 20_000 },
+        ));
     } catch (err) {
       this.logger.error('DB error while building finance overview', err);
       throw new InternalServerErrorException({
@@ -141,13 +156,15 @@ export class FinanceOverviewService {
         demandVsCollection: this.buildDemandVsCollection(perMapping),
         monthlyCollectionTrend: this.buildMonthlyCollectionTrend(mappings),
         departmentOutstanding: this.buildDepartmentOutstanding(perMapping),
-        paymentStatusDistribution: this.buildPaymentStatusDistribution(perMapping),
+        paymentStatusDistribution:
+          this.buildPaymentStatusDistribution(perMapping),
       },
       operationalInsights: {
         recentPayments: this.buildRecentPayments(mappings),
         topOutstandingStudents: this.buildTopOutstandingStudents(perMapping),
         concessionSummary: this.buildConcessionSummary(concessions),
-        educationLoanDDSummary: this.buildEducationLoanDdSummary(educationLoanDds),
+        educationLoanDDSummary:
+          this.buildEducationLoanDdSummary(educationLoanDds),
       },
     };
   }

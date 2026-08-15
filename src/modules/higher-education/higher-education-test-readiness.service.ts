@@ -20,12 +20,12 @@ interface TestRegisterRow {
   readiness: string;
 }
 
-interface CoachingBatchRow {
+export interface CoachingBatchRow {
   batch_name: string;
   detail: string;
 }
 
-interface WatchlistRow {
+export interface WatchlistRow {
   label: string;
   count: number;
 }

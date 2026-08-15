@@ -18,12 +18,13 @@ export class MeLeavesListService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * GET /me/leaves?status=&page=&page_size=
+   * GET /me/leaves?status=&routed_to_warden=&page=&page_size=
    *
    * Self-scoped: student_id resolved from the JWT. Lists the caller's own
-   * `student_leaves`, optionally filtered by status, most-recent-first.
-   * `approved_by_faculty`/`approved_by_hod` are resolved display strings —
-   * faculty's `first_name + last_name` (a real name column) and the HOD's
+   * `student_leaves`, optionally filtered by status and/or routed_to_warden,
+   * most-recent-first. `approved_by_faculty`/`approved_by_hod`/
+   * `approved_by_warden` are resolved display strings — faculty's
+   * `first_name + last_name` (a real name column) and the HOD's/Warden's
    * `users.email` (users has no display-name column, so the spec's
    * illustrative "Dr. R. Kumar" example isn't literally reproducible; the
    * DB Operations section's own SQL selects `u.email`, which is followed
@@ -56,7 +57,7 @@ export class MeLeavesListService {
     const [total, rows] = await this.fetchLeaves(
       userId,
       student.id,
-      dto.status,
+      dto,
       page,
       pageSize,
     );
@@ -68,10 +69,15 @@ export class MeLeavesListService {
         to_date: toDateOnly(row.to_date),
         reason: row.reason,
         status: row.status,
+        also_on_hostel_leave: row.also_on_hostel_leave,
+        routed_to_warden: row.routed_to_warden,
         approved_by_faculty: row.faculty
           ? `${row.faculty.first_name} ${row.faculty.last_name}`
           : null,
         approved_by_hod: row.users?.email ?? null,
+        approved_by_warden:
+          row.users_student_leaves_approved_by_warden_user_idTousers?.email ??
+          null,
         created_at: row.created_at.toISOString(),
       })),
       page,
@@ -83,13 +89,16 @@ export class MeLeavesListService {
   private async fetchLeaves(
     userId: number,
     studentId: number,
-    status: GetLeavesDto['status'],
+    dto: GetLeavesDto,
     page: number,
     pageSize: number,
   ) {
     const where = {
       student_id: studentId,
-      ...(status !== undefined ? { status } : {}),
+      ...(dto.status !== undefined ? { status: dto.status } : {}),
+      ...(dto.routed_to_warden !== undefined
+        ? { routed_to_warden: dto.routed_to_warden }
+        : {}),
     };
 
     try {
@@ -104,8 +113,13 @@ export class MeLeavesListService {
             reason: true,
             status: true,
             created_at: true,
+            also_on_hostel_leave: true,
+            routed_to_warden: true,
             faculty: { select: { first_name: true, last_name: true } },
             users: { select: { email: true } },
+            users_student_leaves_approved_by_warden_user_idTousers: {
+              select: { email: true },
+            },
           },
           orderBy: { created_at: 'desc' },
           skip: (page - 1) * pageSize,

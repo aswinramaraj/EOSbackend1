@@ -1,11 +1,17 @@
-import { IsDateString, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsDateString,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 /**
  * POST /faculty-leaves (Faculty only).
  *
- * faculty_leaves has NO leave_type or document_url columns — schema.prisma is
- * the source of truth and neither exists. The model only stores
- * from_date/to_date/reason plus the two independent approval-status enums.
+ * `leave_type_id` is an optional FK into the `leave_types` reference table
+ * (Casual/Sick/Earned/etc. — managed directly in the database, not through
+ * this API); leaving it unset just means the request has no sub-type.
  *
  * `faculty_id` is never client-supplied, even though the spec's example body
  * includes it — the service derives it from the authenticated faculty
@@ -24,4 +30,8 @@ export class CreateFacultyLeafDto {
   @IsString()
   @MaxLength(255)
   reason?: string;
+
+  @IsOptional()
+  @IsInt()
+  leave_type_id?: number;
 }

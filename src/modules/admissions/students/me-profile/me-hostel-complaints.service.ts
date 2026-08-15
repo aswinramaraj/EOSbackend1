@@ -24,7 +24,7 @@ export class MeHostelComplaintsService {
    * raise a hostel complaint against).
    *
    * hostel_complaints itself is otherwise staff-authored
-   * (ROLES.ADMIN/GATE_WARDEN via /hostel/complaints) - this is the
+   * (ROLES.ADMIN/WARDEN via /hostel/complaints) - this is the
    * self-service counterpart the module's own DTO comment flagged as a
    * reasonable future addition.
    *
@@ -76,7 +76,10 @@ export class MeHostelComplaintsService {
         created_at: complaint.created_at.toISOString(),
       };
     } catch (err) {
-      this.logger.error(`Failed to create hostel complaint for user ${userId}`, err);
+      this.logger.error(
+        `Failed to create hostel complaint for user ${userId}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

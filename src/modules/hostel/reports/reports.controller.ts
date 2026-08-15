@@ -9,7 +9,7 @@ import {
   renderExcel,
   renderPdf,
   type ReportTable,
-} from 'src/modules/library/reports/report-export.util';
+} from 'src/common/utils/report-export.util';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';

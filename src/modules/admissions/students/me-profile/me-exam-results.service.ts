@@ -47,7 +47,13 @@ type ExamGroup = {
   title: string;
   isSemesterExam: boolean;
   ordinal: number;
-  subjects: { subject_id: number; code: string; name: string; max: number; scored: number }[];
+  subjects: {
+    subject_id: number;
+    code: string;
+    name: string;
+    max: number;
+    scored: number;
+  }[];
 };
 
 @Injectable()
@@ -129,7 +135,9 @@ export class MeExamResultsService {
       exam_id: group.exam_id,
       number: group.ordinal,
       title: group.title,
-      marks_obtained: round2(group.subjects.reduce((sum, s) => sum + s.scored, 0)),
+      marks_obtained: round2(
+        group.subjects.reduce((sum, s) => sum + s.scored, 0),
+      ),
       marks_total: round2(group.subjects.reduce((sum, s) => sum + s.max, 0)),
       subjects: group.subjects,
     });
@@ -162,14 +170,21 @@ export class MeExamResultsService {
           max_marks: true,
           exam_subject_mapping: {
             select: {
-              exams: { select: { id: true, exam_types: { select: { name: true } } } },
-              subjects: { select: { id: true, name: true, subject_code: true } },
+              exams: {
+                select: { id: true, exam_types: { select: { name: true } } },
+              },
+              subjects: {
+                select: { id: true, name: true, subject_code: true },
+              },
             },
           },
         },
       });
     } catch (err) {
-      this.logger.error(`Failed to fetch exam results for student ${studentId}`, err);
+      this.logger.error(
+        `Failed to fetch exam results for student ${studentId}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

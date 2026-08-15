@@ -8,6 +8,7 @@
 
 // Constants
 export * from './constants/roles.constant';
+export * from './constants/storage-buckets.constant';
 
 // DTOs
 export * from './dto/api-response.dto';

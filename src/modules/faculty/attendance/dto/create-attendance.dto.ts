@@ -11,26 +11,26 @@ import {
 
 /**
  * One student's status within a POST /attendance batch.
- * `status` is validated against the actual attendance_status_enum values
- * (present/absent only — schema has no od/leave, unlike workflow.md's mention of them).
+ * `status` is validated against the actual attendance_status_enum values:
+ * present, absent, on_duty.
  */
 export class AttendanceRecordItemDto {
   @IsInt()
   student_id: number;
 
-  @IsIn(['present', 'absent'])
-  status: 'present' | 'absent';
+  @IsIn(['present', 'absent', 'on_duty'])
+  status: 'present' | 'absent' | 'on_duty';
 }
 
 /**
- * POST /attendance (Faculty only).
+ * POST /attendance (Faculty / Secretary).
  * Marks attendance for one or more students in a single class session.
  *
  * `subject_id` is optional because attendance_records.subject_id is nullable
  * in the schema. There is no `session` field anywhere in attendance_records —
  * schema is the source of truth, so it is intentionally absent here.
- * `marked_by_faculty_id` is never client-supplied — the service derives it
- * from the authenticated faculty (@CurrentUser().sub).
+ * `marked_by_faculty_id`/`marked_by_user_id` are never client-supplied — the
+ * service derives them from the authenticated caller (@CurrentUser()).
  */
 export class CreateAttendanceDto {
   @IsInt()

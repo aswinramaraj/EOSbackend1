@@ -117,13 +117,18 @@ export class ResidentsService {
    * library module's "members" list).
    */
   async findAll(dto: SearchResidentsDto) {
-    const { q, hostel_id, page = 1, page_size = 20 } = dto;
+    const { q, hostel_id, student_id, page = 1, page_size = 20 } = dto;
 
     const where: Prisma.studentsWhereInput = {
+      ...(student_id !== undefined && { id: student_id }),
       student_hostel_mapping: hostel_id
         ? { hostel_rooms: { hostel_id } }
         : { isNot: null },
     };
+
+    if (student_id) {
+      where.id = student_id;
+    }
 
     if (q) {
       where.OR = [

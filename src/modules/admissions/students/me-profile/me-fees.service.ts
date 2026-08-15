@@ -6,7 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import type { FeeReceiptData } from './receipt-pdf.util';
+import type { FeeReceiptData, FeeReceiptItem } from './receipt-pdf.util';
+import { amountInWords } from './receipt-pdf.util';
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
@@ -76,6 +77,35 @@ export class MeFeesService {
       const status: 'paid' | 'partial' | 'pending' =
         due <= 0 && total > 0 ? 'paid' : paid > 0 ? 'partial' : 'pending';
 
+      // Per-item paid/due — same two-column scope as
+      // FeePaymentService.getCategoryBreakdown() (fee-payment.service.ts):
+      // mapping.fee_payments is already scoped to this one
+      // student_fee_demand_mapping_id, so filtering those rows by
+      // fee_structure_item_id here never crosses into another student's
+      // payments against the same shared fee_structure_items row.
+      const items = mapping.fee_structures.fee_structure_items.map((item) => {
+        const itemTotal = Number(item.amount);
+        const itemPaid = mapping.fee_payments
+          .filter((payment) => payment.fee_structure_item_id === item.id)
+          .reduce((sum, payment) => sum + Number(payment.amount_paid), 0);
+        const itemDue = round2(itemTotal - itemPaid);
+        const itemStatus: 'paid' | 'partial' | 'pending' =
+          itemDue <= 0 && itemTotal > 0
+            ? 'paid'
+            : itemPaid > 0
+              ? 'partial'
+              : 'pending';
+
+        return {
+          id: item.id,
+          label: item.demand_categories?.name ?? 'General',
+          total: itemTotal,
+          paid: round2(itemPaid),
+          due: itemDue,
+          status: itemStatus,
+        };
+      });
+
       return {
         id: mapping.id,
         fee_structure_name: mapping.fee_structures.name,
@@ -85,21 +115,32 @@ export class MeFeesService {
         paid: round2(paid),
         due,
         status,
+        items,
       };
     });
 
-    const payments = mappings.flatMap((mapping) =>
-      mapping.fee_payments.map((payment) => ({
+    const payments = mappings.flatMap((mapping) => {
+      const itemLabelById = new Map(
+        mapping.fee_structures.fee_structure_items.map((item) => [
+          item.id,
+          item.demand_categories?.name ?? 'General',
+        ]),
+      );
+      return mapping.fee_payments.map((payment) => ({
         id: payment.id,
         demand_id: mapping.id,
         fee_structure_name: mapping.fee_structures.name,
+        item_label:
+          payment.fee_structure_item_id !== null
+            ? (itemLabelById.get(payment.fee_structure_item_id) ?? null)
+            : null,
         amount_paid: Number(payment.amount_paid),
         payment_date: toDateOnly(payment.payment_date),
         payment_mode: payment.payment_mode,
         receipt_no: payment.receipt_no,
         is_partial: payment.is_partial,
-      })),
-    );
+      }));
+    });
 
     return { demands, payments };
   }
@@ -114,12 +155,17 @@ export class MeFeesService {
    * back to the account email when no soa_applications row exists, since a
    * receipt should always show *some* name rather than "NA".
    */
-  async getReceiptData(userId: number, paymentId: number): Promise<FeeReceiptData> {
+  async getReceiptData(
+    userId: number,
+    paymentId: number,
+  ): Promise<FeeReceiptData> {
     const student = await this.prisma.students.findUnique({
       where: { user_id: userId },
       select: {
         id: true,
         register_no: true,
+        roll_no: true,
+        classes: { select: { section: true } },
         soa_applications: { select: { first_name: true, last_name: true } },
         users: { select: { email: true } },
       },
@@ -139,12 +185,24 @@ export class MeFeesService {
         amount_paid: true,
         payment_mode: true,
         is_partial: true,
+        fee_structure_item_id: true,
         student_fee_demand_mapping: {
           select: {
             student_id: true,
             academic_year: true,
             semester: true,
-            fee_structures: { select: { name: true } },
+            fee_structures: {
+              select: {
+                name: true,
+                fee_structure_items: {
+                  select: {
+                    id: true,
+                    amount: true,
+                    demand_categories: { select: { name: true } },
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -163,20 +221,55 @@ export class MeFeesService {
     }
 
     const studentName = student.soa_applications
-      ? [student.soa_applications.first_name, student.soa_applications.last_name].filter(Boolean).join(' ')
+      ? [
+          student.soa_applications.first_name,
+          student.soa_applications.last_name,
+        ]
+          .filter(Boolean)
+          .join(' ')
       : student.users.email;
+
+    const allItems =
+      payment.student_fee_demand_mapping.fee_structures.fee_structure_items;
+    // A payment tied to one specific fee_structure_item shows just that
+    // line; a whole-demand payment (fee_structure_item_id: null) settles
+    // every item at once, so the receipt lists the demand's full breakdown
+    // — matching what a real paper receipt shows for a lump payment.
+    const paidItems =
+      payment.fee_structure_item_id !== null
+        ? allItems.filter((item) => item.id === payment.fee_structure_item_id)
+        : allItems;
+    const items: FeeReceiptItem[] = paidItems.map((item, i) => ({
+      sl: i + 1,
+      particular: item.demand_categories?.name ?? 'General',
+      amount: Number(item.amount),
+    }));
+
+    const semester = payment.student_fee_demand_mapping.semester;
 
     return {
       receipt_no: payment.receipt_no,
       payment_date: toDateOnly(payment.payment_date),
       student_name: studentName,
       register_no: student.register_no,
-      fee_structure_name: payment.student_fee_demand_mapping.fee_structures.name,
+      class_name: student.classes?.section ?? null,
+      roll_no: student.roll_no,
+      fee_structure_name:
+        payment.student_fee_demand_mapping.fee_structures.name,
       academic_year: payment.student_fee_demand_mapping.academic_year,
-      semester: payment.student_fee_demand_mapping.semester,
+      semester,
+      // Same odd/even convention already used on the frontend
+      // (lib/utils/date.ts's academicYearLabel, StudentShell.tsx:55) —
+      // odd semester numbers are the Jul-Dec term, even are Jan-May.
+      sem_period:
+        semester !== null
+          ? `${semester % 2 === 1 ? 'Odd' : 'Even'} Sem ${payment.student_fee_demand_mapping.academic_year}`
+          : payment.student_fee_demand_mapping.academic_year,
       amount_paid: Number(payment.amount_paid),
       payment_mode: payment.payment_mode,
       is_partial: payment.is_partial,
+      items,
+      amount_in_words: amountInWords(Number(payment.amount_paid)),
     };
   }
 
@@ -189,7 +282,18 @@ export class MeFeesService {
           academic_year: true,
           semester: true,
           total_amount: true,
-          fee_structures: { select: { name: true } },
+          fee_structures: {
+            select: {
+              name: true,
+              fee_structure_items: {
+                select: {
+                  id: true,
+                  amount: true,
+                  demand_categories: { select: { name: true } },
+                },
+              },
+            },
+          },
           fee_payments: {
             select: {
               id: true,
@@ -198,6 +302,7 @@ export class MeFeesService {
               payment_mode: true,
               receipt_no: true,
               is_partial: true,
+              fee_structure_item_id: true,
             },
             orderBy: { payment_date: 'desc' },
           },

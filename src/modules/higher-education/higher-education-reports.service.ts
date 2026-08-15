@@ -12,7 +12,7 @@ interface ReportRow {
   dept_code: string | null;
 }
 
-interface StandingReturnRow {
+export interface StandingReturnRow {
   title: string;
   meta: string | null;
   status: string;

@@ -103,7 +103,10 @@ export class MeExamScheduleService {
         orderBy: [{ exam_date: 'asc' }, { start_time: 'asc' }],
       });
     } catch (err) {
-      this.logger.error(`Failed to fetch exam schedule for user ${userId}`, err);
+      this.logger.error(
+        `Failed to fetch exam schedule for user ${userId}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

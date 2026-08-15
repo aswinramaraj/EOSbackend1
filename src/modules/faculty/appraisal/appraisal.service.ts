@@ -30,6 +30,7 @@ const APPRAISAL_SELECT = {
   faculty: {
     select: {
       id: true,
+      prefix: true,
       first_name: true,
       last_name: true,
       designation: true,
@@ -80,6 +81,7 @@ interface AppraisalRequestRow {
   created_at: Date;
   faculty: {
     id: number;
+    prefix: string | null;
     first_name: string;
     last_name: string;
     designation: string;
@@ -136,11 +138,14 @@ function toResponse(row: AppraisalRequestRow) {
     entries: row.appraisal_entries.map((entry) => ({
       id: entry.id,
       description: entry.description,
-      score: entry.score,
+      // Prisma's Decimal serializes to a string in JSON — convert to a
+      // number here so API consumers (the frontend types this as `number`)
+      // get a real number.
+      score: entry.score === null ? null : Number(entry.score),
       criteria: {
         id: entry.appraisal_criteria.id,
         name: entry.appraisal_criteria.criteria_name,
-        max_score: entry.appraisal_criteria.max_score,
+        max_score: Number(entry.appraisal_criteria.max_score),
         division: entry.appraisal_criteria.appraisal_divisions,
       },
     })),
@@ -251,7 +256,9 @@ export class AppraisalService {
     // An HoD's own self-submission skips the HoD stage entirely (see this
     // method's own doc comment) and has no one department-level to notify.
     if (!isHodSelfSubmission) {
-      const hodUserId = await this.resolveDepartmentHodUserId(faculty.department_id);
+      const hodUserId = await this.resolveDepartmentHodUserId(
+        faculty.department_id,
+      );
       if (hodUserId) {
         await this.notifyAppraisal(hodUserId, {
           title: 'New appraisal request to review',
@@ -299,7 +306,11 @@ export class AppraisalService {
 
     const divisionsById = new Map<
       number,
-      { id: number; name: string; criteria: Array<{ id: number; name: string; max_score: unknown }> }
+      {
+        id: number;
+        name: string;
+        criteria: Array<{ id: number; name: string; max_score: unknown }>;
+      }
     >();
     for (const c of criteria) {
       const division = divisionsById.get(c.appraisal_divisions.id) ?? {
@@ -307,11 +318,18 @@ export class AppraisalService {
         name: c.appraisal_divisions.name,
         criteria: [],
       };
-      division.criteria.push({ id: c.id, name: c.criteria_name, max_score: c.max_score });
+      division.criteria.push({
+        id: c.id,
+        name: c.criteria_name,
+        max_score: c.max_score,
+      });
       divisionsById.set(division.id, division);
     }
 
-    return { academic_year: academicYear, divisions: Array.from(divisionsById.values()) };
+    return {
+      academic_year: academicYear,
+      divisions: Array.from(divisionsById.values()),
+    };
   }
 
   /**
@@ -421,10 +439,22 @@ export class AppraisalService {
           'You may only review appraisal requests from your own department',
         );
       }
-      return this.applyHodReview(id, existing.status, existing.faculty_id, dto, currentUser.sub);
+      return this.applyHodReview(
+        id,
+        existing.status,
+        existing.faculty_id,
+        dto,
+        currentUser.sub,
+      );
     }
 
-    return this.applyHrAction(id, existing.status, existing.faculty_id, dto, currentUser.sub);
+    return this.applyHrAction(
+      id,
+      existing.status,
+      existing.faculty_id,
+      dto,
+      currentUser.sub,
+    );
   }
 
   /** DELETE /appraisal/:id (Faculty only — own request, only while still 'submitted'). */
@@ -499,8 +529,16 @@ export class AppraisalService {
     const uploaded = await Promise.all(
       files.map(async (file) => {
         const path = `${requestId}/${divisionId}/${Date.now()}-${file.originalname}`;
-        const { url } = await this.storage.upload(file.buffer, path, file.mimetype);
-        return { file_url: url, file_name: file.originalname, storage_path: path };
+        const { url } = await this.storage.upload(
+          file.buffer,
+          path,
+          file.mimetype,
+        );
+        return {
+          file_url: url,
+          file_name: file.originalname,
+          storage_path: path,
+        };
       }),
     );
 
@@ -562,7 +600,9 @@ export class AppraisalService {
     });
     await this.storage.remove(attachment.storage_path);
 
-    this.logger.log(`Attachment ${attachmentId} removed from appraisal request ${requestId}`);
+    this.logger.log(
+      `Attachment ${attachmentId} removed from appraisal request ${requestId}`,
+    );
     return { id: attachmentId, deleted: true };
   }
 
@@ -654,7 +694,11 @@ export class AppraisalService {
         },
         select: APPRAISAL_SELECT,
       });
-      await this.notifyFacultyOfAppraisalStatus(facultyId, id, 'management_approved');
+      await this.notifyFacultyOfAppraisalStatus(
+        facultyId,
+        id,
+        'management_approved',
+      );
       return toResponse(request);
     }
 
@@ -763,12 +807,17 @@ export class AppraisalService {
         related_entity_id: requestId,
       });
     } catch (err) {
-      this.logger.error(`Failed to notify faculty of appraisal status for request ${requestId}`, err);
+      this.logger.error(
+        `Failed to notify faculty of appraisal status for request ${requestId}`,
+        err,
+      );
     }
   }
 
   /** HR Payroll is a global role with no per-request assignee - broadcast, same reasoning as revaluation's COE notify. */
-  private async notifyRoleUsersOfPendingAppraisal(requestId: number): Promise<void> {
+  private async notifyRoleUsersOfPendingAppraisal(
+    requestId: number,
+  ): Promise<void> {
     try {
       const hrUsers = await this.prisma.users.findMany({
         where: { roles: { name: ROLES.HR_PAYROLL } },
@@ -785,7 +834,10 @@ export class AppraisalService {
         });
       }
     } catch (err) {
-      this.logger.error(`Failed to notify HR Payroll of appraisal request ${requestId}`, err);
+      this.logger.error(
+        `Failed to notify HR Payroll of appraisal request ${requestId}`,
+        err,
+      );
     }
   }
 
@@ -794,7 +846,10 @@ export class AppraisalService {
     opts: {
       title: string;
       message: string;
-      type: 'approval_request_pending' | 'approval_request_approved' | 'approval_request_rejected';
+      type:
+        | 'approval_request_pending'
+        | 'approval_request_approved'
+        | 'approval_request_rejected';
       related_entity_id: number;
     },
   ): Promise<void> {
@@ -808,7 +863,10 @@ export class AppraisalService {
         related_entity_id: opts.related_entity_id,
       });
     } catch (err) {
-      this.logger.error(`Failed to notify user ${userId} of appraisal request ${opts.related_entity_id}`, err);
+      this.logger.error(
+        `Failed to notify user ${userId} of appraisal request ${opts.related_entity_id}`,
+        err,
+      );
     }
   }
 
@@ -818,7 +876,9 @@ export class AppraisalService {
    * the same reason: departments' auto-generated HoD relation field name
    * is not stable across `db pull` runs.
    */
-  private async resolveDepartmentHodUserId(departmentId: number): Promise<number | null> {
+  private async resolveDepartmentHodUserId(
+    departmentId: number,
+  ): Promise<number | null> {
     const department = await this.prisma.departments.findUnique({
       where: { id: departmentId },
       select: { head_of_department_faculty_id: true },

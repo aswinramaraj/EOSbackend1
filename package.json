@@ -99,7 +99,8 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "moduleNameMapper": {
-      "^src/(.*)$": "<rootDir>/$1"
+      "^src/(.*)$": "<rootDir>/$1",
+      "^generated/(.*)$": "<rootDir>/../generated/$1"
     },
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
@@ -109,5 +110,13 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "allowScripts": {
+    "prisma@7.9.0": true,
+    "@prisma/engines@7.9.0": true,
+    "@swc/core@1.15.46": true,
+    "esbuild@0.28.1": true,
+    "@scarf/scarf": false,
+    "unrs-resolver@1.12.2": true
   }
 }

@@ -3,7 +3,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { CreateTransportNoticeDto } from './dto/create-transport-notice.dto';
 
-interface NoticeRow {
+export interface NoticeRow {
   id: number;
   tag: string;
   title: string;

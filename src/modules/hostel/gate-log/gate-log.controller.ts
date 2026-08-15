@@ -10,6 +10,7 @@ import { resolveWardenHostelId } from '../common/warden-scope.util';
 import { GateLogService } from './gate-log.service';
 import { CreateGateLogDto } from './dto/create-gate-log.dto';
 import { SearchGateLogDto } from './dto/search-gate-log.dto';
+import { LookupStudentDto } from './dto/lookup-student.dto';
 
 @Controller('hostel/gate-log')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -33,5 +34,20 @@ export class GateLogController {
     const wardenHostelId = await resolveWardenHostelId(this.prisma, user.sub);
     if (wardenHostelId != null) query.hostel_id = wardenHostelId;
     return this.gateLogService.findAll(query);
+  }
+
+  @Get('pending-exits')
+  findPendingExits() {
+    return this.gateLogService.findPendingExits();
+  }
+
+  @Get('pending-returns')
+  findPendingReturns() {
+    return this.gateLogService.findPendingReturns();
+  }
+
+  @Get('lookup')
+  lookup(@Query() query: LookupStudentDto) {
+    return this.gateLogService.lookupByRollNo(query.roll_no);
   }
 }

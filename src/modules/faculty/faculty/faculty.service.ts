@@ -235,29 +235,36 @@ export class FacultyService {
         : undefined,
     };
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.faculty.findMany({
-        where,
-        skip: query.skip,
-        take: query.limit,
-        orderBy: { id: 'asc' },
-        select: {
-          id: true,
-          first_name: true,
-          last_name: true,
-          designation: true,
-          date_of_joining: true,
-          status: true,
-          profile_url: true,
-          departments: { select: { id: true, name: true, code: true } },
-          users: { select: { email: true, phone: true } },
-        },
-      }),
-      this.prisma.faculty.count({ where }),
-    ]);
+    const [rows, total] = await this.prisma.$transaction(
+      [
+        this.prisma.faculty.findMany({
+          where,
+          skip: query.skip,
+          take: query.limit,
+          orderBy: { id: 'asc' },
+          select: {
+            id: true,
+            prefix: true,
+            first_name: true,
+            last_name: true,
+            designation: true,
+            date_of_joining: true,
+            status: true,
+            profile_url: true,
+            departments: { select: { id: true, name: true, code: true } },
+            users: { select: { email: true, phone: true } },
+          },
+        }),
+        this.prisma.faculty.count({ where }),
+      ],
+      // See finance-overview.service.ts getOverview() for why timeout/maxWait
+      // are both raised above their defaults.
+      { timeout: 20_000, maxWait: 20_000 },
+    );
 
     const data = rows.map((faculty) => ({
       id: faculty.id,
+      prefix: faculty.prefix,
       first_name: faculty.first_name,
       last_name: faculty.last_name,
       designation: faculty.designation,
@@ -282,7 +289,9 @@ export class FacultyService {
         designation: true,
         date_of_joining: true,
         status: true,
-        departments: { select: { id: true, name: true, code: true } },
+        departments: {
+          select: { id: true, name: true, code: true },
+        },
         users: { select: { email: true, phone: true } },
       },
     });
@@ -341,7 +350,9 @@ export class FacultyService {
         date_of_joining: true,
         status: true,
         created_at: true,
-        departments: { select: { id: true, name: true, code: true } },
+        departments: {
+          select: { id: true, name: true, code: true },
+        },
         users: { select: { id: true, email: true, phone: true, status: true } },
         ...EXTENDED_SELECT_FIELDS,
       },
@@ -415,7 +426,9 @@ export class FacultyService {
             designation: true,
             date_of_joining: true,
             status: true,
-            departments: { select: { id: true, name: true, code: true } },
+            departments: {
+              select: { id: true, name: true, code: true },
+            },
           },
         });
 

@@ -6,12 +6,14 @@ describe('MeLeavesService', () => {
   let service: MeLeavesService;
   let prisma: {
     students: { findUnique: jest.Mock };
+    student_hostel_mapping: { findUnique: jest.Mock };
     student_leaves: { create: jest.Mock };
   };
 
   beforeEach(async () => {
     prisma = {
       students: { findUnique: jest.fn() },
+      student_hostel_mapping: { findUnique: jest.fn() },
       student_leaves: { create: jest.fn() },
     };
 
@@ -40,6 +42,9 @@ describe('MeLeavesService', () => {
       status: 'pending',
       approved_by_faculty_id: null,
       approved_by_hod_user_id: null,
+      approved_by_warden_user_id: null,
+      also_on_hostel_leave: false,
+      routed_to_warden: false,
     });
 
     const result = await service.createLeave(7, {
@@ -52,6 +57,7 @@ describe('MeLeavesService', () => {
       where: { user_id: 7 },
       select: { id: true },
     });
+    expect(prisma.student_hostel_mapping.findUnique).not.toHaveBeenCalled();
     const [createArgs] = prisma.student_leaves.create.mock.calls[0] as [
       { data: Record<string, unknown> },
     ];
@@ -59,6 +65,8 @@ describe('MeLeavesService', () => {
       student_id: 3310,
       reason: 'Family function',
       status: 'pending',
+      also_on_hostel_leave: false,
+      routed_to_warden: false,
     });
     expect(result).toEqual({
       id: 214,
@@ -69,7 +77,62 @@ describe('MeLeavesService', () => {
       status: 'pending',
       approved_by_faculty_id: null,
       approved_by_hod_user_id: null,
+      approved_by_warden_user_id: null,
+      also_on_hostel_leave: false,
+      routed_to_warden: false,
     });
+  });
+
+  it('routed_to_warden=true requires a student_hostel_mapping row (422 NOT_A_HOSTELLER otherwise)', async () => {
+    prisma.students.findUnique.mockResolvedValue({ id: 3310 });
+    prisma.student_hostel_mapping.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.createLeave(7, {
+        from_date: '2099-08-01',
+        to_date: '2099-08-03',
+        routed_to_warden: true,
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      response: { errorCode: 'NOT_A_HOSTELLER' },
+    });
+    expect(prisma.student_leaves.create).not.toHaveBeenCalled();
+  });
+
+  it('routed_to_warden=true persists on the row when the caller is a hosteller', async () => {
+    prisma.students.findUnique.mockResolvedValue({ id: 3310 });
+    prisma.student_hostel_mapping.findUnique.mockResolvedValue({
+      student_id: 3310,
+    });
+    prisma.student_leaves.create.mockResolvedValue({
+      id: 215,
+      student_id: 3310,
+      from_date: new Date('2099-08-01T00:00:00.000Z'),
+      to_date: new Date('2099-08-03T00:00:00.000Z'),
+      reason: null,
+      status: 'pending',
+      approved_by_faculty_id: null,
+      approved_by_hod_user_id: null,
+      approved_by_warden_user_id: null,
+      also_on_hostel_leave: false,
+      routed_to_warden: true,
+    });
+
+    const result = await service.createLeave(7, {
+      from_date: '2099-08-01',
+      to_date: '2099-08-03',
+      routed_to_warden: true,
+    });
+
+    expect(prisma.student_hostel_mapping.findUnique).toHaveBeenCalledWith({
+      where: { student_id: 3310 },
+    });
+    const [createArgs] = prisma.student_leaves.create.mock.calls[0] as [
+      { data: Record<string, unknown> },
+    ];
+    expect(createArgs.data).toMatchObject({ routed_to_warden: true });
+    expect(result.routed_to_warden).toBe(true);
   });
 
   it('throws 422 INVALID_DATE_RANGE when from_date is in the past', async () => {

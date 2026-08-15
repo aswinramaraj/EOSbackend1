@@ -28,7 +28,7 @@ interface BusRow {
   status: string | null;
 }
 
-interface RouteFee {
+export interface RouteFee {
   /** A single figure only when every enrolled student on this route pays the same amount. */
   per_student: number | null;
   /** Set instead of per_student when enrolled students pay different amounts (different boarding stages). */
