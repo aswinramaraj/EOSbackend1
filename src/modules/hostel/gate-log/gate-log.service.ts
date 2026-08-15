@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
+import { formatStudentName } from '../common/student-name.util';
 import { CreateGateLogDto } from './dto/create-gate-log.dto';
 import { SearchGateLogDto } from './dto/search-gate-log.dto';
 
@@ -17,6 +18,7 @@ const LOG_INCLUDE = {
       student_id_no: true,
       roll_no: true,
       soa_applications: { select: { first_name: true, last_name: true } },
+      users: { select: { email: true } },
       student_hostel_mapping: {
         select: {
           hostel_rooms: {
@@ -38,9 +40,11 @@ type LogWithRelations = Prisma.hostel_in_out_ledgerGetPayload<{
 
 function toLogResponse(entry: LogWithRelations) {
   const student = entry.students;
-  const name = student.soa_applications
-    ? `${student.soa_applications.first_name} ${student.soa_applications.last_name ?? ''}`.trim()
-    : `Student ${student.student_id_no}`;
+  const name = formatStudentName(
+    student.soa_applications?.first_name,
+    student.soa_applications?.last_name,
+    student.users.email,
+  );
   const room = student.student_hostel_mapping?.hostel_rooms;
 
   return {

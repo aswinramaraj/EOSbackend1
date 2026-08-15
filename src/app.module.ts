@@ -43,6 +43,8 @@ import { PrincipalMedicalModule } from './modules/principal-medical/principal-me
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { TransportModule } from './modules/transport/transport.module';
+import { HigherEducationModule } from './modules/higher-education/higher-education.module';
+import { MedicalCentreModule } from './modules/medical-centre/medical-centre.module';
 import { LmsModule } from './modules/lms/lms.module';
 
 import { ExamsModule } from './modules/exams/exams/exams.module';
@@ -148,6 +150,8 @@ import { MessFeedbackModule } from './modules/hostel/mess-feedback/mess-feedback
 import { HostelFeesModule } from './modules/hostel/fees/fees.module';
 import { HostelSettingsModule } from './modules/hostel/settings/settings.module';
 import { HostelReportsModule } from './modules/hostel/reports/reports.module';
+import { HostelAnnouncementsModule } from './modules/hostel/announcements/hostel-announcements.module';
+import { NightAttendanceModule } from './modules/hostel/night-attendance/night-attendance.module';
 
 @Module({
   imports: [
@@ -194,6 +198,8 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     ProfileModule,
     LmsModule,
     TransportModule,
+    HigherEducationModule,
+    MedicalCentreModule,
 
     AnnouncementsModule,
 
@@ -300,6 +306,8 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     HostelFeesModule,
     HostelSettingsModule,
     HostelReportsModule,
+    HostelAnnouncementsModule,
+    NightAttendanceModule,
   ],
 
   controllers: [AppController],

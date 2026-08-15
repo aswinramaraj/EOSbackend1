@@ -4,6 +4,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { formatStudentName } from '../common/student-name.util';
 import { SearchHostelFeesDto } from './dto/search-hostel-fees.dto';
 
 type FeeStatus = 'unpaid' | 'partially_paid' | 'paid';
@@ -46,9 +47,11 @@ export class HostelFeesService {
 
     const rows: FeeRow[] = mappings.map((mapping) => {
       const student = mapping.students;
-      const name = student.soa_applications
-        ? `${student.soa_applications.first_name} ${student.soa_applications.last_name ?? ''}`.trim()
-        : `Student ${student.student_id_no}`;
+      const name = formatStudentName(
+        student.soa_applications?.first_name,
+        student.soa_applications?.last_name,
+        student.users.email,
+      );
 
       const relevantDemands = student.student_fee_demand_mapping.filter(
         (d) => d.fee_structure_id === mapping.fee_structure_id,
@@ -105,6 +108,7 @@ export class HostelFeesService {
               soa_applications: {
                 select: { first_name: true, last_name: true },
               },
+              users: { select: { email: true } },
               student_fee_demand_mapping: {
                 select: {
                   fee_structure_id: true,

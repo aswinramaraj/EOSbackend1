@@ -14,18 +14,28 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { resolveWardenHostelId } from '../common/warden-scope.util';
 import { OutingsService } from './outings.service';
 import { SearchOutingsDto } from './dto/search-outings.dto';
 import { DecideOutingDto } from './dto/decide-outing.dto';
 
 @Controller('hostel/outings')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
 export class OutingsController {
-  constructor(private readonly outingsService: OutingsService) {}
+  constructor(
+    private readonly outingsService: OutingsService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Get()
-  findAll(@Query() query: SearchOutingsDto) {
+  async findAll(
+    @Query() query: SearchOutingsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const wardenHostelId = await resolveWardenHostelId(this.prisma, user.sub);
+    if (wardenHostelId != null) query.hostel_id = wardenHostelId;
     return this.outingsService.findAll(query);
   }
 
