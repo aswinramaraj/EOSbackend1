@@ -65,6 +65,34 @@ export class DrivesController {
     return this.drivesService.findAll(query);
   }
 
+  /** GET /drives/for-calendar — Principal only, every real drive's date for the merged academic calendar. */
+  @Get('for-calendar')
+  @Roles(ROLES.PRINCIPAL)
+  getAllDrivesForCalendar() {
+    return this.drivesService.getAllDrivesForCalendar();
+  }
+
+  /**
+   * GET /drives/department/:departmentId/upcoming — also Principal (any
+   * department, via a dropdown - not just Placement Cell/Admin oversight).
+   */
+  @Get('department/:departmentId/upcoming')
+  @Roles(ROLES.PLACEMENT, ROLES.ADMIN, ROLES.PRINCIPAL)
+  getUpcomingForDepartment(
+    @Param('departmentId', ParseIntPipe) departmentId: number,
+  ) {
+    return this.drivesService.getUpcomingForDepartment(departmentId);
+  }
+
+  /** GET /drives/department/:departmentId/history — also Principal (any department). */
+  @Get('department/:departmentId/history')
+  @Roles(ROLES.PLACEMENT, ROLES.ADMIN, ROLES.PRINCIPAL)
+  getHistoryForDepartment(
+    @Param('departmentId', ParseIntPipe) departmentId: number,
+  ) {
+    return this.drivesService.getHistoryForDepartment(departmentId);
+  }
+
   // Declared before ':id' — Nest/Express match routes in declaration order,
   // and these static paths would otherwise be swallowed by ':id'.
   @Get('placement-stats')

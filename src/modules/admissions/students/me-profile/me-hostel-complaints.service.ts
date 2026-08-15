@@ -24,7 +24,7 @@ export class MeHostelComplaintsService {
    * raise a hostel complaint against).
    *
    * hostel_complaints itself is otherwise staff-authored
-   * (ROLES.ADMIN/GATE_WARDEN via /hostel/complaints) - this is the
+   * (ROLES.ADMIN/WARDEN via /hostel/complaints) - this is the
    * self-service counterpart the module's own DTO comment flagged as a
    * reasonable future addition.
    *

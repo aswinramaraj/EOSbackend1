@@ -25,7 +25,7 @@ export class HostelsController {
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
   create(@Body() dto: CreateHostelDto) {
     return this.hostelsService.create(dto);
   }
@@ -44,14 +44,14 @@ export class HostelsController {
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateHostelDto) {
     return this.hostelsService.update(id, dto);
   }
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.hostelsService.remove(id);
   }

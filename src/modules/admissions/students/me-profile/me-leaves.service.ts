@@ -29,11 +29,18 @@ export class MeLeavesService {
    * POST /me/leaves
    *
    * Self-scoped: student_id resolved from the JWT, never accepted from the
-   * request. Always starts the two-stage approval chain at status='pending'
-   * with both approval columns null — this endpoint does not check whether
-   * a mentor is assigned yet (a soft dependency per the spec's own note),
-   * and does not check for overlapping requests (no constraint in the
-   * schema, explicitly deferred by the spec).
+   * request. Always starts at status='pending' with every approval column
+   * null — this endpoint does not check whether a mentor is assigned yet (a
+   * soft dependency per the spec's own note), and does not check for
+   * overlapping requests (no constraint in the schema, explicitly deferred
+   * by the spec).
+   *
+   * `routed_to_warden` (set only by the Hostel tab's own Leave form) skips
+   * Faculty/HoD entirely — the Warden decides it alone, via the
+   * hostel/leave-requests module. Everything else about creation is
+   * identical between the two tabs; only the downstream approval path
+   * differs, which is why this stays one endpoint/table instead of a
+   * separate one — see prisma/README.md for the schema rationale.
    *
    * Error cases:
    *  404 STUDENT_NOT_FOUND   – authenticated user has no linked student
@@ -42,6 +49,10 @@ export class MeLeavesService {
    *                            "not applicable" but it never fires for a
    *                            real, correctly-provisioned student account)
    *  422 INVALID_DATE_RANGE  – from_date in the past, or from_date > to_date
+   *  422 NOT_A_HOSTELLER     – routed_to_warden=true but the caller has no
+   *                            student_hostel_mapping row (same hosteller
+   *                            gate every other hostel-tab write in this
+   *                            module already uses)
    *  500 INTERNAL_ERROR      – unexpected DB failure
    */
   async createLeave(userId: number, dto: CreateLeaveDto) {
@@ -67,6 +78,20 @@ export class MeLeavesService {
       });
     }
 
+    if (dto.routed_to_warden) {
+      const hostelMapping = await this.prisma.student_hostel_mapping.findUnique(
+        {
+          where: { student_id: student.id },
+        },
+      );
+      if (!hostelMapping) {
+        throw new UnprocessableEntityException({
+          message: 'Only hostellers can request hostel leave',
+          errorCode: 'NOT_A_HOSTELLER',
+        });
+      }
+    }
+
     const leave = await this.insertLeave(
       userId,
       student.id,
@@ -84,6 +109,9 @@ export class MeLeavesService {
       status: leave.status,
       approved_by_faculty_id: leave.approved_by_faculty_id,
       approved_by_hod_user_id: leave.approved_by_hod_user_id,
+      approved_by_warden_user_id: leave.approved_by_warden_user_id,
+      also_on_hostel_leave: leave.also_on_hostel_leave,
+      routed_to_warden: leave.routed_to_warden,
     };
   }
 
@@ -102,6 +130,8 @@ export class MeLeavesService {
           to_date: toDate,
           reason: dto.reason,
           status: 'pending',
+          also_on_hostel_leave: dto.also_on_hostel_leave ?? false,
+          routed_to_warden: dto.routed_to_warden ?? false,
         },
       });
     } catch (err) {

@@ -5,6 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { formatTime } from './od-time.util';
+
+function toDateOnly(date: Date | null): string | null {
+  return date ? date.toISOString().slice(0, 10) : null;
+}
 
 @Injectable()
 export class MeOdTeamsListService {
@@ -58,6 +63,17 @@ export class MeOdTeamsListService {
           id: team.id,
           unique_code: team.unique_code,
           is_locked: team.is_locked,
+          team_name: team.team_name,
+          reason: team.reason,
+          venue: team.venue,
+          from_date: toDateOnly(team.from_date),
+          to_date: toDateOnly(team.to_date),
+          from_time: formatTime(team.from_time),
+          to_time: formatTime(team.to_time),
+          faculty_guide_id: team.faculty_guide_id,
+          faculty_guide_name: team.faculty
+            ? `${team.faculty.first_name} ${team.faculty.last_name ?? ''}`.trim()
+            : null,
           is_creator: team.created_by_student_id === student.id,
           member_count: team.od_team_members.length,
           members: team.od_team_members.map((member) => ({
@@ -90,6 +106,15 @@ export class MeOdTeamsListService {
               is_locked: true,
               created_by_student_id: true,
               created_at: true,
+              team_name: true,
+              reason: true,
+              venue: true,
+              from_date: true,
+              to_date: true,
+              from_time: true,
+              to_time: true,
+              faculty_guide_id: true,
+              faculty: { select: { first_name: true, last_name: true } },
               od_team_members: {
                 select: {
                   student_id: true,

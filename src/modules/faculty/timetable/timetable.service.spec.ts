@@ -10,9 +10,10 @@ import { TimetableService } from './timetable.service';
 describe('TimetableService', () => {
   let service: TimetableService;
   let prisma: {
-    faculty: { findUnique: jest.Mock };
+    faculty: { findUnique: jest.Mock; findMany: jest.Mock };
     subjects: { findUnique: jest.Mock };
     classes: { findUnique: jest.Mock };
+    departments: { findMany: jest.Mock; findUnique: jest.Mock };
     students: { findUnique: jest.Mock };
     faculty_subject_class_mapping: { findFirst: jest.Mock; findMany: jest.Mock };
     timetable_slots: {
@@ -26,15 +27,16 @@ describe('TimetableService', () => {
     };
     assignments: { count: jest.Mock };
     lms_notes: { count: jest.Mock };
-    academic_calendars: { findUnique: jest.Mock };
+    academic_calendars: { findUnique: jest.Mock; findMany: jest.Mock };
     $transaction: jest.Mock;
   };
 
   beforeEach(async () => {
     prisma = {
-      faculty: { findUnique: jest.fn() },
+      faculty: { findUnique: jest.fn(), findMany: jest.fn() },
       subjects: { findUnique: jest.fn() },
       classes: { findUnique: jest.fn() },
+      departments: { findMany: jest.fn(), findUnique: jest.fn() },
       students: { findUnique: jest.fn() },
       faculty_subject_class_mapping: { findFirst: jest.fn(), findMany: jest.fn() },
       timetable_slots: {
@@ -48,7 +50,7 @@ describe('TimetableService', () => {
       },
       assignments: { count: jest.fn() },
       lms_notes: { count: jest.fn() },
-      academic_calendars: { findUnique: jest.fn() },
+      academic_calendars: { findUnique: jest.fn(), findMany: jest.fn() },
       $transaction: jest.fn(),
     };
 
@@ -327,6 +329,248 @@ describe('TimetableService', () => {
         { id: 1, event_date: '2026-08-15', event_type: 'holiday', title: 'Independence Day', description: null },
         { id: 3, event_date: '2026-09-05', event_type: 'event', title: "Teachers' Day", description: null },
       ]);
+    });
+  });
+
+  describe('listDepartmentsWithClasses', () => {
+    it('returns departments with their classes nested', async () => {
+      prisma.departments.findMany.mockResolvedValue([
+        {
+          id: 1,
+          name: 'Computer Science and Engineering',
+          code: 'CSE',
+          classes: [{ id: 10, section: 'A', current_semester: 6 }],
+        },
+      ]);
+
+      const result = await service.listDepartmentsWithClasses();
+
+      expect(result).toEqual([
+        {
+          id: 1,
+          name: 'Computer Science and Engineering',
+          code: 'CSE',
+          classes: [{ id: 10, section: 'A', current_semester: 6 }],
+        },
+      ]);
+    });
+  });
+
+  describe('listFacultyInDepartment', () => {
+    it('throws 404 when the department does not exist', async () => {
+      prisma.departments.findUnique.mockResolvedValue(null);
+
+      await expect(service.listFacultyInDepartment(999)).rejects.toThrow(
+        'Department not found',
+      );
+    });
+
+    it('returns active faculty scoped to that department', async () => {
+      prisma.departments.findUnique.mockResolvedValue({ id: 1, name: 'CSE', code: 'CSE' });
+      prisma.faculty.findMany.mockResolvedValue([
+        { id: 2, first_name: 'Deepa', last_name: 'Kannan', designation: 'Professor' },
+      ]);
+
+      const result = await service.listFacultyInDepartment(1);
+
+      expect(prisma.faculty.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { department_id: 1, status: 'active' },
+        }),
+      );
+      expect(result).toEqual([
+        { id: 2, first_name: 'Deepa', last_name: 'Kannan', designation: 'Professor' },
+      ]);
+    });
+  });
+
+  describe('getFullWeekForFacultyId', () => {
+    it('throws 404 when the faculty does not exist', async () => {
+      prisma.faculty.findUnique.mockResolvedValue(null);
+
+      await expect(service.getFullWeekForFacultyId(999)).rejects.toThrow(
+        'Faculty not found',
+      );
+    });
+
+    it('fills in periods with no real slot as "free", using the institution-wide period template', async () => {
+      const facultyRow = { id: 5, first_name: 'Deepa', last_name: 'Kannan', designation: 'Professor' };
+      prisma.faculty.findUnique.mockResolvedValue(facultyRow);
+      prisma.timetable_slots.findMany
+        .mockResolvedValueOnce([
+          {
+            day_of_week: 1,
+            period_number: 1,
+            start_time: new Date('1970-01-01T09:00:00.000Z'),
+            end_time: new Date('1970-01-01T10:00:00.000Z'),
+            academic_year: '2025-2026',
+            semester: 6,
+            subjects: { id: 1, name: 'Mathematics I', subject_code: 'MATH101' },
+            classes: {
+              id: 10,
+              section: 'A',
+              departments: { id: 1, name: 'CSE', code: 'CSE' },
+            },
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            day_of_week: 1,
+            period_number: 1,
+            start_time: new Date('1970-01-01T09:00:00.000Z'),
+            end_time: new Date('1970-01-01T10:00:00.000Z'),
+          },
+          {
+            day_of_week: 1,
+            period_number: 2,
+            start_time: new Date('1970-01-01T10:00:00.000Z'),
+            end_time: new Date('1970-01-01T11:00:00.000Z'),
+          },
+        ]);
+
+      const result = await service.getFullWeekForFacultyId(5);
+
+      expect(result.faculty).toEqual(facultyRow);
+      expect(result.total_periods_per_week).toBe(1);
+      expect(result.semester).toBe(6);
+      expect(result.academic_year).toBe('2025-2026');
+
+      const monday = result.days.find((d) => d.day_of_week === 1)!;
+      expect(monday.periods).toEqual([
+        {
+          period_number: 1,
+          start_time: '09:00',
+          end_time: '10:00',
+          kind: 'class',
+          subject: { id: 1, name: 'Mathematics I', subject_code: 'MATH101' },
+          class: { id: 10, section: 'A', department: { id: 1, name: 'CSE', code: 'CSE' } },
+        },
+        {
+          period_number: 2,
+          start_time: '10:00',
+          end_time: '11:00',
+          kind: 'free',
+        },
+      ]);
+
+      const tuesday = result.days.find((d) => d.day_of_week === 2)!;
+      expect(tuesday.periods).toEqual([]);
+      expect(result.days).toHaveLength(6);
+    });
+
+    it('reports semester/academic_year as null when the faculty teaches more than one term at once', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({
+        id: 5,
+        first_name: 'Deepa',
+        last_name: 'Kannan',
+        designation: 'Professor',
+      });
+      prisma.timetable_slots.findMany
+        .mockResolvedValueOnce([
+          {
+            day_of_week: 1,
+            period_number: 1,
+            start_time: new Date('1970-01-01T09:00:00.000Z'),
+            end_time: new Date('1970-01-01T10:00:00.000Z'),
+            academic_year: '2025-2026',
+            semester: 6,
+            subjects: { id: 1, name: 'Mathematics I', subject_code: 'MATH101' },
+            classes: { id: 10, section: 'A', departments: { id: 1, name: 'CSE', code: 'CSE' } },
+          },
+          {
+            day_of_week: 2,
+            period_number: 1,
+            start_time: new Date('1970-01-01T09:00:00.000Z'),
+            end_time: new Date('1970-01-01T10:00:00.000Z'),
+            academic_year: '2025-2026',
+            semester: 3,
+            subjects: { id: 2, name: 'Data Structures', subject_code: 'CS201' },
+            classes: { id: 11, section: 'B', departments: { id: 1, name: 'CSE', code: 'CSE' } },
+          },
+        ])
+        .mockResolvedValueOnce([]);
+
+      const result = await service.getFullWeekForFacultyId(5);
+
+      expect(result.semester).toBeNull();
+      expect(result.academic_year).toBeNull();
+    });
+  });
+
+  describe('getInstitutionAcademicCalendar', () => {
+    it('returns an empty calendar when no academic_calendars rows exist at all', async () => {
+      prisma.academic_calendars.findMany.mockResolvedValue([]);
+
+      const result = await service.getInstitutionAcademicCalendar();
+
+      expect(result).toEqual({ semester: null, start_date: null, end_date: null, events: [] });
+    });
+
+    it('merges every calendar institution-wide, deduping by date+title, semester null when not uniform', async () => {
+      prisma.academic_calendars.findMany.mockResolvedValue([
+        {
+          semester: 3,
+          start_date: new Date('2026-06-01T00:00:00.000Z'),
+          end_date: new Date('2026-11-30T00:00:00.000Z'),
+          calendar_events: [
+            {
+              id: 1,
+              event_date: new Date('2026-08-15T00:00:00.000Z'),
+              event_type: 'holiday',
+              title: 'Independence Day',
+              description: null,
+            },
+          ],
+        },
+        {
+          semester: 6,
+          start_date: new Date('2026-05-01T00:00:00.000Z'),
+          end_date: new Date('2026-12-15T00:00:00.000Z'),
+          calendar_events: [
+            // Same date+title as above - a shared institution-wide holiday
+            // appearing on more than one batch's calendar - deduped.
+            {
+              id: 2,
+              event_date: new Date('2026-08-15T00:00:00.000Z'),
+              event_type: 'holiday',
+              title: 'Independence Day',
+              description: null,
+            },
+            {
+              id: 3,
+              event_date: new Date('2026-09-05T00:00:00.000Z'),
+              event_type: 'event',
+              title: "Teachers' Day",
+              description: null,
+            },
+          ],
+        },
+      ]);
+
+      const result = await service.getInstitutionAcademicCalendar();
+
+      expect(result.semester).toBeNull();
+      expect(result.start_date).toBe('2026-05-01');
+      expect(result.end_date).toBe('2026-12-15');
+      expect(result.events).toEqual([
+        { id: 1, event_date: '2026-08-15', event_type: 'holiday', title: 'Independence Day', description: null },
+        { id: 3, event_date: '2026-09-05', event_type: 'event', title: "Teachers' Day", description: null },
+      ]);
+    });
+
+    it('reports a single semester when every academic_calendars row shares it', async () => {
+      prisma.academic_calendars.findMany.mockResolvedValue([
+        {
+          semester: 3,
+          start_date: new Date('2026-06-01T00:00:00.000Z'),
+          end_date: new Date('2026-11-30T00:00:00.000Z'),
+          calendar_events: [],
+        },
+      ]);
+
+      const result = await service.getInstitutionAcademicCalendar();
+
+      expect(result.semester).toBe(3);
     });
   });
 });

@@ -9,6 +9,8 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { paginate } from '../../../common/dto/pagination.dto';
 import { CompaniesService } from '../companies/companies.service';
 import type { JwtPayload } from '../../../auth/interfaces/jwt-payload.interface';
@@ -16,7 +18,6 @@ import {
   target_audience_enum,
   drive_application_status_enum,
 } from '../../../../generated/prisma/enums';
-import type { Prisma } from '../../../../generated/prisma/client';
 import { CreateDriveDto } from './dto/create-drive.dto';
 import { UpdateDriveDto } from './dto/update-drive.dto';
 import { ListDrivesQueryDto } from './dto/list-drives-query.dto';
@@ -77,6 +78,7 @@ export class DrivesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly companiesService: CompaniesService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(user: JwtPayload, dto: CreateDriveDto) {
@@ -487,7 +489,48 @@ export class DrivesService {
       }
     }
 
+    // dto.status is optional (offer_response/offered_package_lpa can be
+    // updated on their own, e.g. from the Offers page) - only notify when a
+    // status transition actually happened.
+    if (dto.status !== undefined) {
+      await this.notifyApplicationStatusUpdated(studentId, driveId, dto.status);
+    }
+
     return updated;
+  }
+
+  /** Never throws - the application update above has already committed by this point. */
+  private async notifyApplicationStatusUpdated(
+    studentId: number,
+    driveId: number,
+    status: string,
+  ): Promise<void> {
+    try {
+      const student = await this.prisma.students.findUnique({
+        where: { id: studentId },
+        select: { user_id: true },
+      });
+      if (!student) return;
+
+      const drive = await this.prisma.placement_drives.findUnique({
+        where: { id: driveId },
+        select: { companies: { select: { name: true } } },
+      });
+
+      await this.notifications.notify({
+        user_id: student.user_id,
+        title: 'Placement application status updated',
+        message: `Your application${drive ? ` for ${drive.companies.name}` : ''} is now: ${status}.`,
+        type: 'placement_status_updated',
+        related_entity_type: 'drive_application',
+        related_entity_id: driveId,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to notify student ${studentId} of drive ${driveId} status update`,
+        err,
+      );
+    }
   }
 
   async removeApplication(driveId: number, studentId: number) {
@@ -1441,10 +1484,14 @@ export class DrivesService {
   /** GET /drives/student/upcoming — drives still in progress (not yet placed/rejected) for this student. */
   async getUpcomingForStudent(user: JwtPayload) {
     const student = await this.findStudentOrThrow(user.sub);
+    return this.getUpcomingForStudentId(student.id);
+  }
 
+  /** Parent-facing (GET /me/children/:studentId/upcoming-drives) — same shape, resolved for an explicit studentId. */
+  async getUpcomingForStudentId(studentId: number) {
     const applications = await this.prisma.student_drive_applications.findMany({
       where: {
-        student_id: student.id,
+        student_id: studentId,
         status: { notIn: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
       },
       include: { placement_drives: { include: { companies: true } } },
@@ -1458,6 +1505,11 @@ export class DrivesService {
   async getHistoryForStudent(user: JwtPayload) {
     const student = await this.findStudentOrThrow(user.sub);
     return this.buildHistoryForStudentId(student.id);
+  }
+
+  /** Parent-facing (GET /me/children/:studentId/placement-history) — same shape/logic as the student's own history. */
+  async getPlacementHistoryForStudentId(studentId: number) {
+    return this.buildHistoryForStudentId(studentId);
   }
 
   private async buildHistoryForStudentId(studentId: number) {
@@ -1477,10 +1529,35 @@ export class DrivesService {
         company_name: this.resolveCompanyName(drive),
         scheduled_date: drive.scheduled_date,
         drive_status: drive.status,
+        job_role: drive.job_role,
+        package_lpa:
+          drive.package_lpa === null ? null : Number(drive.package_lpa),
         application_status: app.status,
         last_cleared_round: app.last_cleared_round,
       };
     });
+  }
+
+  /**
+   * GET /drives/for-calendar (Principal only) - every real placement
+   * drive's scheduled_date, masked the same way as every other
+   * disclosed/undisclosed view in this service - feeds the Principal's
+   * merged academic calendar (see PrincipalCalendarScreen on the frontend,
+   * which merges this with GET /me/academic-calendar-institution).
+   * Institution-wide and status-agnostic - a Principal wants every real
+   * drive mapped, not just ones still in progress.
+   */
+  async getAllDrivesForCalendar() {
+    const drives = await this.prisma.placement_drives.findMany({
+      include: { companies: true },
+      orderBy: { scheduled_date: 'asc' },
+    });
+
+    return drives.map((drive) => ({
+      drive_id: drive.id,
+      company_name: this.resolveCompanyName(drive),
+      scheduled_date: drive.scheduled_date,
+    }));
   }
 
   // ───────────────────────────── Faculty (mentor) view ─────────────────────────────
@@ -1586,6 +1663,231 @@ export class DrivesService {
     return this.buildHistoryForStudentId(studentId);
   }
 
+  // ───────────────────────────── Principal (any department) view ─────────────────────────────
+
+  /**
+   * GET /drives/department/:departmentId/upcoming (Placement/Admin/Principal)
+   * — every student in the given department with a still-in-progress
+   * application, unlike the HoD view below this is NOT resolved from the
+   * caller's own faculty row - a Principal picks any department via a
+   * dropdown, so the id is taken as given (see assertDepartmentExists).
+   */
+  async getUpcomingForDepartment(departmentId: number) {
+    await this.assertDepartmentExists(departmentId);
+
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: {
+        status: { notIn: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        students: { classes: { department_id: departmentId } },
+      },
+      include: {
+        placement_drives: { include: { companies: true } },
+        students: {
+          select: {
+            id: true,
+            student_id_no: true,
+            soa_applications: { select: { first_name: true, last_name: true } },
+            users: { select: { email: true } },
+            classes: { select: { section: true } },
+          },
+        },
+      },
+      orderBy: { placement_drives: { scheduled_date: 'asc' } },
+    });
+
+    return applications.map((app) => ({
+      ...this.toUpcomingDrive(app),
+      student: this.toStudentSummary(app.students),
+    }));
+  }
+
+  /**
+   * GET /drives/department/:departmentId/history (Placement/Admin/Principal)
+   * — same split as buildHistoryForStudentId, aggregated across every
+   * student in the given department instead of one student at a time.
+   */
+  async getHistoryForDepartment(departmentId: number) {
+    await this.assertDepartmentExists(departmentId);
+
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: {
+        status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        students: { classes: { department_id: departmentId } },
+      },
+      include: {
+        placement_drives: { include: { companies: true } },
+        students: {
+          select: {
+            id: true,
+            student_id_no: true,
+            soa_applications: { select: { first_name: true, last_name: true } },
+            users: { select: { email: true } },
+            classes: { select: { section: true } },
+          },
+        },
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+
+    return applications.map((app) => {
+      const drive = app.placement_drives;
+      return {
+        drive_id: drive.id,
+        company_name: this.resolveCompanyName(drive),
+        scheduled_date: drive.scheduled_date,
+        drive_status: drive.status,
+        application_status: app.status,
+        last_cleared_round: app.last_cleared_round,
+        student: this.toStudentSummary(app.students),
+      };
+    });
+  }
+
+  private async assertDepartmentExists(departmentId: number) {
+    const department = await this.prisma.departments.findUnique({
+      where: { id: departmentId },
+    });
+    if (!department) {
+      throw new NotFoundException({
+        message: 'Department not found',
+        errorCode: 'DEPARTMENT_NOT_FOUND',
+      });
+    }
+  }
+
+  private toStudentSummary(student: {
+    id: number;
+    student_id_no: string;
+    soa_applications: { first_name: string; last_name: string | null } | null;
+    users: { email: string };
+    classes: { section: string } | null;
+  }) {
+    return {
+      id: student.id,
+      student_id_no: student.student_id_no,
+      name: this.resolveStudentDisplayName(student),
+      section: student.classes?.section ?? null,
+    };
+  }
+
+  // ───────────────────────────── HoD (department) view ─────────────────────────────
+
+  /**
+   * GET /me/department-classes (HoD only) — every class in the HoD's own
+   * department, for the class-selector on the Placements History tab.
+   * Ordered most-recent-batch-first, same reasoning as
+   * AssignmentsService.getHandledClasses: a department running the same
+   * course across several successive batches almost always wants the
+   * currently-running one surfaced first.
+   */
+  async getDepartmentClasses(userId: number) {
+    const hod = await this.resolveFacultyByUserId(userId);
+
+    const classes = await this.prisma.classes.findMany({
+      where: { department_id: hod.department_id },
+      select: {
+        id: true,
+        section: true,
+        current_semester: true,
+        batches: { select: { name: true, start_year: true } },
+        courses: { select: { name: true, code: true } },
+      },
+      orderBy: [{ batches: { start_year: 'desc' } }, { section: 'asc' }],
+    });
+
+    return classes.map((c) => ({
+      class_id: c.id,
+      section: c.section,
+      semester: c.current_semester,
+      batch_name: c.batches.name,
+      course_name: c.courses.name,
+      course_code: c.courses.code,
+    }));
+  }
+
+  /**
+   * GET /me/department-students (HoD only) — every student in every class
+   * of the HoD's own department (via their own faculty row's
+   * department_id), not just classes the HoD personally mentors - the same
+   * "pick a student, see their placement history" flow as the faculty
+   * mentor view, just scoped one level up. A HoD whose department has no
+   * classes yet gets an empty list rather than an error.
+   *
+   * `classId` optionally narrows this down to one class (the Placements
+   * History tab's class selector) - must belong to the HoD's own
+   * department, checked explicitly rather than silently ignored.
+   */
+  async getDepartmentStudents(userId: number, classId?: number) {
+    const hod = await this.resolveFacultyByUserId(userId);
+
+    let classIds: number[];
+    if (classId !== undefined) {
+      const cls = await this.prisma.classes.findUnique({
+        where: { id: classId },
+        select: { department_id: true },
+      });
+      if (!cls || cls.department_id !== hod.department_id) {
+        throw new ForbiddenException('This class is not in your department');
+      }
+      classIds = [classId];
+    } else {
+      const departmentClasses = await this.prisma.classes.findMany({
+        where: { department_id: hod.department_id },
+        select: { id: true },
+      });
+      classIds = departmentClasses.map((c) => c.id);
+    }
+    if (classIds.length === 0) return [];
+
+    const students = await this.prisma.students.findMany({
+      where: { class_id: { in: classIds } },
+      select: {
+        id: true,
+        student_id_no: true,
+        soa_applications: { select: { first_name: true, last_name: true } },
+        users: { select: { email: true } },
+        classes: {
+          select: { section: true, departments: { select: { name: true } } },
+        },
+      },
+      orderBy: { student_id_no: 'asc' },
+    });
+
+    return students.map((s) => ({
+      student_id: s.id,
+      student_id_no: s.student_id_no,
+      name: this.resolveStudentDisplayName(s),
+      section: s.classes?.section ?? null,
+      department_name: s.classes?.departments.name ?? null,
+    }));
+  }
+
+  /**
+   * GET /me/department-students/:studentId/placement-history (HoD only —
+   * student's class must belong to the HoD's own department). Same
+   * shape/logic as the mentor version, just department-scoped instead of
+   * class_mentors-scoped - see buildHistoryForStudentId().
+   */
+  async getStudentPlacementHistoryForHod(studentId: number, userId: number) {
+    const hod = await this.resolveFacultyByUserId(userId);
+
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { id: true, classes: { select: { department_id: true } } },
+    });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    if (
+      !student.classes ||
+      student.classes.department_id !== hod.department_id
+    ) {
+      throw new ForbiddenException('This student is not in your department');
+    }
+
+    return this.buildHistoryForStudentId(studentId);
+  }
+
   /** No generic "display name" column on `students` - same fallback chain used across every other faculty-facing module in this codebase. */
   private resolveStudentDisplayName(student: {
     soa_applications: { first_name: string; last_name: string | null } | null;
@@ -1612,11 +1914,14 @@ export class DrivesService {
 
   private toUpcomingDrive(app: {
     status: string;
+    last_cleared_round: number | null;
     placement_drives: {
       id: number;
       scheduled_date: Date;
       is_disclosed: boolean;
       disclosed_reveal_date: Date | null;
+      job_role: string | null;
+      package_lpa: Prisma.Decimal | null;
       companies: { name: string; profile_info: string | null };
     };
   }) {
@@ -1632,7 +1937,11 @@ export class DrivesService {
       disclosed_reveal_date: drive.is_disclosed
         ? null
         : drive.disclosed_reveal_date,
+      job_role: drive.job_role,
+      package_lpa:
+        drive.package_lpa === null ? null : Number(drive.package_lpa),
       application_status: app.status,
+      last_cleared_round: app.last_cleared_round,
     };
   }
 

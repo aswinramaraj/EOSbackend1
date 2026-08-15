@@ -19,9 +19,27 @@ export class HostelDashboardService {
    * leave" distinction exists in the schema (hostel_outings has one status
    * enum, not an outing-type field), so this doesn't split them into
    * separate tiles the way the design mockup does.
+   *
+   * `hostelId` scopes every count to one hostel (a warden's own) — omit for
+   * the institution-wide view (admin).
    */
-  async summary() {
+  async summary(hostelId?: number | null) {
     const now = new Date();
+    const hostel =
+      hostelId != null
+        ? await this.prisma.hostels.findUnique({
+            where: { id: hostelId },
+            select: { id: true, name: true, code: true, wing: true },
+          })
+        : null;
+    const outingScope =
+      hostelId != null
+        ? {
+            students: {
+              student_hostel_mapping: { hostel_rooms: { hostel_id: hostelId } },
+            },
+          }
+        : {};
 
     try {
       const [
@@ -31,18 +49,29 @@ export class HostelDashboardService {
         roomAggregate,
         openComplaints,
       ] = await this.prisma.$transaction([
-        this.prisma.student_hostel_mapping.count(),
+        this.prisma.student_hostel_mapping.count({
+          where: hostelId != null ? { hostel_rooms: { hostel_id: hostelId } } : {},
+        }),
         this.prisma.hostel_outings.count({
           where: {
             status: 'approved',
             from_date: { lte: now },
             to_date: { gte: now },
+            ...outingScope,
           },
         }),
-        this.prisma.hostel_outings.count({ where: { status: 'pending' } }),
-        this.prisma.hostel_rooms.aggregate({ _sum: { capacity: true } }),
+        this.prisma.hostel_outings.count({
+          where: { status: 'pending', ...outingScope },
+        }),
+        this.prisma.hostel_rooms.aggregate({
+          _sum: { capacity: true },
+          where: hostelId != null ? { hostel_id: hostelId } : {},
+        }),
         this.prisma.hostel_complaints.count({
-          where: { status: { in: ['open', 'in_progress'] } },
+          where: {
+            status: { in: ['open', 'in_progress'] },
+            ...(hostelId != null ? { hostel_id: hostelId } : {}),
+          },
         }),
       ]);
 
@@ -53,6 +82,7 @@ export class HostelDashboardService {
       const bedsOccupied = totalResidents;
 
       return {
+        hostel,
         total_residents: totalResidents,
         currently_present: totalResidents - onLeaveCount,
         on_leave: onLeaveCount,

@@ -22,12 +22,38 @@ import { OdHodApprovalsModule } from './modules/admissions/od-hod-approvals/od-h
 import { IqacStudentOdsModule } from './modules/admissions/iqac-student-ods/iqac-student-ods.module';
 import { SoaApplicationsModule } from './modules/admissions/soa-applications/soa-applications.module';
 import { StudentLeavesModule } from './modules/admissions/student-leaves/student-leaves.module';
+import { CampusOutingRequestsModule } from './modules/admissions/campus-outing-requests/campus-outing-requests.module';
 import { StudentOdsModule } from './modules/admissions/student-ods/student-ods.module';
 import { StudentsModule } from './modules/admissions/students/students.module';
 import { MeProfileModule } from './modules/admissions/students/me-profile/me-profile.module';
-import { ProfileModule } from './modules/profile/profile.module';
 
 import { AnnouncementsModule } from './modules/announcements/announcements/announcements.module';
+import { ParentsModule } from './modules/parents/parents.module';
+import { PersonalCalendarModule } from './modules/personal-calendar/personal-calendar.module';
+import { StudentHigherEducationModule } from './modules/student-higher-education/student-higher-education.module';
+import { StudentEntrepreneurshipModule } from './modules/student-entrepreneurship/student-entrepreneurship.module';
+// These 9 predate (and are route-distinct from, /principal-x vs
+// /me/principal/x) the newer nested `modules/principal/*` build below —
+// both are real and stay registered side by side, aliased here only to
+// avoid a duplicate-identifier clash on import.
+import { PrincipalStudentsModule as PrincipalStudentsFlatModule } from './modules/principal-students/principal-students.module';
+import { PrincipalFacultyModule as PrincipalFacultyFlatModule } from './modules/principal-faculty/principal-faculty.module';
+import { PrincipalDepartmentsModule as PrincipalDepartmentsFlatModule } from './modules/principal-departments/principal-departments.module';
+import { PrincipalExamsModule as PrincipalExamsFlatModule } from './modules/principal-exams/principal-exams.module';
+import { PrincipalFinanceModule as PrincipalFinanceFlatModule } from './modules/principal-finance/principal-finance.module';
+import { PrincipalPlacementsModule as PrincipalPlacementsFlatModule } from './modules/principal-placements/principal-placements.module';
+import { PrincipalHostelModule as PrincipalHostelFlatModule } from './modules/principal-hostel/principal-hostel.module';
+import { PrincipalApprovalsModule as PrincipalApprovalsFlatModule } from './modules/principal-approvals/principal-approvals.module';
+import { PrincipalTransportModule as PrincipalTransportFlatModule } from './modules/principal-transport/principal-transport.module';
+import { PrincipalLibraryModule } from './modules/principal-library/principal-library.module';
+import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
+import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
+import { SportsAdminModule } from './modules/sports-admin/sports-admin.module';
+import { ProfileModule } from './modules/profile/profile.module';
+import { TransportModule } from './modules/transport/transport.module';
+import { HigherEducationModule } from './modules/higher-education/higher-education.module';
+import { MedicalCentreModule } from './modules/medical-centre/medical-centre.module';
+import { LmsModule } from './modules/lms/lms.module';
 
 import { ExamsModule } from './modules/exams/exams/exams.module';
 import { ExamSubjectMappingModule } from './modules/exams/exam-subject-mapping/exam-subject-mapping.module';
@@ -46,6 +72,7 @@ import { AppraisalModule } from './modules/faculty/appraisal/appraisal.module';
 import { AppraisalCriteriaModule } from './modules/faculty/appraisal-criteria/appraisal-criteria.module';
 import { AssignmentsModule } from './modules/faculty/assignments/assignments.module';
 import { AttendanceModule } from './modules/faculty/attendance/attendance.module';
+import { AttendanceCvModule } from './modules/faculty/attendance-cv/attendance-cv.module';
 import { ClassMentorsModule } from './modules/faculty/class-mentors/class-mentors.module';
 import { ExamMarksModule } from './modules/faculty/exam-marks/exam-marks.module';
 import { FacultyAttendanceModule } from './modules/faculty/faculty-attendance/faculty-attendance.module';
@@ -63,8 +90,10 @@ import { HrPayrollModule } from './modules/faculty/hr-payroll/hr-payroll.module'
 import { LessonPlansModule } from './modules/faculty/lesson-plans/lesson-plans.module';
 import { LmsNotesModule } from './modules/faculty/lms-notes/lms-notes.module';
 import { MediaRequestsModule } from './modules/faculty/media-requests/media-requests.module';
+import { NoDueModule } from './modules/faculty/no-due/no-due.module';
 import { PayslipRequestsModule } from './modules/faculty/payslip-requests/payslip-requests.module';
 import { SalaryDivisionsModule } from './modules/faculty/salary-divisions/salary-divisions.module';
+import { SubjectRecordsModule } from './modules/faculty/subject-records/subject-records.module';
 import { StudentAssignmentStatusModule } from './modules/faculty/student-assignment-status/student-assignment-status.module';
 import { TimetableModule } from './modules/faculty/timetable/timetable.module';
 
@@ -72,6 +101,7 @@ import { DemandModule } from './modules/fees-billing/demand/demand.module';
 import { EducationLoanDdModule } from './modules/fees-billing/education-loan-dd/education-loan-dd.module';
 import { FeeConcessionModule } from './modules/fees-billing/fee-concessions/fee-concession.module';
 import { FeePaymentModule } from './modules/fees-billing/fee-payments/fee-payment.module';
+import { MeFeePaymentModule } from './modules/fees-billing/me-fee-payment/me-fee-payment.module';
 import { FinanceOverviewModule } from './modules/fees-billing/finance-overview/finance-overview.module';
 import { FeeStructureModule } from './modules/fees-billing/fee-structure/fee-structure.module';
 import { FeeStructureItemModule } from './modules/fees-billing/fee-structure-items/fee-structure-item.module';
@@ -109,8 +139,13 @@ import { ServiceOrdersModule } from './modules/procurement/service-orders/servic
 import { VendorQuotationsModule } from './modules/procurement/vendor-quotations/vendor-quotations.module';
 import { VendorsModule } from './modules/procurement/vendors/vendors.module';
 
+import { PurchaseRequestsModule } from './modules/procurement/purchase-requests/purchase-requests.module';
+import { ServiceRequestsModule as ProcurementServiceRequestsModule } from './modules/procurement/service-requests/service-requests.module';
+
+import { WalletModule } from './modules/wallet/wallet.module';
+
 import { VenuesModule } from './modules/venues/venues/venues.module';
-import { ServiceRequestsModule } from './modules/secretary/service-requests/service-requests.module';
+import { ServiceRequestsModule as SecretaryServiceRequestsModule } from './modules/secretary/service-requests/service-requests.module';
 import { ProductRequestsModule } from './modules/secretary/product-requests/product-requests.module';
 import { SecretaryDashboardModule } from './modules/secretary/dashboard/dashboard.module';
 import { SecretaryReportsModule } from './modules/secretary/reports/reports.module';
@@ -141,6 +176,7 @@ import { AchievementsModule } from './modules/achievements/achievements.module';
 import { HostelsModule } from './modules/hostel/hostels/hostels.module';
 import { ResidentsModule } from './modules/hostel/residents/residents.module';
 import { OutingsModule } from './modules/hostel/outings/outings.module';
+import { LeaveRequestsModule } from './modules/hostel/leave-requests/leave-requests.module';
 import { GateLogModule } from './modules/hostel/gate-log/gate-log.module';
 import { HostelDashboardModule } from './modules/hostel/dashboard/dashboard.module';
 import { ComplaintsModule } from './modules/hostel/complaints/complaints.module';
@@ -148,6 +184,8 @@ import { MessFeedbackModule } from './modules/hostel/mess-feedback/mess-feedback
 import { HostelFeesModule } from './modules/hostel/fees/fees.module';
 import { HostelSettingsModule } from './modules/hostel/settings/settings.module';
 import { HostelReportsModule } from './modules/hostel/reports/reports.module';
+import { HostelAnnouncementsModule } from './modules/hostel/announcements/hostel-announcements.module';
+import { NightAttendanceModule } from './modules/hostel/night-attendance/night-attendance.module';
 
 import { HrDepartmentsModule } from './modules/hr/hr-departments/hr-departments.module';
 import { HrRequestsModule } from './modules/hr/hr-requests/hr-requests.module';
@@ -178,10 +216,32 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     IqacStudentOdsModule,
     SoaApplicationsModule,
     StudentLeavesModule,
+    CampusOutingRequestsModule,
     StudentOdsModule,
     StudentsModule,
     MeProfileModule,
+    ParentsModule,
+    PersonalCalendarModule,
+    StudentHigherEducationModule,
+    PrincipalStudentsFlatModule,
+    PrincipalFacultyFlatModule,
+    PrincipalDepartmentsFlatModule,
+    PrincipalExamsFlatModule,
+    PrincipalFinanceFlatModule,
+    PrincipalPlacementsFlatModule,
+    PrincipalHostelFlatModule,
+    PrincipalApprovalsFlatModule,
+    PrincipalTransportFlatModule,
+    PrincipalLibraryModule,
+    PrincipalMedicalModule,
+    PrincipalSportsModule,
+    SportsAdminModule,
+    StudentEntrepreneurshipModule,
     ProfileModule,
+    LmsModule,
+    TransportModule,
+    HigherEducationModule,
+    MedicalCentreModule,
 
     AnnouncementsModule,
 
@@ -202,6 +262,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     AppraisalCriteriaModule,
     AssignmentsModule,
     AttendanceModule,
+    AttendanceCvModule,
     ClassMentorsModule,
     ExamMarksModule,
     FacultyAttendanceModule,
@@ -219,8 +280,10 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     LessonPlansModule,
     LmsNotesModule,
     MediaRequestsModule,
+    NoDueModule,
     PayslipRequestsModule,
     SalaryDivisionsModule,
+    SubjectRecordsModule,
     StudentAssignmentStatusModule,
     TimetableModule,
 
@@ -228,6 +291,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     EducationLoanDdModule,
     FeeConcessionModule,
     FeePaymentModule,
+    MeFeePaymentModule,
     FinanceOverviewModule,
     FeeStructureModule,
     FeeStructureItemModule,
@@ -265,8 +329,13 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     VendorQuotationsModule,
     VendorsModule,
 
+    PurchaseRequestsModule,
+    ProcurementServiceRequestsModule,
+
+    WalletModule,
+
     VenuesModule,
-    ServiceRequestsModule,
+    SecretaryServiceRequestsModule,
     ProductRequestsModule,
     SecretaryDashboardModule,
     SecretaryReportsModule,
@@ -297,6 +366,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     HostelsModule,
     ResidentsModule,
     OutingsModule,
+    LeaveRequestsModule,
     GateLogModule,
     HostelDashboardModule,
     ComplaintsModule,
@@ -304,6 +374,8 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     HostelFeesModule,
     HostelSettingsModule,
     HostelReportsModule,
+    HostelAnnouncementsModule,
+    NightAttendanceModule,
 
     HrDepartmentsModule,
     HrRequestsModule,

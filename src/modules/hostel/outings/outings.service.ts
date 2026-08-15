@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
+import { formatStudentName } from '../common/student-name.util';
 import { SearchOutingsDto } from './dto/search-outings.dto';
 import { DecideOutingDto } from './dto/decide-outing.dto';
 
@@ -25,6 +26,7 @@ const OUTING_INCLUDE = {
       student_id_no: true,
       roll_no: true,
       soa_applications: { select: { first_name: true, last_name: true } },
+      users: { select: { email: true } },
       student_hostel_mapping: {
         select: {
           hostel_rooms: {
@@ -46,9 +48,11 @@ type OutingWithRelations = Prisma.hostel_outingsGetPayload<{
 
 function toOutingResponse(outing: OutingWithRelations) {
   const student = outing.students;
-  const name = student.soa_applications
-    ? `${student.soa_applications.first_name} ${student.soa_applications.last_name ?? ''}`.trim()
-    : `Student ${student.student_id_no}`;
+  const name = formatStudentName(
+    student.soa_applications?.first_name,
+    student.soa_applications?.last_name,
+    student.users.email,
+  );
   const room = student.student_hostel_mapping?.hostel_rooms;
 
   return {
@@ -91,7 +95,7 @@ export class OutingsService {
     }
 
     try {
-      const [outings, total] = await this.prisma.$transaction([
+      const [outings, total] = await Promise.all([
         this.prisma.hostel_outings.findMany({
           where,
           include: OUTING_INCLUDE,

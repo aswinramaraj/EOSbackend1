@@ -101,6 +101,13 @@ export class BorrowRecordsController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('library', 'admin')
+  @Post('library/borrow-records/send-due-soon-reminders')
+  sendDueSoonReminders() {
+    return this.borrowRecordsService.sendDueSoonReminders();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('library', 'admin')
   @Patch('library/borrow-records/:id/create-replacement-indent')
   createReplacementIndent(
     @Param('id', ParseIntPipe) id: number,
@@ -123,5 +130,14 @@ export class BorrowRecordsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.borrowRecordsService.findMyBorrowRecords(query, user);
+  }
+
+  // GET /me/library/dues-summary — student-only, self-scoped summary of
+  // outstanding fines/charges, for the No-due clearance dashboard.
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('student')
+  @Get('me/library/dues-summary')
+  getMyDuesSummary(@CurrentUser() user: JwtPayload) {
+    return this.borrowRecordsService.getMyDuesSummary(user);
   }
 }

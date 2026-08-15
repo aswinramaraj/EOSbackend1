@@ -8,13 +8,17 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { UpdateResultDto } from './dto/update-result.dto';
 
 @Injectable()
 export class ResultsService {
   private readonly logger = new Logger(ResultsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async publish(examId: number, publishedByUserId: number) {
     const exam = await this.prisma.exams.findUnique({ where: { id: examId } });
@@ -74,8 +78,9 @@ export class ResultsService {
       });
     }
 
+    let publication;
     try {
-      return await this.prisma.result_publications.create({
+      publication = await this.prisma.result_publications.create({
         data: {
           exam_id: examId,
           publication_type: 'original',
@@ -88,6 +93,48 @@ export class ResultsService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
+    }
+
+    await this.notifyResultsPublished(examId, exam.title, mappingIds);
+
+    return publication;
+  }
+
+  /**
+   * Only students who actually have an exam_marks row for one of this
+   * exam's subject mappings get notified - reusing the same mappingIds
+   * already resolved above, rather than a class roster, so a student
+   * enrolled but never marked (e.g. added after marks entry closed) isn't
+   * told results exist for them. Never throws - a failure here must not
+   * roll back or fail the publish, which has already committed.
+   */
+  private async notifyResultsPublished(
+    examId: number,
+    examTitle: string | null,
+    mappingIds: number[],
+  ): Promise<void> {
+    try {
+      const marked = await this.prisma.exam_marks.findMany({
+        where: { exam_subject_mapping_id: { in: mappingIds } },
+        select: { student_id: true },
+        distinct: ['student_id'],
+      });
+      const students = await this.prisma.students.findMany({
+        where: { id: { in: marked.map((m) => m.student_id) } },
+        select: { user_id: true },
+      });
+      for (const s of students) {
+        await this.notifications.notify({
+          user_id: s.user_id,
+          title: 'Exam results published',
+          message: `Results for ${examTitle ?? 'your exam'} have been published.`,
+          type: 'exam_result_published',
+          related_entity_type: 'exam',
+          related_entity_id: examId,
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Failed to notify students of published results for exam ${examId}`, err);
     }
   }
 

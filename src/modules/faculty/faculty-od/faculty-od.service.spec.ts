@@ -27,6 +27,8 @@ describe('FacultyOdService', () => {
       create: jest.Mock;
       findMany: jest.Mock;
       count: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
     };
     $transaction: jest.Mock;
   };
@@ -38,6 +40,8 @@ describe('FacultyOdService', () => {
         create: jest.fn(),
         findMany: jest.fn(),
         count: jest.fn(),
+        findUnique: jest.fn(),
+        update: jest.fn(),
       },
       $transaction: jest.fn(),
     };
@@ -65,7 +69,7 @@ describe('FacultyOdService', () => {
       await expect(
         service.create(
           { from_date: '2026-09-01', to_date: '2026-09-02' },
-          999,
+          { sub: 999, role: 'faculty' } as any,
         ),
       ).rejects.toThrow('Faculty profile not found for the authenticated user');
     });
@@ -76,7 +80,7 @@ describe('FacultyOdService', () => {
       await expect(
         service.create(
           { from_date: '2020-01-01', to_date: '2020-01-02' },
-          1,
+          { sub: 1, role: 'faculty' } as any,
         ),
       ).rejects.toThrow("from_date must not be before today's date");
     });
@@ -90,7 +94,7 @@ describe('FacultyOdService', () => {
       await expect(
         service.create(
           { from_date: futureStr, to_date: '2026-01-01' },
-          1,
+          { sub: 1, role: 'faculty' } as any,
         ),
       ).rejects.toThrow('from_date must be on or before to_date');
     });
@@ -115,7 +119,7 @@ describe('FacultyOdService', () => {
 
       const result = await service.create(
         { from_date: from, to_date: from, place: 'IIT Madras', purpose: 'FDP on Generative AI' },
-        1,
+        { sub: 1, role: 'faculty' } as any,
       );
 
       expect(prisma.faculty_od_requests.create).toHaveBeenCalledWith(
@@ -143,7 +147,8 @@ describe('FacultyOdService', () => {
       });
     });
 
-    it('does not resolve a faculty record for an HoD caller (unrestricted)', async () => {
+    it('scopes an HoD caller to their own department', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 3, department_id: 9 });
       prisma.$transaction.mockResolvedValue([[], 0]);
 
       await service.findAll(
@@ -151,7 +156,139 @@ describe('FacultyOdService', () => {
         { sub: 2, role: 'hod', email: 'x', roleId: 1 },
       );
 
-      expect(prisma.faculty.findUnique).not.toHaveBeenCalled();
+      expect(prisma.faculty.findUnique).toHaveBeenCalledWith({
+        where: { user_id: 2 },
+      });
+    });
+
+    it('force-filters an HR Payroll caller to hod_approval_status=approved, overriding whatever the query param says', async () => {
+      prisma.$transaction.mockResolvedValue([[], 0]);
+
+      await service.findAll(
+        { hod_approval_status: 'pending', limit: 20, page: 1 } as any,
+        { sub: 3, role: 'hr_payroll', email: 'x', roleId: 1 },
+      );
+
+      expect(prisma.faculty_od_requests.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ hod_approval_status: 'approved' }),
+        }),
+      );
+    });
+  });
+
+  describe('update', () => {
+    const HOD_USER = { sub: 10, role: 'hod', email: 'hod@x', roleId: 2 };
+    const HR_USER = { sub: 20, role: 'hr_payroll', email: 'hr@x', roleId: 3 };
+
+    it('throws 400 when no fields are provided', async () => {
+      await expect(service.update(1, {}, HR_USER)).rejects.toThrow(
+        'No fields provided to update',
+      );
+    });
+
+    it('throws 404 when the OD request does not exist', async () => {
+      prisma.faculty_od_requests.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.update(1, { hr_approval_status: 'approved' }, HR_USER),
+      ).rejects.toThrow('Faculty OD request not found');
+    });
+
+    it('lets HoD set hod_approval_status', async () => {
+      prisma.faculty_od_requests.findUnique.mockResolvedValue({
+        id: 1,
+        hod_approval_status: 'pending',
+        hr_approval_status: 'pending',
+      });
+      prisma.faculty_od_requests.update.mockResolvedValue({
+        id: 1,
+        from_date: new Date('2026-09-01T00:00:00.000Z'),
+        to_date: new Date('2026-09-02T00:00:00.000Z'),
+        place: 'IIT Madras',
+        purpose: 'FDP',
+        hod_approval_status: 'approved',
+        hr_approval_status: 'pending',
+        created_at: new Date('2026-08-06T00:00:00.000Z'),
+        faculty: FACULTY_ROW,
+      });
+
+      const result = await service.update(
+        1,
+        { hod_approval_status: 'approved' },
+        HOD_USER,
+      );
+
+      expect(prisma.faculty_od_requests.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { hod_approval_status: 'approved' } }),
+      );
+      expect(result.overall_status).toBe('pending');
+    });
+
+    it('forbids HoD from setting hr_approval_status', async () => {
+      prisma.faculty_od_requests.findUnique.mockResolvedValue({
+        id: 1,
+        hod_approval_status: 'pending',
+        hr_approval_status: 'pending',
+      });
+
+      await expect(
+        service.update(1, { hr_approval_status: 'approved' }, HOD_USER),
+      ).rejects.toThrow('HoD may only set hod_approval_status');
+    });
+
+    it('forbids HR Payroll from setting hod_approval_status', async () => {
+      prisma.faculty_od_requests.findUnique.mockResolvedValue({
+        id: 1,
+        hod_approval_status: 'pending',
+        hr_approval_status: 'pending',
+      });
+
+      await expect(
+        service.update(1, { hod_approval_status: 'approved' }, HR_USER),
+      ).rejects.toThrow('HR Payroll may only set hr_approval_status');
+    });
+
+    it('throws 409 when HR Payroll tries to act before HoD has approved', async () => {
+      prisma.faculty_od_requests.findUnique.mockResolvedValue({
+        id: 1,
+        hod_approval_status: 'pending',
+        hr_approval_status: 'pending',
+      });
+
+      await expect(
+        service.update(1, { hr_approval_status: 'approved' }, HR_USER),
+      ).rejects.toThrow('HR approval requires HoD approval first');
+    });
+
+    it('lets HR Payroll set hr_approval_status once HoD has approved, computing overall_status', async () => {
+      prisma.faculty_od_requests.findUnique.mockResolvedValue({
+        id: 1,
+        hod_approval_status: 'approved',
+        hr_approval_status: 'pending',
+      });
+      prisma.faculty_od_requests.update.mockResolvedValue({
+        id: 1,
+        from_date: new Date('2026-09-01T00:00:00.000Z'),
+        to_date: new Date('2026-09-02T00:00:00.000Z'),
+        place: 'IIT Madras',
+        purpose: 'FDP',
+        hod_approval_status: 'approved',
+        hr_approval_status: 'approved',
+        created_at: new Date('2026-08-06T00:00:00.000Z'),
+        faculty: FACULTY_ROW,
+      });
+
+      const result = await service.update(
+        1,
+        { hr_approval_status: 'approved' },
+        HR_USER,
+      );
+
+      expect(prisma.faculty_od_requests.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { hr_approval_status: 'approved' } }),
+      );
+      expect(result.overall_status).toBe('approved');
     });
   });
 });

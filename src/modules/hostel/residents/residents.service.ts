@@ -2,13 +2,16 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
+import { formatStudentName } from '../common/student-name.util';
 import { SearchResidentsDto } from './dto/search-residents.dto';
 
 const RESIDENT_INCLUDE = {
   soa_applications: { select: { first_name: true, last_name: true } },
+  users: { select: { email: true } },
   courses: { select: { name: true } },
   batches: { select: { name: true } },
   student_family_details: {
@@ -48,9 +51,11 @@ function toResidentResponse(
   student: ResidentWithRelations,
   onLeaveStudentIds: Set<number>,
 ) {
-  const name = student.soa_applications
-    ? `${student.soa_applications.first_name} ${student.soa_applications.last_name ?? ''}`.trim()
-    : `Student ${student.student_id_no}`;
+  const name = formatStudentName(
+    student.soa_applications?.first_name,
+    student.soa_applications?.last_name,
+    student.users.email,
+  );
 
   const mapping = student.student_hostel_mapping;
   const room = mapping?.hostel_rooms;
@@ -157,6 +162,111 @@ export class ResidentsService {
       };
     } catch (err) {
       this.logger.error('DB error while fetching hostel residents', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * GET /hostel/residents/:id — full profile for the shared "click a
+   * student name to see their details" pattern used across every hostel
+   * warden page. Recent movements/outings/complaints are real, scoped to
+   * this one student; `hostelId` (when set) enforces that a warden can
+   * only open a profile for a resident of their own hostel.
+   */
+  async findOne(id: number, hostelId: number | null) {
+    let student: ResidentWithRelations | null;
+    try {
+      student = await this.prisma.students.findUnique({
+        where: { id },
+        include: RESIDENT_INCLUDE,
+      });
+    } catch (err) {
+      this.logger.error(`DB error while fetching resident ${id}`, err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (!student || !student.student_hostel_mapping) {
+      throw new NotFoundException({
+        message: 'Resident not found',
+        errorCode: 'RESIDENT_NOT_FOUND',
+      });
+    }
+    if (
+      hostelId != null &&
+      student.student_hostel_mapping.hostel_rooms.hostel_id !== hostelId
+    ) {
+      throw new NotFoundException({
+        message: 'Resident not found',
+        errorCode: 'RESIDENT_NOT_FOUND',
+      });
+    }
+
+    const onLeaveStudentIds = await this.findOnLeaveStudentIds([id]);
+
+    try {
+      const [movements, outings, complaints] = await this.prisma.$transaction([
+        this.prisma.hostel_in_out_ledger.findMany({
+          where: { student_id: id },
+          orderBy: { recorded_at: 'desc' },
+          take: 10,
+          select: { id: true, entry_type: true, recorded_at: true },
+        }),
+        this.prisma.hostel_outings.findMany({
+          where: { student_id: id },
+          orderBy: { created_at: 'desc' },
+          take: 10,
+          select: {
+            id: true,
+            reason: true,
+            from_date: true,
+            to_date: true,
+            status: true,
+          },
+        }),
+        this.prisma.hostel_complaints.findMany({
+          where: { student_id: id },
+          orderBy: { created_at: 'desc' },
+          take: 10,
+          select: {
+            id: true,
+            title: true,
+            category: true,
+            status: true,
+            created_at: true,
+          },
+        }),
+      ]);
+
+      return {
+        ...toResidentResponse(student, onLeaveStudentIds),
+        movements: movements.map((m) => ({
+          id: m.id,
+          direction: m.entry_type,
+          at: m.recorded_at.toISOString(),
+        })),
+        outings: outings.map((o) => ({
+          id: o.id,
+          reason: o.reason,
+          from_date: o.from_date.toISOString().slice(0, 10),
+          to_date: o.to_date.toISOString().slice(0, 10),
+          status: o.status,
+        })),
+        complaints: complaints.map((c) => ({
+          id: c.id,
+          title: c.title,
+          category: c.category,
+          status: c.status,
+          created_at: c.created_at.toISOString(),
+        })),
+      };
+    } catch (err) {
+      this.logger.error(`DB error while fetching resident ${id} history`, err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

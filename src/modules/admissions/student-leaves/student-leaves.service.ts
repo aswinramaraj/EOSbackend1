@@ -6,7 +6,9 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { CreateStudentLeafDto } from './dto/create-student-leaf.dto';
 import { UpdateStudentLeafDto } from './dto/update-student-leaf.dto';
 import { ListStudentLeaveQueryDto } from './dto/list-student-leave-query.dto';
@@ -107,10 +109,20 @@ export class StudentLeavesService {
   }
 
   /**
-   * GET /me/student-leaves (Faculty only, for now) — the calling faculty's
-   * mentor-review queue: every leave request from a student in a class this
-   * faculty mentors, via class_mentors. A faculty who mentors no class gets
-   * an empty page rather than an error.
+   * GET /me/student-leaves (Faculty or HoD).
+   *
+   * Faculty: the calling faculty's mentor-review queue — every leave
+   * request from a student in a class this faculty mentors, via
+   * class_mentors. A faculty who mentors no class gets an empty page
+   * rather than an error.
+   *
+   * HoD: every leave request from a student in the HoD's own department,
+   * EXCLUDING status='pending' — those haven't even reached the mentor
+   * faculty yet, so they're not relevant to the HoD's queue at all (matches
+   * the two-stage chain: mentor first, HoD only once status='faculty_approved').
+   * If the caller doesn't filter by status, 'pending' is excluded by default
+   * for a HoD; an explicit status=pending request from a HoD still returns
+   * nothing (there's genuinely nothing there for them).
    *
    * student.section/department_name are included because a Class Mentor
    * can mentor more than one class (class_mentors is one row per
@@ -118,23 +130,35 @@ export class StudentLeavesService {
    * would have no way to tell which section a given request belongs to
    * when the mentor covers more than one.
    */
-  async findAll(query: ListStudentLeaveQueryDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  async findAll(query: ListStudentLeaveQueryDto, user: JwtPayload) {
+    let where: Record<string, unknown>;
 
-    const mentorClasses = await this.prisma.class_mentors.findMany({
-      where: { faculty_id: faculty.id },
-      select: { class_id: true },
-    });
-    const classIds = mentorClasses.map((m) => m.class_id);
+    if (user.role === ROLES.HOD) {
+      const hod = await this.resolveFacultyByUserId(user.sub);
+      where = {
+        status: query.status ?? { not: 'pending' },
+        routed_to_warden: false,
+        students: { classes: { department_id: hod.department_id } },
+      };
+    } else {
+      const faculty = await this.resolveFacultyByUserId(user.sub);
 
-    if (classIds.length === 0) {
-      return paginate([], 0, query);
+      const mentorClasses = await this.prisma.class_mentors.findMany({
+        where: { faculty_id: faculty.id },
+        select: { class_id: true },
+      });
+      const classIds = mentorClasses.map((m) => m.class_id);
+
+      if (classIds.length === 0) {
+        return paginate([], 0, query);
+      }
+
+      where = {
+        status: query.status,
+        routed_to_warden: false,
+        students: { class_id: { in: classIds } },
+      };
     }
-
-    const where = {
-      status: query.status,
-      students: { class_id: { in: classIds } },
-    };
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.student_leaves.findMany({
@@ -191,6 +215,14 @@ export class StudentLeavesService {
       throw new NotFoundException({
         message: 'Leave request not found',
         errorCode: 'LEAVE_REQUEST_NOT_FOUND',
+      });
+    }
+
+    if (leave.routed_to_warden) {
+      throw new UnprocessableEntityException({
+        message:
+          'This leave is routed to the Warden and cannot be approved here',
+        errorCode: 'ROUTED_TO_WARDEN',
       });
     }
 
@@ -251,6 +283,14 @@ export class StudentLeavesService {
       throw new NotFoundException({
         message: 'Leave request not found',
         errorCode: 'LEAVE_REQUEST_NOT_FOUND',
+      });
+    }
+
+    if (leave.routed_to_warden) {
+      throw new UnprocessableEntityException({
+        message:
+          'This leave is routed to the Warden and cannot be approved here',
+        errorCode: 'ROUTED_TO_WARDEN',
       });
     }
 

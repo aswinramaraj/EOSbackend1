@@ -17,20 +17,24 @@ import { ROLES } from 'src/common/constants/roles.constant';
 import { StudentOdsService } from './student-ods.service';
 import { ListStudentOdQueryDto } from './dto/list-student-od-query.dto';
 import { FacultyApproveOdDto } from './dto/faculty-approve-od.dto';
+import { HodApproveOdDto } from './dto/hod-approve-od.dto';
 
 @Controller('me')
 export class StudentOdsController {
   constructor(private readonly studentOdsService: StudentOdsService) {}
 
-  /** GET /api/v1/me/student-ods — Faculty only. The mentor's review queue. */
+  /**
+   * GET /api/v1/me/student-ods — Faculty (mentor's review queue) or HoD
+   * (own-department queue — only requests already mentor-approved).
+   */
   @Get('student-ods')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   findAll(
     @Query() query: ListStudentOdQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.studentOdsService.findAll(query, user.sub);
+    return this.studentOdsService.findAll(query, user);
   }
 
   /**
@@ -47,5 +51,20 @@ export class StudentOdsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.studentOdsService.facultyApprove(id, dto, user.sub);
+  }
+
+  /**
+   * PATCH /api/v1/me/student-ods/:id/hod-approve — HoD only. Final stage,
+   * scoped to the HoD's own department's fan-out row(s).
+   */
+  @Patch('student-ods/:id/hod-approve')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.HOD)
+  hodApprove(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: HodApproveOdDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.studentOdsService.hodApprove(id, dto, user.sub);
   }
 }

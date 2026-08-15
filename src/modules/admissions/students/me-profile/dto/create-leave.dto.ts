@@ -1,4 +1,10 @@
-import { IsDateString, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsDateString,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 /**
  * from_date/to_date are checked here only for "present and a valid date
@@ -18,4 +24,19 @@ export class CreateLeaveDto {
   @IsString()
   @MaxLength(255)
   reason?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  also_on_hostel_leave?: boolean;
+
+  /**
+   * Set only by the Hostel tab's own "Leave" form (never by the academic
+   * Leave tab) - routes this request straight to the Warden, skipping
+   * Faculty/HoD entirely. See MeLeavesService.createLeave() for the
+   * accompanying NOT_A_HOSTELLER gate and student-leaves.service.ts for why
+   * these rows never enter the mentor/HoD review queue.
+   */
+  @IsOptional()
+  @IsBoolean()
+  routed_to_warden?: boolean;
 }

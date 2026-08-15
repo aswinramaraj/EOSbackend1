@@ -23,11 +23,31 @@ import { ClassMentorsService } from './class-mentors.service';
 export class ClassMentorsController {
   constructor(private readonly classMentorsService: ClassMentorsService) {}
 
-  /** GET /api/v1/me/mentee-classes — Faculty only. */
+  /**
+   * GET /api/v1/me/mentee-classes — Faculty or HoD. An HoD who also
+   * mentors a class gets the same real list; one who doesn't just gets an
+   * empty array (see getMenteeClasses — resolveFacultyByUserId still works
+   * for an HoD's own faculty row), never a hard 403.
+   */
   @Get('mentee-classes')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   getMenteeClasses(@CurrentUser() user: JwtPayload) {
     return this.classMentorsService.getMenteeClasses(user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/mentee-classes/:class_id/students — Faculty or HoD
+   * (mentor of this class). Powers the "Class Result" screen: full roster
+   * with attendance %, CGPA/arrears (both derived from exam_marks — see
+   * getMenteeClassResult's doc comment), mentor, guardian, contact.
+   */
+  @Get('mentee-classes/:class_id/students')
+  @Roles(ROLES.FACULTY, ROLES.HOD)
+  getMenteeClassResult(
+    @Param('class_id', ParseIntPipe) classId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classMentorsService.getMenteeClassResult(classId, user.sub);
   }
 
   /** GET /api/v1/me/mentees/:student_id/profile — Faculty only (the mentee's class mentor). */

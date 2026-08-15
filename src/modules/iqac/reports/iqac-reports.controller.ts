@@ -25,7 +25,7 @@ function slugify(title: string): string {
 
 @Controller('iqac/reports')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.IQAC)
+@Roles(ROLES.IQAC, ROLES.ADMIN)
 export class IqacReportsController {
   constructor(private readonly reportsService: IqacReportsService) {}
 
