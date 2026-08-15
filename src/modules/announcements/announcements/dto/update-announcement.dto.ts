@@ -13,6 +13,7 @@ import {
 import {
   target_audience_enum,
   announcement_status_enum,
+  announcement_category_enum,
 } from '../../../../../generated/prisma/client';
 
 export class UpdateAnnouncementDto {
@@ -59,6 +60,10 @@ export class UpdateAnnouncementDto {
   @ArrayUnique()
   @IsInt({ each: true })
   role_ids?: number[];
+
+  @ValidateIf((dto) => dto.category !== undefined)
+  @IsEnum(announcement_category_enum)
+  category?: announcement_category_enum;
 
   @ValidateIf((dto) => dto.file_key !== undefined)
   @IsString()

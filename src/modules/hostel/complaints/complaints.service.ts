@@ -7,6 +7,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { formatStudentName } from '../common/student-name.util';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import {
   UpdateComplaintDto,
@@ -21,6 +22,7 @@ const COMPLAINT_INCLUDE = {
       user_id: true,
       student_id_no: true,
       soa_applications: { select: { first_name: true, last_name: true } },
+      users: { select: { email: true } },
       student_hostel_mapping: {
         select: { hostel_rooms: { select: { room_number: true } } },
       },
@@ -35,9 +37,11 @@ type ComplaintWithRelations = Prisma.hostel_complaintsGetPayload<{
 
 function toComplaintResponse(complaint: ComplaintWithRelations) {
   const student = complaint.students;
-  const name = student.soa_applications
-    ? `${student.soa_applications.first_name} ${student.soa_applications.last_name ?? ''}`.trim()
-    : `Student ${student.student_id_no}`;
+  const name = formatStudentName(
+    student.soa_applications?.first_name,
+    student.soa_applications?.last_name,
+    student.users.email,
+  );
 
   return {
     id: complaint.id,

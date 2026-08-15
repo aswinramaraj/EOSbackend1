@@ -98,6 +98,18 @@ export class AnnouncementsController {
   }
 
   /**
+   * GET /api/v1/announcements/lookup/all-classes
+   * Higher Education Cell only — every class in one flat list, since the
+   * cell's announcements are always students-wide with no department/batch
+   * scope to narrow by.
+   */
+  @Get('lookup/all-classes')
+  @Roles(ROLES.HIGHER_EDUCATION)
+  lookupAllClasses() {
+    return this.announcementsService.lookupAllClasses();
+  }
+
+  /**
    * GET /api/v1/announcements/lookup/my-department
    * HOD only — their own department, for the "Target faculty" toggle
    * (an HOD may only ever broadcast to their own department's faculty).
@@ -124,7 +136,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
    */
   @Post('attachments')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
   uploadAttachment(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
@@ -148,7 +160,7 @@ export class AnnouncementsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
   create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     return this.announcementsService.create(dto, user);
   }
@@ -200,7 +212,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Put(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -218,7 +230,7 @@ export class AnnouncementsController {
    * Error responses: see PUT /api/v1/announcements/:id
    */
   @Patch(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -237,7 +249,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Delete(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

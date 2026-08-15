@@ -13,6 +13,7 @@ import {
 import {
   target_audience_enum,
   announcement_status_enum,
+  announcement_category_enum,
 } from '../../../../../generated/prisma/client';
 
 export class CreateAnnouncementDto {
@@ -85,6 +86,11 @@ export class CreateAnnouncementDto {
   @ArrayUnique()
   @IsInt({ each: true })
   role_ids?: number[];
+
+  /** Purely a display tag on the list (emergency/department/academic/event/general) — orthogonal to target_audience, which controls actual visibility. */
+  @IsOptional()
+  @IsEnum(announcement_category_enum)
+  category?: announcement_category_enum;
 
   /** From POST /announcements/attachments' response — never uploaded here. */
   @IsOptional()

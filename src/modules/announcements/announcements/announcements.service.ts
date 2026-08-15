@@ -116,6 +116,7 @@ export class AnnouncementsService {
               posted_by_user_id: user.sub,
               title: dto.title,
               content: dto.content,
+              category: dto.category,
               // NOT NULL column - a draft with no audience chosen yet gets
               // a placeholder that means nothing until actually published.
               target_audience: dto.target_audience ?? 'students',
@@ -174,6 +175,7 @@ export class AnnouncementsService {
               posted_by_user_id: user.sub,
               title: dto.title,
               content: dto.content,
+              category: dto.category,
               target_audience: dto.target_audience!,
               status,
               file_key: dto.file_key,
@@ -225,6 +227,7 @@ export class AnnouncementsService {
             posted_by_user_id: user.sub,
             title: dto.title,
             content: dto.content,
+            category: dto.category,
             target_audience: dto.target_audience,
             department_id: departmentId,
             status,
@@ -257,6 +260,7 @@ export class AnnouncementsService {
             posted_by_user_id: user.sub,
             title: dto.title,
             content: dto.content,
+            category: dto.category,
             target_audience: dto.target_audience!,
             status,
             file_key: dto.file_key,
@@ -607,6 +611,7 @@ export class AnnouncementsService {
         if (
           dto.title !== undefined ||
           dto.content !== undefined ||
+          dto.category !== undefined ||
           dto.target_audience !== undefined ||
           dto.status !== undefined ||
           dto.file_key !== undefined ||
@@ -618,6 +623,7 @@ export class AnnouncementsService {
             data: {
               title: dto.title,
               content: dto.content,
+              category: dto.category,
               target_audience: dto.target_audience,
               status: dto.status,
               department_id: resolvedDepartmentId,
@@ -912,6 +918,20 @@ export class AnnouncementsService {
         };
       }
 
+      // Higher Education Cell and Medical Centre have no class/department
+      // scope of their own — they only ever post/see role-targeted
+      // broadcasts, plus their own posts and Admin's institution-wide ones
+      // (same as HOD/Faculty).
+      case ROLES.HIGHER_EDUCATION:
+      case ROLES.MEDICAL_CENTRE:
+        return {
+          OR: [
+            { posted_by_user_id: context.userId },
+            { users: { roles: { name: ROLES.ADMIN } } },
+            roleTargeted,
+          ],
+        };
+
       default:
         return roleTargeted;
     }
@@ -957,7 +977,12 @@ export class AnnouncementsService {
       return;
     }
 
-    if (context.role === ROLES.ADMIN || context.role === ROLES.PRINCIPAL) {
+    if (
+      context.role === ROLES.ADMIN ||
+      context.role === ROLES.PRINCIPAL ||
+      context.role === ROLES.HIGHER_EDUCATION ||
+      context.role === ROLES.MEDICAL_CENTRE
+    ) {
       return;
     }
 
@@ -976,6 +1001,18 @@ export class AnnouncementsService {
         errorCode: 'ROLE_NOT_PERMITTED',
       });
     }
+  }
+
+  /**
+   * GET /announcements/lookup/all-classes — Higher Education Cell only. The
+   * cell has no department/batch scope of its own, and its announcements
+   * are always students-wide (never a role broadcast), so this returns
+   * every class in one flat list rather than requiring a batch/department
+   * picker like Admin's lookup/classes does.
+   */
+  async lookupAllClasses() {
+    const classes = await this.prisma.classes.findMany({ select: { id: true } });
+    return classes.map((c) => c.id);
   }
 
   private async assertRolesValid(roleIds: number[]) {

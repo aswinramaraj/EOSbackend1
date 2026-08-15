@@ -40,7 +40,7 @@ export class MeFacultyTimetableRosterController {
   }
 
   @Get('academic-calendar-institution')
-  @Roles(ROLES.HOD, ROLES.HR_PAYROLL, ROLES.PRINCIPAL)
+  @Roles(ROLES.HOD, ROLES.HR_PAYROLL, ROLES.PRINCIPAL, ROLES.HIGHER_EDUCATION)
   getInstitutionAcademicCalendar() {
     return this.timetableService.getInstitutionAcademicCalendar();
   }

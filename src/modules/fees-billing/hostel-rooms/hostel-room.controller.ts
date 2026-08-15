@@ -16,14 +16,21 @@ import {
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { resolveWardenHostelId } from 'src/modules/hostel/common/warden-scope.util';
 import { HostelRoomService } from './hostel-room.service';
 import { CreateHostelRoomDto } from './dto/create-hostel-room.dto';
 import { UpdateHostelRoomDto } from './dto/update-hostel-room.dto';
 
 @Controller('hostel-rooms')
 export class HostelRoomController {
-  constructor(private readonly hostelRoomService: HostelRoomService) {}
+  constructor(
+    private readonly hostelRoomService: HostelRoomService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   /**
    * POST /api/v1/hostel-rooms
@@ -40,7 +47,7 @@ export class HostelRoomController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
   create(@Body() dto: CreateHostelRoomDto) {
     return this.hostelRoomService.create(dto);
   }
@@ -54,10 +61,14 @@ export class HostelRoomController {
    */
   @Get()
   @UseGuards(JwtAuthGuard)
-  findAll(@Query('hostel_id') hostelId?: string) {
-    return this.hostelRoomService.findAll(
-      hostelId ? Number(hostelId) : undefined,
-    );
+  async findAll(
+    @Query('hostel_id') hostelId: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const wardenHostelId = await resolveWardenHostelId(this.prisma, user.sub);
+    const effectiveHostelId =
+      wardenHostelId ?? (hostelId ? Number(hostelId) : undefined);
+    return this.hostelRoomService.findAll(effectiveHostelId);
   }
 
   /**
@@ -89,7 +100,7 @@ export class HostelRoomController {
    */
   @Put(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateHostelRoomDto,
@@ -107,7 +118,7 @@ export class HostelRoomController {
    */
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateHostelRoomDto,
@@ -127,7 +138,7 @@ export class HostelRoomController {
    */
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.hostelRoomService.remove(id);
   }

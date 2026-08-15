@@ -13,7 +13,11 @@ import {
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { resolveWardenHostelId } from '../common/warden-scope.util';
 
 function slugify(title: string): string {
   return title
@@ -24,9 +28,20 @@ function slugify(title: string): string {
 
 @Controller('hostel/reports')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.WARDEN)
+@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
 export class HostelReportsController {
-  constructor(private readonly reportsService: HostelReportsService) {}
+  constructor(
+    private readonly reportsService: HostelReportsService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  private async effectiveHostelId(
+    user: JwtPayload,
+    requested?: number,
+  ): Promise<number | undefined> {
+    const wardenHostelId = await resolveWardenHostelId(this.prisma, user.sub);
+    return wardenHostelId ?? requested;
+  }
 
   private async respond(
     table: ReportTable,
@@ -65,21 +80,36 @@ export class HostelReportsController {
   }
 
   @Get('occupancy')
-  async occupancy(@Query() query: HostelReportQueryDto, @Res() res: Response) {
-    const table = await this.reportsService.occupancy(query.hostel_id);
+  async occupancy(
+    @Query() query: HostelReportQueryDto,
+    @Res() res: Response,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const hostelId = await this.effectiveHostelId(user, query.hostel_id);
+    const table = await this.reportsService.occupancy(hostelId);
     await this.respond(table, query.format, res);
   }
 
   @Get('fee-arrears')
-  async feeArrears(@Query() query: HostelReportQueryDto, @Res() res: Response) {
-    const table = await this.reportsService.feeArrears(query.hostel_id);
+  async feeArrears(
+    @Query() query: HostelReportQueryDto,
+    @Res() res: Response,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const hostelId = await this.effectiveHostelId(user, query.hostel_id);
+    const table = await this.reportsService.feeArrears(hostelId);
     await this.respond(table, query.format, res);
   }
 
   @Get('leave-audit')
-  async leaveAudit(@Query() query: HostelReportQueryDto, @Res() res: Response) {
+  async leaveAudit(
+    @Query() query: HostelReportQueryDto,
+    @Res() res: Response,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const hostelId = await this.effectiveHostelId(user, query.hostel_id);
     const table = await this.reportsService.leaveAudit(
-      query.hostel_id,
+      hostelId,
       query.from,
       query.to,
     );
@@ -90,8 +120,10 @@ export class HostelReportsController {
   async complaintSla(
     @Query() query: HostelReportQueryDto,
     @Res() res: Response,
+    @CurrentUser() user: JwtPayload,
   ) {
-    const table = await this.reportsService.complaintSla(query.hostel_id);
+    const hostelId = await this.effectiveHostelId(user, query.hostel_id);
+    const table = await this.reportsService.complaintSla(hostelId);
     await this.respond(table, query.format, res);
   }
 }
