@@ -125,20 +125,29 @@ export class AnnouncementsController {
 
   /**
    * POST /api/v1/announcements/attachments
-   * Admin/HOD/Faculty — uploads a single file to Supabase Storage (private
-   * bucket, see StorageService) and returns its storage key + a short-lived
-   * signed URL. The key is what gets attached to an announcement's
-   * file_key column on create/update — this endpoint itself never touches
-   * the announcements table.
+   * Admin/HOD/Faculty/Principal/Placement/Higher Education — uploads a
+   * single file to Supabase Storage (private bucket, see StorageService)
+   * and returns its storage key + a short-lived signed URL. The key is what
+   * gets attached to an announcement's file_key column on create/update —
+   * this endpoint itself never touches the announcements table.
    *
    * Error responses:
    *  400 VALIDATION_ERROR – no file, or file too large (>10MB)
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
    */
   @Post('attachments')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
-  uploadAttachment(@UploadedFile() file: Express.Multer.File) {
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+  )
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }),
+  )
+  uploadAttachments(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException({
         message: 'No file was uploaded (expected multipart field "file")',
@@ -160,9 +169,56 @@ export class AnnouncementsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+  )
   create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     return this.announcementsService.create(dto, user);
+  }
+
+  /**
+   * POST /api/v1/announcements/:id/attachment
+   * Only the announcement's own author may attach a file to it (same
+   * ownership rule as PUT/PATCH/DELETE) — a separate call after create(),
+   * for attaching a file to an announcement that already exists (as opposed
+   * to POST /announcements/attachments' upload-then-create-with-file_key
+   * flow for a brand new post).
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR – no file in the "file" field
+   *  403 NOT_OWNER
+   *  404 ANNOUNCEMENT_NOT_FOUND
+   *  500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
+   */
+  @Post(':id/attachment')
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+  )
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }),
+  )
+  uploadAttachment(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.announcementsService.attachFileToAnnouncement(id, file, user);
   }
 
   /**
@@ -212,7 +268,14 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Put(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+  )
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -230,7 +293,14 @@ export class AnnouncementsController {
    * Error responses: see PUT /api/v1/announcements/:id
    */
   @Patch(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+  )
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -249,7 +319,14 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Delete(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+  )
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

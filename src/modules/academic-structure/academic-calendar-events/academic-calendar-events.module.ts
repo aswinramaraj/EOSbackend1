@@ -7,5 +7,6 @@ import { PrismaModule } from 'src/prisma/prisma.module';
   imports: [PrismaModule],
   controllers: [AcademicCalendarEventsController],
   providers: [AcademicCalendarEventsService],
+  exports: [AcademicCalendarEventsService],
 })
 export class AcademicCalendarEventsModule {}

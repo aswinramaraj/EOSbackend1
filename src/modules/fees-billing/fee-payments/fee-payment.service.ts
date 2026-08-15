@@ -30,7 +30,10 @@ function computeDueStatus(
   totalDemand: Prisma.Decimal,
   paidAmount: Prisma.Decimal,
 ): DueStatus {
-  if (paidAmount.greaterThanOrEqualTo(totalDemand) && totalDemand.greaterThan(0)) {
+  if (
+    paidAmount.greaterThanOrEqualTo(totalDemand) &&
+    totalDemand.greaterThan(0)
+  ) {
     return 'paid';
   }
   if (paidAmount.greaterThan(0)) {
@@ -142,7 +145,8 @@ export class FeePaymentService {
 
       return payments.map(({ fee_structure_items, ...payment }) => ({
         ...payment,
-        demand_category_name: fee_structure_items?.demand_categories?.name ?? 'General',
+        demand_category_name:
+          fee_structure_items?.demand_categories?.name ?? 'General',
       }));
     } catch (err) {
       this.logger.error('DB error while fetching fee payments', err);
@@ -182,9 +186,8 @@ export class FeePaymentService {
     >;
 
     try {
-      mapping = await this.findMappingWithCategoryBreakdownRelations(
-        demandMappingId,
-      );
+      mapping =
+        await this.findMappingWithCategoryBreakdownRelations(demandMappingId);
     } catch (err) {
       this.logger.error(
         'DB error while fetching fee structure category breakdown',
@@ -210,7 +213,10 @@ export class FeePaymentService {
       // half of the required two-column scope, never the only one.
       const alreadyPaid = mapping.fee_payments
         .filter((payment) => payment.fee_structure_item_id === item.id)
-        .reduce((sum, payment) => sum.plus(payment.amount_paid), new Prisma.Decimal(0));
+        .reduce(
+          (sum, payment) => sum.plus(payment.amount_paid),
+          new Prisma.Decimal(0),
+        );
 
       const outstanding = computeOutstanding(item.amount, alreadyPaid);
 
@@ -263,10 +269,7 @@ export class FeePaymentService {
     try {
       mappings = await this.findDemandMappingsWithDashboardRelations();
     } catch (err) {
-      this.logger.error(
-        'DB error while fetching fee payments dashboard',
-        err,
-      );
+      this.logger.error('DB error while fetching fee payments dashboard', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -328,7 +331,9 @@ export class FeePaymentService {
   async getStudentWorkspace(
     studentId: number,
   ): Promise<FeePaymentStudentWorkspaceDto> {
-    let student: Awaited<ReturnType<typeof this.findStudentWithWorkspaceRelations>>;
+    let student: Awaited<
+      ReturnType<typeof this.findStudentWithWorkspaceRelations>
+    >;
 
     try {
       student = await this.findStudentWithWorkspaceRelations(studentId);
@@ -390,7 +395,9 @@ export class FeePaymentService {
     const totalDemand = demandMappings.reduce(
       (sum, mapping) =>
         sum.plus(
-          this.computeLiveTotalAmount(mapping.fee_structures.fee_structure_items),
+          this.computeLiveTotalAmount(
+            mapping.fee_structures.fee_structure_items,
+          ),
         ),
       new Prisma.Decimal(0),
     );
@@ -478,7 +485,10 @@ export class FeePaymentService {
       fee_summary: {
         total_demand: totalDemand.toString(),
         total_paid: totalPaid.toString(),
-        total_outstanding: computeOutstanding(totalDemand, totalPaid).toString(),
+        total_outstanding: computeOutstanding(
+          totalDemand,
+          totalPaid,
+        ).toString(),
         due_status: computeDueStatus(totalDemand, totalPaid),
       },
       demand_summary: demandSummary,
@@ -545,7 +555,9 @@ export class FeePaymentService {
    * dashboard and workspace endpoints can never show a total that disagrees
    * with the fee structure's actual items, regardless of the snapshot's state.
    */
-  private computeLiveTotalAmount(feeStructureItems: { amount: Prisma.Decimal }[]) {
+  private computeLiveTotalAmount(
+    feeStructureItems: { amount: Prisma.Decimal }[],
+  ) {
     return feeStructureItems.reduce(
       (sum, item) => sum.plus(item.amount),
       new Prisma.Decimal(0),
@@ -612,7 +624,8 @@ export class FeePaymentService {
           err.code === 'P2002' &&
           (err.meta?.target as string[] | undefined)?.includes('receipt_no');
 
-        const isRetryableConflict = isSerializationConflict || isReceiptNumberRace;
+        const isRetryableConflict =
+          isSerializationConflict || isReceiptNumberRace;
 
         if (isRetryableConflict && attempt < MAX_SERIALIZATION_RETRIES) {
           // Two concurrent requests raced for the same demand category (or
@@ -680,7 +693,10 @@ export class FeePaymentService {
         related_entity_id: payment.id,
       });
     } catch (err) {
-      this.logger.error(`Failed to notify student of fee payment ${payment.id}`, err);
+      this.logger.error(
+        `Failed to notify student of fee payment ${payment.id}`,
+        err,
+      );
     }
   }
 
@@ -835,7 +851,12 @@ export class FeePaymentService {
     dto: CreateFeePaymentOrderDto,
   ) {
     const mapping = await this.resolveOwnDemandMapping(userId, demandMappingId);
-    return this.stageGatewayOrder(demandMappingId, mapping.fee_structure_id, dto.amount, userId);
+    return this.stageGatewayOrder(
+      demandMappingId,
+      mapping.fee_structure_id,
+      dto.amount,
+      userId,
+    );
   }
 
   /**
@@ -861,7 +882,10 @@ export class FeePaymentService {
     demandMappingId: number,
     dto: CreateFeePaymentOrderDto,
   ) {
-    const mapping = await this.resolveChildDemandMapping(studentId, demandMappingId);
+    const mapping = await this.resolveChildDemandMapping(
+      studentId,
+      demandMappingId,
+    );
     return this.stageGatewayOrder(
       demandMappingId,
       mapping.fee_structure_id,
@@ -876,7 +900,10 @@ export class FeePaymentService {
     amount: number,
     createdByUserId: number,
   ) {
-    const outstanding = await this.computeMappingOutstanding(demandMappingId, feeStructureId);
+    const outstanding = await this.computeMappingOutstanding(
+      demandMappingId,
+      feeStructureId,
+    );
 
     if (new Prisma.Decimal(amount).greaterThan(outstanding)) {
       throw new UnprocessableEntityException({
@@ -904,7 +931,10 @@ export class FeePaymentService {
         },
       });
     } catch (err) {
-      this.logger.error('DB error while staging fee payment gateway order', err);
+      this.logger.error(
+        'DB error while staging fee payment gateway order',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -989,7 +1019,11 @@ export class FeePaymentService {
       });
     }
 
-    let payment: { id: number; amount_paid: Prisma.Decimal; receipt_no: string };
+    let payment: {
+      id: number;
+      amount_paid: Prisma.Decimal;
+      receipt_no: string;
+    };
     try {
       payment = await this.createMappingLevelPayment(
         order.student_fee_demand_mapping_id,
@@ -1032,7 +1066,10 @@ export class FeePaymentService {
     };
   }
 
-  private async resolveOwnDemandMapping(userId: number, demandMappingId: number) {
+  private async resolveOwnDemandMapping(
+    userId: number,
+    demandMappingId: number,
+  ) {
     const student = await this.prisma.students.findUnique({
       where: { user_id: userId },
       select: { id: true },
@@ -1071,7 +1108,10 @@ export class FeePaymentService {
    * ParentsService.assertOwnChild before this is ever called); this only
    * re-checks that demandMappingId itself actually belongs to that student.
    */
-  private async resolveChildDemandMapping(studentId: number, demandMappingId: number) {
+  private async resolveChildDemandMapping(
+    studentId: number,
+    demandMappingId: number,
+  ) {
     const mapping = await this.prisma.student_fee_demand_mapping.findUnique({
       where: { id: demandMappingId },
       select: { student_id: true, fee_structure_id: true },
@@ -1151,7 +1191,10 @@ export class FeePaymentService {
             });
             const alreadyPaid =
               paidSoFarResult._sum.amount_paid ?? new Prisma.Decimal(0);
-            const outstanding = computeOutstanding(liveTotalAmount, alreadyPaid);
+            const outstanding = computeOutstanding(
+              liveTotalAmount,
+              alreadyPaid,
+            );
 
             if (new Prisma.Decimal(amount).greaterThan(outstanding)) {
               throw new UnprocessableEntityException({
@@ -1190,7 +1233,8 @@ export class FeePaymentService {
           err instanceof Prisma.PrismaClientKnownRequestError &&
           err.code === 'P2002' &&
           (err.meta?.target as string[] | undefined)?.includes('receipt_no');
-        const isRetryableConflict = isSerializationConflict || isReceiptNumberRace;
+        const isRetryableConflict =
+          isSerializationConflict || isReceiptNumberRace;
 
         if (isRetryableConflict && attempt < MAX_SERIALIZATION_RETRIES) {
           continue;
@@ -1245,7 +1289,10 @@ export class FeePaymentService {
       });
     }
 
-    if (dto.collected_by_user_id !== undefined && dto.collected_by_user_id !== null) {
+    if (
+      dto.collected_by_user_id !== undefined &&
+      dto.collected_by_user_id !== null
+    ) {
       await this.assertUserExists(dto.collected_by_user_id);
     }
 

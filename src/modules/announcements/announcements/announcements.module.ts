@@ -9,5 +9,6 @@ import { AnnouncementsController } from './announcements.controller';
   imports: [PrismaModule, StorageModule, NotificationsModule],
   controllers: [AnnouncementsController],
   providers: [AnnouncementsService],
+  exports: [AnnouncementsService],
 })
 export class AnnouncementsModule {}

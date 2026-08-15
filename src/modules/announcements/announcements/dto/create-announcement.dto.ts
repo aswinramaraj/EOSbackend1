@@ -40,7 +40,7 @@ export class CreateAnnouncementDto {
    * Required once status is 'published' (or omitted, defaulting to
    * 'published') — never required for a draft.
    */
-  @ValidateIf((dto) => dto.status !== 'draft')
+  @ValidateIf((dto: CreateAnnouncementDto) => dto.status !== 'draft')
   @IsEnum(target_audience_enum)
   target_audience?: target_audience_enum;
 
@@ -50,7 +50,7 @@ export class CreateAnnouncementDto {
    * Never required for a draft.
    */
   @ValidateIf(
-    (dto) =>
+    (dto: CreateAnnouncementDto) =>
       dto.status !== 'draft' &&
       dto.target_audience !== 'teachers' &&
       dto.target_audience !== 'roles',
@@ -68,7 +68,10 @@ export class CreateAnnouncementDto {
    * own department (enforced in the service, see resolveTeacherTargetDepartment);
    * Admin may target any department, or omit it for an all-faculty broadcast.
    */
-  @ValidateIf((dto) => dto.status !== 'draft' && dto.target_audience === 'teachers')
+  @ValidateIf(
+    (dto: CreateAnnouncementDto) =>
+      dto.status !== 'draft' && dto.target_audience === 'teachers',
+  )
   @IsOptional()
   @IsInt()
   department_id?: number;
@@ -80,7 +83,10 @@ export class CreateAnnouncementDto {
    * "broadcast to everyone" is just every role id from GET
    * /announcements/lookup/roles, not a distinct value.
    */
-  @ValidateIf((dto) => dto.status !== 'draft' && dto.target_audience === 'roles')
+  @ValidateIf(
+    (dto: CreateAnnouncementDto) =>
+      dto.status !== 'draft' && dto.target_audience === 'roles',
+  )
   @IsArray()
   @ArrayNotEmpty()
   @ArrayUnique()
