@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -33,5 +33,11 @@ export class PrincipalStudentsController {
   @Get('attendance-overview')
   getAttendanceOverview() {
     return this.service.getAttendanceOverview();
+  }
+
+  /** GET /principal-students/:id/profile — full Student Profile detail screen. */
+  @Get(':id/profile')
+  getProfile(@Param('id', ParseIntPipe) id: number) {
+    return this.service.getStudentProfile(id);
   }
 }
