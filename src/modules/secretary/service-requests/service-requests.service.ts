@@ -298,10 +298,16 @@ export class ServiceRequestsService {
       `Service request ${id} reviewed: decision=${dto.decision} by user=${reviewerId}`,
     );
 
-    await this.notifications.create({
+    // Real push, matching the same notify() upgrade made for POP decisions
+    // (was .create() — a DB-only row with no push, inconsistent with
+    // faculty leave/OD approvals which already push).
+    await this.notifications.notify({
       user_id: existing.requested_by_user_id,
       title: `Service request ${dto.decision}`,
       message: `Your service request "${existing.title}" has been ${dto.decision}.`,
+      type: dto.decision === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+      related_entity_type: 'secretary_service_request',
+      related_entity_id: existing.id,
     });
 
     return toResponse(request);
