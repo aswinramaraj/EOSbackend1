@@ -2,6 +2,7 @@ import { Injectable, InternalServerErrorException, Logger, NotFoundException } f
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { CreateOutpassDto } from './dto/create-outpass.dto';
 import { ListOutpassQueryDto } from './dto/list-outpass-query.dto';
 
@@ -51,7 +52,10 @@ function toResponse(row: OutpassRow) {
 export class OutpassService {
   private readonly logger = new Logger(OutpassService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   private toTimeOnly(value: string): Date {
     return new Date(`1970-01-01T${value}:00.000Z`);
@@ -122,8 +126,19 @@ export class OutpassService {
     return paginate(rows.map(toResponse), Number(countRows[0]?.count ?? 0), query);
   }
 
+  /**
+   * PATCH /me/student-outpasses/:id/status. Now notifies the student
+   * (real, via NotificationsService — the app-wide in-app inbox) on the
+   * decision; this was a genuine gap before (parent_contact was stored/
+   * displayed but nothing was ever notified). Actually reaching the
+   * parent by SMS/call is a real external-integration gap, not built
+   * here — flagged, not faked.
+   */
   async updateStatus(id: number, status: 'approved' | 'rejected', userId: number) {
-    const existing = await this.prisma.student_outpasses.findUnique({ where: { id } });
+    const existing = await this.prisma.student_outpasses.findUnique({
+      where: { id },
+      select: { id: true, kind: true, students: { select: { user_id: true } } },
+    });
     if (!existing) {
       throw new NotFoundException({ message: 'Outpass not found', errorCode: 'OUTPASS_NOT_FOUND' });
     }
@@ -131,6 +146,16 @@ export class OutpassService {
       where: { id },
       data: { status, approved_by_user_id: userId, approved_at: new Date() },
     });
+    if (existing.students?.user_id) {
+      await this.notifications.notify({
+        user_id: existing.students.user_id,
+        title: status === 'approved' ? 'Outpass approved' : 'Outpass rejected',
+        message: `Your ${existing.kind} outpass request was ${status}.`,
+        type: status === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+        related_entity_type: 'student_outpass',
+        related_entity_id: id,
+      });
+    }
     const [row] = await this.queryRows(Prisma.sql`WHERE so.id = ${id}`);
     return toResponse(row);
   }

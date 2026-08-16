@@ -233,22 +233,24 @@ model assignments {
 }
 
 model attendance_records {
-  id                   Int                    @id @default(autoincrement())
-  student_id           Int
-  class_id             Int
-  subject_id           Int?
-  attendance_date      DateTime               @db.Date
-  status               attendance_status_enum
-  marked_by_faculty_id Int?
-  marked_by_user_id    Int
-  is_published         Boolean                @default(true)
-  published_at         DateTime?              @db.Timestamp(6)
-  photo_url            String?                @db.VarChar(500)
-  classes              classes                @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  faculty              faculty?               @relation(fields: [marked_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  subjects             subjects?              @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users                users                  @relation(fields: [marked_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_attendance_marked_by_user")
-  students             students               @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_attendance_student")
+  id                        Int                         @id @default(autoincrement())
+  student_id                Int
+  class_id                  Int
+  subject_id                Int?
+  attendance_date           DateTime                    @db.Date
+  status                    attendance_status_enum
+  marked_by_faculty_id      Int?
+  marked_by_user_id         Int
+  is_published              Boolean                     @default(true)
+  published_at              DateTime?                   @db.Timestamp(6)
+  photo_url                 String?                     @db.VarChar(500)
+  updated_at                DateTime?                   @db.Timestamptz(6)
+  attendance_record_changes attendance_record_changes[]
+  classes                   classes                     @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty                   faculty?                    @relation(fields: [marked_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subjects                  subjects?                   @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                     users                       @relation(fields: [marked_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_attendance_marked_by_user")
+  students                  students                    @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_attendance_student")
 
   @@unique([student_id, class_id, subject_id, attendance_date])
   @@index([class_id, attendance_date], map: "idx_attendance_class_date")
@@ -483,6 +485,7 @@ model classes {
   lms_folder_classes            lms_folder_classes[]
   lms_notes                     lms_notes[]
   project_teams                 project_teams[]
+  student_escalations           student_escalations[]
   students                      students[]
   timetable_slots               timetable_slots[]
 
@@ -512,15 +515,17 @@ model coordinator_calendar_entries {
 }
 
 model courses {
-  id             Int         @id @default(autoincrement())
-  name           String      @db.VarChar(150)
-  code           String      @unique @db.VarChar(30)
-  department_id  Int
-  duration_years Int         @default(4) @db.SmallInt
-  created_at     DateTime    @default(now()) @db.Timestamptz(6)
-  classes        classes[]
-  departments    departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students       students[]
+  id                        Int         @id @default(autoincrement())
+  name                      String      @db.VarChar(150)
+  code                      String      @unique @db.VarChar(30)
+  department_id             Int
+  duration_years            Int         @default(4) @db.SmallInt
+  created_at                DateTime    @default(now()) @db.Timestamptz(6)
+  accreditation_status      String?     @db.VarChar(30)
+  accreditation_valid_until DateTime?   @db.Date
+  classes                   classes[]
+  departments               departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students                  students[]
 }
 
 model demand_categories {
@@ -550,6 +555,9 @@ model departments {
   code                                                       String                           @unique @db.VarChar(20)
   created_at                                                 DateTime                         @default(now()) @db.Timestamptz(6)
   head_of_department_faculty_id                              Int?
+  office_location                                            String?                          @db.VarChar(255)
+  contact_phone                                              String?                          @db.VarChar(20)
+  contact_email                                              String?                          @db.VarChar(255)
   announcements                                              announcements[]
   books                                                      books[]
   classes                                                    classes[]
@@ -558,7 +566,10 @@ model departments {
   department_achievements                                    department_achievements[]
   department_documents                                       department_documents[]
   department_events                                          department_events[]
+  department_labs                                            department_labs[]
   department_meetings                                        department_meetings[]
+  department_mous                                            department_mous[]
+  department_research_funding                                department_research_funding[]
   faculty_departments_head_of_department_faculty_idTofaculty faculty?                         @relation("departments_head_of_department_faculty_idTofaculty", fields: [head_of_department_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "departments_hod_fkey")
   exam_timetable_versions                                    exam_timetable_versions[]
   faculty_faculty_department_idTodepartments                 faculty[]                        @relation("faculty_department_idTodepartments")
@@ -767,6 +778,7 @@ model faculty {
   campus_outing_requests                                                                     campus_outing_requests[]
   class_mentors                                                                              class_mentors[]
   department_events                                                                          department_events[]
+  department_labs                                                                            department_labs[]
   departments_departments_head_of_department_faculty_idTofaculty                             departments[]                    @relation("departments_head_of_department_faculty_idTofaculty")
   exam_marks                                                                                 exam_marks[]
   departments                                                                                departments                      @relation("faculty_department_idTodepartments", fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -2121,6 +2133,7 @@ model students {
   photo_uploaded_at                                                 DateTime?                          @db.Timestamptz(6)
   face_enrolled_at                                                  DateTime?                          @db.Timestamptz(6)
   mentor_faculty_id                                                 Int?
+  is_class_rep                                                      Boolean                            @default(false)
   alumni_members                                                    alumni_members?
   attendance_records                                                attendance_records[]
   bonafide_requests                                                 bonafide_requests[]
@@ -2169,6 +2182,7 @@ model students {
   student_contacts                                                  student_contacts?
   student_drive_applications                                        student_drive_applications[]
   student_entrepreneurship                                          student_entrepreneurship?
+  student_escalations                                               student_escalations[]
   student_family_details                                            student_family_details?
   student_fee_demand_mapping                                        student_fee_demand_mapping[]
   student_health_records                                            student_health_records?
@@ -2295,6 +2309,7 @@ model users {
   appraisal_requests_appraisal_requests_hod_reviewed_byTousers                      appraisal_requests[]               @relation("appraisal_requests_hod_reviewed_byTousers")
   appraisal_requests_appraisal_requests_management_approved_byTousers               appraisal_requests[]               @relation("appraisal_requests_management_approved_byTousers")
   appraisal_requests_appraisal_requests_staff_user_idTousers                        appraisal_requests[]               @relation("appraisal_requests_staff_user_idTousers")
+  attendance_record_changes                                                         attendance_record_changes[]
   attendance_records                                                                attendance_records[]
   audit_logs                                                                        audit_logs[]
   bills                                                                             bills[]
@@ -2398,6 +2413,7 @@ model users {
   sports_session_attendance                                                         sports_session_attendance[]
   startup_ideas                                                                     startup_ideas[]
   student_drive_applications                                                        student_drive_applications[]
+  student_escalations                                                               student_escalations[]
   student_leaves                                                                    student_leaves[]
   student_leaves_student_leaves_approved_by_warden_user_idTousers                   student_leaves[]                   @relation("student_leaves_approved_by_warden_user_idTousers")
   student_meeting_notes                                                             student_meeting_notes[]
@@ -4471,6 +4487,67 @@ model faculty_publications {
   citation_count Int      @default(0)
   created_at     DateTime @default(now()) @db.Timestamptz(6)
   faculty        faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model attendance_record_changes {
+  id                   BigInt                  @id @default(autoincrement())
+  attendance_record_id Int
+  from_status          attendance_status_enum?
+  to_status            attendance_status_enum
+  changed_by_user_id   Int
+  changed_at           DateTime                @default(now()) @db.Timestamptz(6)
+  attendance_records   attendance_records      @relation(fields: [attendance_record_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                users                   @relation(fields: [changed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([attendance_record_id], map: "idx_attendance_record_changes_record")
+}
+
+model department_labs {
+  id                  Int         @id @default(autoincrement())
+  department_id       Int
+  name                String      @db.VarChar(150)
+  incharge_faculty_id Int?
+  systems_count       Int?
+  status              String?     @default("operational") @db.VarChar(30)
+  created_at          DateTime    @default(now()) @db.Timestamptz(6)
+  departments         departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty             faculty?    @relation(fields: [incharge_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model department_mous {
+  id            Int         @id @default(autoincrement())
+  department_id Int
+  partner_name  String      @db.VarChar(255)
+  signed_date   DateTime?   @db.Date
+  valid_until   DateTime?   @db.Date
+  status        String?     @default("active") @db.VarChar(30)
+  document_url  String?     @db.VarChar(500)
+  departments   departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model department_research_funding {
+  id                Int         @id @default(autoincrement())
+  department_id     Int
+  title             String      @db.VarChar(255)
+  funding_agency    String?     @db.VarChar(255)
+  sanctioned_amount Decimal?    @db.Decimal(14, 2)
+  sanctioned_date   DateTime?   @db.Date
+  status            String?     @default("ongoing") @db.VarChar(30)
+  departments       departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model student_escalations {
+  id            Int       @id @default(autoincrement())
+  student_id    Int?
+  class_id      Int?
+  title         String    @db.VarChar(255)
+  status        String    @default("open") @db.VarChar(30)
+  owner_user_id Int?
+  raised_at     DateTime  @default(now()) @db.Timestamptz(6)
+  notes         String?
+  classes       classes?  @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users         users?    @relation(fields: [owner_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students      students? @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 enum achievement_media_type_enum {
