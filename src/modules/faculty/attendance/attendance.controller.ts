@@ -46,8 +46,20 @@ export class AttendanceController {
     return this.attendanceService.create(dto, user.sub, user.role);
   }
 
-  /** GET /api/v1/attendance — Admin/HoD/Faculty/Student/Parent/Secretary. Student/Parent are scoped to their own records; Secretary is institution-wide (same posture as Admin/HoD here). */
-  @Get('attendance')
+  /**
+   * GET /api/v1/attendance-records — Admin/HoD/Faculty/Student/Parent/
+   * Secretary. Student/Parent are scoped to their own records; Secretary
+   * is institution-wide (same posture as Admin/HoD here).
+   *
+   * Renamed from 'attendance' (bare) — that exact path was silently
+   * shadowed by MeProfileController's own student-only 'me/attendance'
+   * route (MeProfileModule registers before AttendanceModule in
+   * app.module.ts, so Nest/Express always matched that one first). This
+   * meant EVERY role here — not just Secretary — has been unable to reach
+   * this endpoint since it was added. Renaming resolves the ambiguity
+   * without touching the unrelated student-profile module.
+   */
+  @Get('attendance-records')
   @Roles(
     ROLES.ADMIN,
     ROLES.HOD,

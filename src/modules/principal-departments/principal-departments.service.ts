@@ -160,4 +160,103 @@ export class PrincipalDepartmentsService {
       });
     }
   }
+
+  /**
+   * GET /principal-departments/class-mentors?department_id= — real
+   * per-section mentor directory. `class_mentors` already models exactly
+   * this (one mentor per class per academic_year) — it was previously
+   * only ever queried for a faculty's OWN mentee classes; this exposes
+   * the same real table institution-wide for the Students screen's
+   * "Sections & representatives" panel.
+   */
+  async getClassMentors(departmentId?: number) {
+    const classes = await this.prisma.classes.findMany({
+      where: { department_id: departmentId },
+      select: { id: true, section: true, current_semester: true },
+    });
+    const classIds = classes.map((c) => c.id);
+    if (classIds.length === 0) return [];
+
+    const mentors = await this.prisma.class_mentors.findMany({
+      where: { class_id: { in: classIds } },
+      orderBy: { academic_year: 'desc' },
+      select: { class_id: true, academic_year: true, faculty: { select: { first_name: true, last_name: true } } },
+    });
+    const latestByClass = new Map<number, { first_name: string; last_name: string }>();
+    for (const m of mentors) {
+      if (!latestByClass.has(m.class_id)) latestByClass.set(m.class_id, m.faculty);
+    }
+
+    return classes.map((c) => ({
+      class_id: c.id,
+      section: c.section,
+      semester: c.current_semester,
+      mentor: latestByClass.has(c.id) ? `${latestByClass.get(c.id)!.first_name} ${latestByClass.get(c.id)!.last_name}` : null,
+    }));
+  }
+
+  /**
+   * GET /principal-departments/nba-status?department_id= — real
+   * department-level NBA readiness %, aggregated from the same
+   * nba_criteria/nba_evidence_items tables the Accreditation screen
+   * already uses (no new table — just exposed at the department level too).
+   */
+  async getNbaStatus(departmentId?: number) {
+    const criteria = await this.prisma.nba_criteria.findMany({
+      where: { department_id: departmentId },
+      select: { id: true, nba_evidence_items: { select: { done: true } } },
+    });
+    const total = criteria.reduce((s, c) => s + c.nba_evidence_items.length, 0);
+    const done = criteria.reduce((s, c) => s + c.nba_evidence_items.filter((e) => e.done).length, 0);
+    return {
+      readiness_pct: total > 0 ? Math.round((done / total) * 100) : null,
+      done_count: done,
+      total_count: total,
+      criteria_count: criteria.length,
+    };
+  }
+
+  /**
+   * GET /principal-departments/class-strength?department_id= — real
+   * per-year/section student strength + attendance, computed from
+   * students + attendance_records (same aggregate the Students screen's
+   * section panel already computes client-side, exposed grouped by year too).
+   */
+  async getClassStrength(departmentId?: number) {
+    const classes = await this.prisma.classes.findMany({
+      where: { department_id: departmentId },
+      select: { id: true, section: true, current_semester: true, batches: { select: { name: true } } },
+    });
+    const classIds = classes.map((c) => c.id);
+    if (classIds.length === 0) return [];
+
+    const [studentCounts, attendanceRows] = await Promise.all([
+      this.prisma.students.groupBy({ by: ['class_id'], where: { class_id: { in: classIds } }, _count: { _all: true } }),
+      this.prisma.attendance_records.groupBy({
+        by: ['class_id', 'status'],
+        where: { class_id: { in: classIds } },
+        _count: { _all: true },
+      }),
+    ]);
+    const countByClass = new Map(studentCounts.filter((c) => c.class_id !== null).map((c) => [c.class_id as number, c._count._all]));
+    const attByClass = new Map<number, { present: number; total: number }>();
+    for (const r of attendanceRows) {
+      const entry = attByClass.get(r.class_id) ?? { present: 0, total: 0 };
+      entry.total += r._count._all;
+      if (r.status === 'present') entry.present += r._count._all;
+      attByClass.set(r.class_id, entry);
+    }
+
+    return classes.map((c) => {
+      const att = attByClass.get(c.id);
+      return {
+        class_id: c.id,
+        section: c.section,
+        semester: c.current_semester,
+        batch: c.batches?.name ?? null,
+        strength: countByClass.get(c.id) ?? 0,
+        attendance_pct: att && att.total > 0 ? Math.round((att.present / att.total) * 1000) / 10 : null,
+      };
+    });
+  }
 }
