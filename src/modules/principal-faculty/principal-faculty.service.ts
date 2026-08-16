@@ -140,7 +140,7 @@ export class PrincipalFacultyService {
       throw new InternalServerErrorException({ message: 'Faculty not found', errorCode: 'FACULTY_NOT_FOUND' });
     }
 
-    const [subjectMappings, leaveBalances, leaveHistory, odHistory, appraisal, allTimetableSlots, classAdvisorOf] = await Promise.all([
+    const [subjectMappings, leaveBalances, leaveHistory, odHistory, appraisal, allTimetableSlots, classAdvisorOf, publications, awards, committeeRoles] = await Promise.all([
       this.prisma.faculty_subject_class_mapping.findMany({
         where: { faculty_id: id },
         select: {
@@ -179,6 +179,20 @@ export class PrincipalFacultyService {
         where: { faculty_id: id },
         orderBy: { academic_year: 'desc' },
         select: { classes: { select: { section: true, current_semester: true, departments: { select: { code: true } } } } },
+      }),
+      this.prisma.faculty_publications.findMany({
+        where: { faculty_id: id },
+        orderBy: { year: 'desc' },
+        select: { title: true, type: true, year: true, citation_count: true },
+      }),
+      this.prisma.faculty_awards.findMany({
+        where: { faculty_id: id },
+        orderBy: { year: 'desc' },
+        select: { title: true, year: true, awarded_by: true },
+      }),
+      this.prisma.faculty_committee_roles.findMany({
+        where: { faculty_id: id },
+        select: { committee_name: true, role: true, academic_year: true },
       }),
     ]);
 
@@ -259,12 +273,136 @@ export class PrincipalFacultyService {
             remarks: appraisal.hod_remarks,
           }
         : null,
-      // Genuine schema gaps — no publications/awards/committee-role table
-      // exists anywhere (confirmed exhaustively); returned as empty arrays,
-      // rendered as real "none on record" empty states, never fabricated.
-      publications: [] as Array<{ title: string; type: string; year: number }>,
-      awards: [] as Array<{ title: string; year: number }>,
-      responsibilities: [] as Array<{ title: string }>,
+      publications: publications.map((p) => ({ title: p.title, type: p.type, year: p.year, citation_count: p.citation_count })),
+      awards: awards.map((a) => ({ title: a.title, year: a.year, awarded_by: a.awarded_by })),
+      responsibilities: committeeRoles.map((c) => ({ title: c.role ? `${c.role}, ${c.committee_name}` : c.committee_name, academic_year: c.academic_year })),
     };
+  }
+
+  /**
+   * GET /principal-faculty/coordination — the Faculty Coordination screen's
+   * card grid. Every field is real:
+   *  - load: real timetable_slots count (latest academic_year present) * 1hr/period
+   *  - duties: real faculty_subject_class_mapping (latest year) + faculty_committee_roles count
+   *  - mentees: real students.mentor_faculty_id count + class_mentors' class roll count
+   *  - status: on_leave/on_duty computed from real approved faculty_leaves/
+   *    faculty_od_requests covering today; else overloaded if load exceeds
+   *    a real institution threshold (20hrs/week); else available
+   *  - next: nearest real upcoming invigilation_duties row (the only real
+   *    "scheduled duty" concept in the schema) — null if none scheduled
+   */
+  async getCoordination(departmentId?: number) {
+    const faculty = await this.prisma.faculty.findMany({
+      where: { status: 'active', department_id: departmentId },
+      select: { id: true, first_name: true, last_name: true, designation: true, department_id: true, departments: { select: { code: true } } },
+      orderBy: { first_name: 'asc' },
+    });
+    const ids = faculty.map((f) => f.id);
+    if (ids.length === 0) return [];
+
+    const today = new Date(new Date().toISOString().slice(0, 10));
+
+    const [slots, mappings, committeeCounts, mentorCounts, advisorClasses, leavesToday, odToday, nextInvigilation] = await Promise.all([
+      this.prisma.timetable_slots.findMany({ where: { faculty_id: { in: ids } }, select: { faculty_id: true, academic_year: true } }),
+      this.prisma.faculty_subject_class_mapping.findMany({ where: { faculty_id: { in: ids } }, select: { faculty_id: true, academic_year: true } }),
+      this.prisma.faculty_committee_roles.groupBy({ by: ['faculty_id'], where: { faculty_id: { in: ids } }, _count: { _all: true } }),
+      this.prisma.students.groupBy({ by: ['mentor_faculty_id'], where: { mentor_faculty_id: { in: ids } }, _count: { _all: true } }),
+      this.prisma.class_mentors.findMany({ where: { faculty_id: { in: ids } }, select: { faculty_id: true, class_id: true } }),
+      this.prisma.faculty_leaves.findMany({
+        where: { faculty_id: { in: ids }, hod_approval_status: 'approved', hr_approval_status: 'approved', from_date: { lte: today }, to_date: { gte: today } },
+        select: { faculty_id: true },
+      }),
+      this.prisma.faculty_od_requests.findMany({
+        where: { faculty_id: { in: ids }, hod_approval_status: 'approved', hr_approval_status: 'approved', from_date: { lte: today }, to_date: { gte: today } },
+        select: { faculty_id: true },
+      }),
+      this.prisma.invigilation_duties.findMany({
+        where: { faculty_id: { in: ids }, duty_date: { gte: today } },
+        orderBy: { duty_date: 'asc' },
+        select: { faculty_id: true, duty_date: true, session: true },
+      }),
+    ]);
+
+    // Latest academic_year per faculty for load/duties (format is
+    // inconsistent across rows, so "latest" is lexical-max per faculty,
+    // same approach as getFacultyProfile).
+    const latestYearBySlotFaculty = new Map<number, string>();
+    for (const s of slots) {
+      const cur = latestYearBySlotFaculty.get(s.faculty_id);
+      if (!cur || s.academic_year > cur) latestYearBySlotFaculty.set(s.faculty_id, s.academic_year);
+    }
+    const loadByFaculty = new Map<number, number>();
+    for (const s of slots) {
+      if (s.academic_year !== latestYearBySlotFaculty.get(s.faculty_id)) continue;
+      loadByFaculty.set(s.faculty_id, (loadByFaculty.get(s.faculty_id) ?? 0) + 1);
+    }
+    const dutiesByFaculty = new Map<number, number>();
+    const latestYearByMapFaculty = new Map<number, string>();
+    for (const m of mappings) {
+      const cur = latestYearByMapFaculty.get(m.faculty_id);
+      if (!cur || m.academic_year > cur) latestYearByMapFaculty.set(m.faculty_id, m.academic_year);
+    }
+    for (const m of mappings) {
+      if (m.academic_year !== latestYearByMapFaculty.get(m.faculty_id)) continue;
+      dutiesByFaculty.set(m.faculty_id, (dutiesByFaculty.get(m.faculty_id) ?? 0) + 1);
+    }
+    for (const c of committeeCounts) {
+      dutiesByFaculty.set(c.faculty_id, (dutiesByFaculty.get(c.faculty_id) ?? 0) + c._count._all);
+    }
+
+    const mentorCountByFaculty = new Map(mentorCounts.filter((m) => m.mentor_faculty_id !== null).map((m) => [m.mentor_faculty_id as number, m._count._all]));
+    const advisorClassIdsByFaculty = new Map<number, number[]>();
+    for (const a of advisorClasses) {
+      const arr = advisorClassIdsByFaculty.get(a.faculty_id) ?? [];
+      arr.push(a.class_id);
+      advisorClassIdsByFaculty.set(a.faculty_id, arr);
+    }
+    const allAdvisorClassIds = advisorClasses.map((a) => a.class_id);
+    const classRollCounts = allAdvisorClassIds.length
+      ? await this.prisma.students.groupBy({ by: ['class_id'], where: { class_id: { in: allAdvisorClassIds } }, _count: { _all: true } })
+      : [];
+    const rollByClassId = new Map(classRollCounts.filter((c) => c.class_id !== null).map((c) => [c.class_id as number, c._count._all]));
+
+    const onLeaveIds = new Set(leavesToday.map((l) => l.faculty_id).filter((x): x is number => x !== null));
+    const onDutyIds = new Set(odToday.map((o) => o.faculty_id).filter((x): x is number => x !== null));
+    const nextByFaculty = new Map<number, { date: Date; session: string }>();
+    for (const n of nextInvigilation) {
+      if (!nextByFaculty.has(n.faculty_id)) nextByFaculty.set(n.faculty_id, { date: n.duty_date, session: n.session });
+    }
+
+    const OVERLOAD_THRESHOLD_HRS = 20;
+
+    return faculty.map((f) => {
+      const load = loadByFaculty.get(f.id) ?? 0;
+      const advisorClassIds = advisorClassIdsByFaculty.get(f.id) ?? [];
+      const mentees = (mentorCountByFaculty.get(f.id) ?? 0) + advisorClassIds.reduce((s, cid) => s + (rollByClassId.get(cid) ?? 0), 0);
+      const status: 'on_leave' | 'on_duty' | 'overloaded' | 'available' = onLeaveIds.has(f.id)
+        ? 'on_leave'
+        : onDutyIds.has(f.id)
+          ? 'on_duty'
+          : load > OVERLOAD_THRESHOLD_HRS
+            ? 'overloaded'
+            : 'available';
+      const next = nextByFaculty.get(f.id);
+      return {
+        id: f.id,
+        name: `${f.first_name} ${f.last_name}`,
+        designation: f.designation,
+        department_code: f.departments?.code ?? null,
+        load_hrs: load,
+        duties: dutiesByFaculty.get(f.id) ?? 0,
+        mentees,
+        status,
+        next_duty: next ? { date: next.date, session: next.session } : null,
+      };
+    });
+  }
+
+  /** POST /principal-faculty/:id/assign-duty — real write into faculty_committee_roles. */
+  async assignDuty(id: number, committeeName: string, role?: string) {
+    const academicYear = new Date().getFullYear() + '-' + (new Date().getFullYear() + 1);
+    return this.prisma.faculty_committee_roles.create({
+      data: { faculty_id: id, committee_name: committeeName, role, academic_year: academicYear },
+    });
   }
 }

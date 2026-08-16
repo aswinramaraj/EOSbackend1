@@ -758,6 +758,7 @@ model faculty {
   reports_to_faculty_id                                                                      Int?
   resume_url                                                                                 String?                          @db.VarChar(500)
   designation_id                                                                             Int?
+  staff_code                                                                                 String?                          @unique @db.VarChar(30)
   appraisal_requests                                                                         appraisal_requests[]
   assignments                                                                                assignments[]
   attendance_records                                                                         attendance_records[]
@@ -775,6 +776,8 @@ model faculty {
   users                                                                                      users                            @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   faculty_activity_log                                                                       faculty_activity_log[]
   faculty_attendance_corrections                                                             faculty_attendance_corrections[]
+  faculty_awards                                                                             faculty_awards[]
+  faculty_committee_roles                                                                    faculty_committee_roles[]
   faculty_daily_attendance                                                                   faculty_daily_attendance[]
   faculty_documents                                                                          faculty_documents[]
   faculty_holiday_mapping                                                                    faculty_holiday_mapping[]
@@ -783,6 +786,7 @@ model faculty {
   faculty_leave_balances                                                                     faculty_leave_balances[]
   faculty_leaves                                                                             faculty_leaves[]
   faculty_od_requests                                                                        faculty_od_requests[]
+  faculty_publications                                                                       faculty_publications[]
   faculty_sensitive_info                                                                     faculty_sensitive_info?
   faculty_subject_class_mapping                                                              faculty_subject_class_mapping[]
   faculty_subject_class_mapping_faculty_subject_class_mapping_substitute_faculty_idTofaculty faculty_subject_class_mapping[]  @relation("faculty_subject_class_mapping_substitute_faculty_idTofaculty")
@@ -1942,23 +1946,27 @@ model student_drive_applications {
 }
 
 model student_family_details {
-  id                   Int      @id @default(autoincrement())
-  student_id           Int      @unique
-  father_name          String?  @db.VarChar(150)
-  father_qualification String?  @db.VarChar(150)
-  father_occupation    String?  @db.VarChar(150)
-  father_annual_income Decimal? @db.Decimal(12, 2)
-  father_email         String?  @db.Citext
-  father_mobile        String?  @db.VarChar(20)
-  mother_name          String?  @db.VarChar(150)
-  mother_qualification String?  @db.VarChar(150)
-  mother_occupation    String?  @db.VarChar(150)
-  mother_annual_income Decimal? @db.Decimal(12, 2)
-  mother_email         String?  @db.Citext
-  mother_mobile        String?  @db.VarChar(20)
-  father_photo_url     String?  @db.VarChar(500)
-  mother_photo_url     String?  @db.VarChar(500)
-  students             students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                    Int      @id @default(autoincrement())
+  student_id            Int      @unique
+  father_name           String?  @db.VarChar(150)
+  father_qualification  String?  @db.VarChar(150)
+  father_occupation     String?  @db.VarChar(150)
+  father_annual_income  Decimal? @db.Decimal(12, 2)
+  father_email          String?  @db.Citext
+  father_mobile         String?  @db.VarChar(20)
+  mother_name           String?  @db.VarChar(150)
+  mother_qualification  String?  @db.VarChar(150)
+  mother_occupation     String?  @db.VarChar(150)
+  mother_annual_income  Decimal? @db.Decimal(12, 2)
+  mother_email          String?  @db.Citext
+  mother_mobile         String?  @db.VarChar(20)
+  father_photo_url      String?  @db.VarChar(500)
+  mother_photo_url      String?  @db.VarChar(500)
+  guardian_name         String?  @db.VarChar(150)
+  guardian_relationship String?  @db.VarChar(50)
+  guardian_phone        String?  @db.VarChar(20)
+  guardian_email        String?  @db.Citext
+  students              students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model student_fee_demand_mapping {
@@ -4430,6 +4438,39 @@ model user_preferences {
   compact_tables          Boolean  @default(false)
   updated_at              DateTime @default(now()) @db.Timestamptz(6)
   users                   users    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_awards {
+  id         Int      @id @default(autoincrement())
+  faculty_id Int
+  title      String   @db.VarChar(255)
+  awarded_by String?  @db.VarChar(255)
+  year       Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  faculty    faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_committee_roles {
+  id             Int     @id @default(autoincrement())
+  faculty_id     Int
+  committee_name String  @db.VarChar(255)
+  role           String? @db.VarChar(100)
+  academic_year  String? @db.VarChar(20)
+  faculty        faculty @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model faculty_publications {
+  id             Int      @id @default(autoincrement())
+  faculty_id     Int
+  title          String   @db.VarChar(500)
+  type           String   @db.VarChar(30)
+  year           Int?
+  venue          String?  @db.VarChar(255)
+  doi            String?  @db.VarChar(100)
+  citation_count Int      @default(0)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  faculty        faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 enum achievement_media_type_enum {
