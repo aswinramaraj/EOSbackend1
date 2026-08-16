@@ -115,6 +115,10 @@ function formatRecord(record: BorrowRecordWithRelations, finePerDay: number) {
           name: `${record.faculty.first_name} ${record.faculty.last_name}`,
         }
       : null,
+    // staff_user_id: real column added by the Secretary module completion
+    // migration, alongside the 'staff' borrower_type_enum value — a plain
+    // users.id, no dedicated relation/name lookup exists for it here.
+    staff_user_id: record.staff_user_id,
     borrowed_date: record.borrowed_date,
     due_date: record.due_date,
     returned_date: record.returned_date,
@@ -182,6 +186,14 @@ export class BorrowRecordsService {
       // borrower_type; formatRecord() assumes only one is ever populated).
       let studentId: number | null = null;
       let facultyId: number | null = null;
+      // staffUserId stays permanently null here — 'staff' borrower_type
+      // records exist in the schema (added for a Secretary self-checkout
+      // feature that was reverted: real books can only be checked out/
+      // returned by library staff at the desk, so there's no genuine
+      // self-service create path for a Secretary account). The column and
+      // enum value are harmless to leave in place; this create() path
+      // just never populates them.
+      const staffUserId: number | null = null;
 
       if (currentUser.role === 'student') {
         // Self-service students may only ever borrow for themselves —
@@ -254,6 +266,7 @@ export class BorrowRecordsService {
           status: 'borrowed',
           student_id: studentId ?? undefined,
           faculty_id: facultyId ?? undefined,
+          staff_user_id: staffUserId ?? undefined,
         },
         select: { book_id: true, due_date: true },
       });
@@ -322,6 +335,7 @@ export class BorrowRecordsService {
           borrower_type: dto.borrower_type,
           student_id: studentId,
           faculty_id: facultyId,
+          staff_user_id: staffUserId,
           due_date: new Date(dto.due_date),
         },
         include: RECORD_INCLUDE,
@@ -368,6 +382,52 @@ export class BorrowRecordsService {
 
     // 'overdue' isn't a value ever persisted in the status column (see the
     // same mapping in findAll() above) — map it to the derived predicate.
+    if (dto.status === BorrowStatus.overdue) {
+      where.status = 'borrowed';
+      where.due_date = { lt: new Date() };
+    } else if (dto.status) {
+      where.status = dto.status;
+    }
+
+    const records = await this.prisma.book_borrow_records.findMany({
+      where,
+      include: {
+        books: {
+          select: { title: true, author: true },
+        },
+      },
+      orderBy: { borrowed_date: 'desc' },
+    });
+
+    return {
+      success: true,
+      message: 'Borrowed books fetched successfully',
+      data: records.map((record) => ({
+        id: record.id,
+        book_id: record.book_id,
+        title: record.books.title,
+        author: record.books.author,
+        borrowed_date: record.borrowed_date,
+        due_date: record.due_date,
+        returned_date: record.returned_date,
+        status: record.status,
+        renewal_count: record.renewal_count,
+        last_renewed_at: record.last_renewed_at,
+      })),
+    };
+  }
+
+  // GET /me/library/staff-borrow-records — a Secretary's (or any 'staff'
+  // borrower's) own borrow history, mirroring findMyBorrowRecords() above
+  // but keyed by staff_user_id instead of student_id.
+  async findMyStaffBorrowRecords(
+    dto: GetMyBorrowRecordsDto,
+    currentUser: JwtPayload,
+  ) {
+    const where: Prisma.book_borrow_recordsWhereInput = {
+      staff_user_id: currentUser.sub,
+    };
+
     if (dto.status === BorrowStatus.overdue) {
       where.status = 'borrowed';
       where.due_date = { lt: new Date() };
@@ -531,6 +591,12 @@ export class BorrowRecordsService {
     const rules = await this.librarySettings.getRules();
     return formatRecord(record, rules.finePerDay);
   }
+
+  // No self-service renew for Secretary — reverted per the user's explicit
+  // call that a real book can only be renewed/returned by library staff at
+  // the desk (a physical handover/scan-in a self-service caller can't
+  // perform). The Secretary Library screen is view-only:
+  // findMyStaffBorrowRecords() above is its only real endpoint.
 
   async update(id: number, dto: UpdateBorrowRecordDto) {
     const record = await this.prisma.book_borrow_records.findUnique({

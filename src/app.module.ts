@@ -134,6 +134,13 @@ import { VendorsModule } from './modules/procurement/vendors/vendors.module';
 import { PurchaseRequestsModule } from './modules/procurement/purchase-requests/purchase-requests.module';
 import { ServiceRequestsModule } from './modules/procurement/service-requests/service-requests.module';
 
+import { DocumentsModule } from './modules/secretary-portal/documents/documents.module';
+import { OutpassModule } from './modules/secretary-portal/outpass/outpass.module';
+import { MeetingsModule } from './modules/secretary-portal/meetings/meetings.module';
+import { EventsModule } from './modules/secretary-portal/events/events.module';
+import { AccreditationModule } from './modules/secretary-portal/accreditation/accreditation.module';
+import { SettingsModule } from './modules/secretary-portal/settings/settings.module';
+
 import { WalletModule } from './modules/wallet/wallet.module';
 
 import { VenuesModule } from './modules/venues/venues/venues.module';
@@ -290,6 +297,12 @@ import { HostelReportsModule } from './modules/hostel/reports/reports.module';
     VendorsModule,
 
     PurchaseRequestsModule,
+    DocumentsModule,
+    OutpassModule,
+    MeetingsModule,
+    EventsModule,
+    AccreditationModule,
+    SettingsModule,
     ServiceRequestsModule,
 
     WalletModule,

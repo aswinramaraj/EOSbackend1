@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -23,6 +24,7 @@ const FACULTY_OD_SELECT = {
   hod_approval_status: true,
   hr_approval_status: true,
   created_at: true,
+  staff_user_id: true,
   faculty: {
     select: {
       id: true,
@@ -43,13 +45,19 @@ interface FacultyOdRow {
   hod_approval_status: string;
   hr_approval_status: string;
   created_at: Date;
+  staff_user_id: number | null;
+  // Nullable only because faculty_id was relaxed for an unrelated
+  // Secretary-facing feature (see the Secretary module completion
+  // migration) — every row THIS module creates/reads still always has
+  // faculty_id set (create() is still Faculty-only), so this is a
+  // compile-time nullability fix, not a real behavior change.
   faculty: {
     id: number;
     first_name: string;
     last_name: string;
     designation: string;
     departments: { id: number; name: string; code: string } | null;
-  };
+  } | null;
 }
 
 function computeOverallStatus(
@@ -80,6 +88,7 @@ function toResponse(od: FacultyOdRow) {
     ),
     created_at: od.created_at,
     faculty: od.faculty,
+    staff_user_id: od.staff_user_id,
   };
 }
 
@@ -99,8 +108,6 @@ export class FacultyOdService {
    * sending it straight to HR Payroll.
    */
   async create(dto: CreateFacultyOdDto, currentUser: JwtPayload) {
-    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-
     const fromDate = new Date(dto.from_date);
     const toDate = new Date(dto.to_date);
     const today = new Date(new Date().toISOString().slice(0, 10));
@@ -114,6 +121,27 @@ export class FacultyOdService {
     if (fromDate > toDate) {
       throw new BadRequestException('from_date must be on or before to_date');
     }
+
+    // Secretary (or any non-Faculty staff account) — no faculty row, no
+    // HoD to review; goes straight to the HR Payroll stage, keyed by
+    // staff_user_id. Mirrors faculty-leaves' identical Secretary branch.
+    if (currentUser.role === ROLES.SECRETARY) {
+      const od = await this.prisma.faculty_od_requests.create({
+        data: {
+          staff_user_id: currentUser.sub,
+          from_date: fromDate,
+          to_date: toDate,
+          place: dto.place,
+          purpose: dto.purpose,
+          hod_approval_status: 'approved',
+        },
+        select: FACULTY_OD_SELECT,
+      });
+      this.logger.log(`Staff OD request created: id=${od.id}`);
+      return toResponse(od);
+    }
+
+    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
 
     const od = await this.prisma.faculty_od_requests.create({
       data: {
@@ -158,6 +186,9 @@ export class FacultyOdService {
       where.faculty = { department_id: hod.department_id };
     } else if (currentUser.role === ROLES.HR_PAYROLL) {
       where.hod_approval_status = 'approved';
+    } else if (currentUser.role === ROLES.SECRETARY) {
+      delete where.faculty_id;
+      where.staff_user_id = currentUser.sub;
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -201,6 +232,12 @@ export class FacultyOdService {
 
     if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (existing.faculty_id === null) {
+        throw new InternalServerErrorException({
+          message: 'This OD request has no faculty on record',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
       if (existing.faculty_id === hod.id) {
         throw new ForbiddenException({
           message: 'You cannot review your own OD request',
@@ -249,6 +286,99 @@ export class FacultyOdService {
     });
 
     return toResponse(od);
+  }
+
+  /**
+   * DELETE /me/faculty-od/:id (Faculty/HoD/Secretary — own request, only
+   * while still fully pending). This route never previously existed for
+   * this module at all — added to give OD requests real CRUD parity with
+   * faculty-leaves' equivalent withdraw action, same rules: a Secretary's
+   * own request has hod_approval_status pre-set to 'approved' (no HoD to
+   * review it), so only hr_approval_status gates withdrawal for them.
+   */
+  async remove(id: number, userId: number, role?: string) {
+    const existing = await this.prisma.faculty_od_requests.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Faculty OD request not found');
+    }
+
+    if (role === ROLES.SECRETARY) {
+      if (existing.staff_user_id !== userId) {
+        throw new ForbiddenException('You may only delete your own OD requests');
+      }
+    } else {
+      const faculty = await this.resolveFacultyByUserId(userId);
+      if (existing.faculty_id !== faculty.id) {
+        throw new ForbiddenException('You may only delete your own OD requests');
+      }
+    }
+
+    const stillWithdrawable =
+      role === ROLES.SECRETARY
+        ? existing.hr_approval_status === 'pending'
+        : existing.hod_approval_status === 'pending' &&
+          existing.hr_approval_status === 'pending';
+
+    if (!stillWithdrawable) {
+      throw new ConflictException(
+        'Only a still-pending OD request can be withdrawn',
+      );
+    }
+
+    await this.prisma.faculty_od_requests.delete({ where: { id } });
+    this.logger.log(`Faculty OD request deleted: id=${id}`);
+    return { id, deleted: true };
+  }
+
+  /**
+   * PATCH /me/my-od/:id — Secretary self-edit of their OWN still-pending
+   * (at HR Payroll) OD request. Mirrors faculty-leaves' updateOwnStaffRequest.
+   */
+  async updateOwnStaffRequest(
+    id: number,
+    userId: number,
+    dto: { from_date?: string; to_date?: string; place?: string; purpose?: string },
+  ) {
+    const existing = await this.prisma.faculty_od_requests.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Faculty OD request not found');
+    }
+    if (existing.staff_user_id !== userId) {
+      throw new ForbiddenException('You may only edit your own OD requests');
+    }
+    if (existing.hr_approval_status !== 'pending') {
+      throw new ConflictException(
+        'This request has already been decided and can no longer be edited',
+      );
+    }
+
+    const data: {
+      from_date?: Date;
+      to_date?: Date;
+      place?: string;
+      purpose?: string;
+    } = {};
+    if (dto.from_date) data.from_date = new Date(dto.from_date);
+    if (dto.to_date) data.to_date = new Date(dto.to_date);
+    if (dto.place !== undefined) data.place = dto.place;
+    if (dto.purpose !== undefined) data.purpose = dto.purpose;
+
+    const fromDate = data.from_date ?? existing.from_date;
+    const toDate = data.to_date ?? existing.to_date;
+    if (fromDate > toDate) {
+      throw new BadRequestException('from_date must be on or before to_date');
+    }
+
+    const updated = await this.prisma.faculty_od_requests.update({
+      where: { id },
+      data,
+      select: FACULTY_OD_SELECT,
+    });
+    return toResponse(updated);
   }
 
   private async resolveFacultyByUserId(userId: number) {

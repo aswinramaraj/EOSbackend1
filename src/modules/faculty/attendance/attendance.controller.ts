@@ -32,17 +32,23 @@ export class AttendanceController {
     private readonly meStaffAttendanceService: MeStaffAttendanceService,
   ) {}
 
-  /** POST /api/v1/attendance — Faculty only. */
+  /**
+   * POST /api/v1/attendance — Faculty, Secretary. Secretary added for the
+   * Secretary Portal's Bulk Attendance "Mark" tab — has no `faculty` table
+   * row, handled by a distinct branch in the service (see
+   * AttendanceService.create) that skips the faculty-profile lookup,
+   * mirroring the same pattern already used for media-requests.
+   */
   @Post('attendance')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateAttendanceDto, @CurrentUser() user: JwtPayload) {
-    return this.attendanceService.create(dto, user.sub);
+    return this.attendanceService.create(dto, user.sub, user.role);
   }
 
-  /** GET /api/v1/attendance — Admin/HoD/Faculty/Student/Parent. Student/Parent are scoped to their own records. */
+  /** GET /api/v1/attendance — Admin/HoD/Faculty/Student/Parent/Secretary. Student/Parent are scoped to their own records; Secretary is institution-wide (same posture as Admin/HoD here). */
   @Get('attendance')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.STUDENT, ROLES.PARENT)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.STUDENT, ROLES.PARENT, ROLES.SECRETARY)
   findAll(
     @Query() query: ListAttendanceQueryDto,
     @CurrentUser() user: JwtPayload,

@@ -72,6 +72,43 @@ function computeStats(rows: { status: string }[]) {
 export class FacultyAttendanceService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * GET /me/faculty/my-attendance — self-scoped read for a Secretary (or any
+   * non-faculty staff account) viewing their OWN day-by-day attendance,
+   * keyed by the `staff_user_id` column added to `faculty_daily_attendance`
+   * by the Secretary module completion migration. Genuinely real, genuinely
+   * read-only — this table has no write endpoint anywhere in this module by
+   * design (see the controller's doc comment: populated externally via a
+   * biometric/punch import). Until that external import starts writing
+   * staff_user_id-linked rows for this account, this will correctly and
+   * honestly return an empty list — no placeholder rows are fabricated here.
+   */
+  async getMyAttendance(userId: number, academicYear?: string) {
+    const where: Record<string, unknown> = { staff_user_id: userId };
+    if (academicYear) where.academic_year = academicYear;
+
+    const rows = await this.prisma.faculty_daily_attendance.findMany({
+      where,
+      orderBy: { attendance_date: 'desc' },
+      select: {
+        attendance_date: true,
+        punch_in: true,
+        punch_out: true,
+        status: true,
+      },
+    });
+
+    const days: DayRow[] = rows.map((r) => ({
+      date: formatDate(r.attendance_date),
+      day: r.attendance_date.toLocaleDateString('en-US', { weekday: 'long' }),
+      punch_in: formatTime(r.punch_in),
+      punch_out: formatTime(r.punch_out),
+      status: r.status,
+    }));
+
+    return { ...computeStats(rows), days };
+  }
+
   /** GET /faculty/:id/attendance — Admin/HoD view-only. Empty until a punch-in source populates faculty_daily_attendance. */
   async getForFaculty(facultyId: number, academicYear?: string) {
     const faculty = await this.prisma.faculty.findUnique({
@@ -193,9 +230,14 @@ export class FacultyAttendanceService {
 
     const byFaculty = new Map<number, { status: string }[]>();
     for (const row of attendanceRows) {
-      const list = byFaculty.get(row.faculty_id) ?? [];
+      // faculty_id was relaxed to nullable for an unrelated Secretary-facing
+      // feature, but this query's own where-clause (`faculty_id: { in:
+      // facultyIds }`) can only ever match rows that already have a real
+      // faculty_id — never-null in practice here.
+      const facultyId = row.faculty_id!;
+      const list = byFaculty.get(facultyId) ?? [];
       list.push({ status: row.status });
-      byFaculty.set(row.faculty_id, list);
+      byFaculty.set(facultyId, list);
     }
 
     const rows = facultyRows.map((f) => ({

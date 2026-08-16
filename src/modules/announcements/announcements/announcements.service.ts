@@ -123,6 +123,7 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               priority: dto.priority,
+              category: dto.category,
             },
           });
 
@@ -180,6 +181,7 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               priority: dto.priority,
+              category: dto.category,
             },
           });
 
@@ -233,6 +235,7 @@ export class AnnouncementsService {
             file_key: dto.file_key,
             file_name: dto.file_name,
             priority: dto.priority,
+            category: dto.category,
           },
         });
       } catch (err) {
@@ -279,6 +282,7 @@ export class AnnouncementsService {
             file_key: dto.file_key,
             file_name: dto.file_name,
             priority: dto.priority,
+            category: dto.category,
           },
         });
       } catch (err) {
@@ -307,6 +311,7 @@ export class AnnouncementsService {
             file_key: dto.file_key,
             file_name: dto.file_name,
             priority: dto.priority,
+            category: dto.category,
           },
         });
 
@@ -369,7 +374,11 @@ export class AnnouncementsService {
       return context.departmentId;
     }
 
-    if (context.role === ROLES.ADMIN || context.role === ROLES.PRINCIPAL) {
+    if (
+      context.role === ROLES.ADMIN ||
+      context.role === ROLES.PRINCIPAL ||
+      context.role === ROLES.SECRETARY
+    ) {
       if (requestedDepartmentId === undefined) {
         return null;
       }
@@ -658,6 +667,7 @@ export class AnnouncementsService {
           dto.file_key !== undefined ||
           dto.file_name !== undefined ||
           dto.priority !== undefined ||
+          dto.category !== undefined ||
           resolvedDepartmentId !== undefined
         ) {
           await tx.announcements.update({
@@ -671,6 +681,7 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               priority: dto.priority,
+              category: dto.category,
             },
           });
         }
@@ -771,6 +782,12 @@ export class AnnouncementsService {
 
       case ROLES.EDC_COORDINATOR:
         return { role: ROLES.EDC_COORDINATOR, userId: user.sub, roleId: user.roleId };
+
+      // No secretary→department linkage exists anywhere in the schema
+      // (checked: no such column on any table) — treated as institution-wide,
+      // same as Admin/Principal, rather than inventing a department scope.
+      case ROLES.SECRETARY:
+        return { role: ROLES.SECRETARY, userId: user.sub, roleId: user.roleId };
 
       case ROLES.HOD: {
         const faculty = await this.getFacultyByUserId(user.sub);
@@ -889,6 +906,10 @@ export class AnnouncementsService {
         return {};
 
       case ROLES.PRINCIPAL:
+        return {};
+
+      // Institution-wide, same as Admin/Principal — see resolveUserContext.
+      case ROLES.SECRETARY:
         return {};
 
       // EDC coordinator has no recipient list to resolve (no "founders"
@@ -1018,7 +1039,11 @@ export class AnnouncementsService {
       return;
     }
 
-    if (context.role === ROLES.ADMIN || context.role === ROLES.PRINCIPAL) {
+    if (
+      context.role === ROLES.ADMIN ||
+      context.role === ROLES.PRINCIPAL ||
+      context.role === ROLES.SECRETARY
+    ) {
       return;
     }
 

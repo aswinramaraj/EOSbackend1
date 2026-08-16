@@ -13,6 +13,7 @@ import {
 import {
   target_audience_enum,
   announcement_status_enum,
+  announcement_category_enum,
 } from '../../../../../generated/prisma/client';
 
 export class UpdateAnnouncementDto {
@@ -73,4 +74,8 @@ export class UpdateAnnouncementDto {
   @IsString()
   @MaxLength(20)
   priority?: string;
+
+  @ValidateIf((dto) => dto.category !== undefined)
+  @IsEnum(announcement_category_enum)
+  category?: announcement_category_enum;
 }

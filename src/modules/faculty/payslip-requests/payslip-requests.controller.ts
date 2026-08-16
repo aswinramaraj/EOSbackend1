@@ -22,6 +22,7 @@ import { PayslipRequestsService } from './payslip-requests.service';
 import { CreatePayslipRequestDto } from './dto/create-payslip-request.dto';
 import { UpdatePayslipRequestDto } from './dto/update-payslip-request.dto';
 import { ListPayslipRequestQueryDto } from './dto/list-payslip-request-query.dto';
+import { UpdateOwnPayslipDto } from './dto/update-own-payslip.dto';
 
 @Controller('me')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -32,18 +33,18 @@ export class PayslipRequestsController {
 
   /** POST /api/v1/payslip-requests — Faculty or HoD, for the caller's own record. */
   @Post('payslip-requests')
-  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
   create(
     @Body() dto: CreatePayslipRequestDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.payslipRequestsService.create(dto, user.sub);
+    return this.payslipRequestsService.create(dto, user.sub, user.role);
   }
 
-  /** GET /api/v1/payslip-requests — HR Payroll (all) / Faculty/HoD (own only). */
+  /** GET /api/v1/payslip-requests — HR Payroll (all) / Faculty/HoD/Secretary (own only). */
   @Get('payslip-requests')
-  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   findAll(
     @Query() query: ListPayslipRequestQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -51,9 +52,9 @@ export class PayslipRequestsController {
     return this.payslipRequestsService.findAll(query, user);
   }
 
-  /** GET /api/v1/payslip-requests/:id — HR Payroll (all) / Faculty/HoD (own only). */
+  /** GET /api/v1/payslip-requests/:id — HR Payroll (all) / Faculty/HoD/Secretary (own only). */
   @Get('payslip-requests/:id')
-  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -74,13 +75,24 @@ export class PayslipRequestsController {
     return this.payslipRequestsService.update(id, dto);
   }
 
-  /** DELETE /api/v1/payslip-requests/:id — Faculty or HoD, own request, only while still 'pending'. */
+  /** PATCH /api/v1/me/my-payslip-requests/:id — self-edit, purpose only, own request, while still 'pending'. */
+  @Patch('my-payslip-requests/:id')
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
+  updateOwn(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateOwnPayslipDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.payslipRequestsService.updateOwnPurpose(id, user.sub, user.role, dto.purpose);
+  }
+
+  /** DELETE /api/v1/payslip-requests/:id — Faculty, HoD or Secretary, own request, only while still 'pending'. */
   @Delete('payslip-requests/:id')
-  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.payslipRequestsService.remove(id, user.sub);
+    return this.payslipRequestsService.remove(id, user.sub, user.role);
   }
 }

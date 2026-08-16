@@ -22,6 +22,7 @@ import { FacultyLeavesService } from './faculty-leaves.service';
 import { CreateFacultyLeafDto } from './dto/create-faculty-leaf.dto';
 import { UpdateFacultyLeafDto } from './dto/update-faculty-leaf.dto';
 import { ListFacultyLeafQueryDto } from './dto/list-faculty-leaf-query.dto';
+import { UpdateOwnLeaveDto } from './dto/update-own-leave.dto';
 
 @Controller('me')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -34,7 +35,7 @@ export class FacultyLeavesController {
    * FacultyLeavesService.create) since they can't review their own leave.
    */
   @Post('create-leaves')
-  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateFacultyLeafDto, @CurrentUser() user: JwtPayload) {
     return this.facultyLeavesService.create(dto, user);
@@ -42,7 +43,7 @@ export class FacultyLeavesController {
 
   /** GET /api/v1/faculty-leaves — Faculty (own only)/HoD/HR Payroll. Paginated, filterable. */
   @Get('faculty-leaves')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   findAll(
     @Query() query: ListFacultyLeafQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -52,7 +53,7 @@ export class FacultyLeavesController {
 
   /** GET /api/v1/faculty-leaves/:id — Faculty (own only)/HoD/HR Payroll. */
   @Get('faculty-leaves/:id')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -71,13 +72,28 @@ export class FacultyLeavesController {
     return this.facultyLeavesService.update(id, dto, user);
   }
 
+  /**
+   * PATCH /api/v1/me/my-leaves/:id — Secretary self-edit of their OWN
+   * still-pending (at HR Payroll) leave request. Distinct route/DTO from
+   * the reviewer update() above (which only ever sets approval fields).
+   */
+  @Patch('my-leaves/:id')
+  @Roles(ROLES.SECRETARY)
+  updateOwn(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateOwnLeaveDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.facultyLeavesService.updateOwnStaffRequest(id, user.sub, dto);
+  }
+
   /** DELETE /api/v1/faculty-leaves/:id — Faculty or HoD, own request, only while fully pending. */
   @Delete('faculty-leaves/:id')
-  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.facultyLeavesService.remove(id, user.sub);
+    return this.facultyLeavesService.remove(id, user.sub, user.role);
   }
 }

@@ -20,6 +20,11 @@ export class ListPrincipalStudentsQueryDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  class_id?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
   @Min(1)
   @Max(8)
   year?: number;

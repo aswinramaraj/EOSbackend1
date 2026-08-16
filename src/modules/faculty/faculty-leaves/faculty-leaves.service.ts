@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -23,6 +24,7 @@ const FACULTY_LEAVE_SELECT = {
   hod_approval_status: true,
   hr_approval_status: true,
   created_at: true,
+  staff_user_id: true,
   faculty: {
     select: {
       id: true,
@@ -42,13 +44,23 @@ interface FacultyLeaveRow {
   hod_approval_status: string;
   hr_approval_status: string;
   created_at: Date;
+  // Real column, added by the Secretary module completion migration — set
+  // for Secretary-authored (non-Faculty) requests, null for Faculty/HoD
+  // requests (which keep using faculty_id, unchanged).
+  staff_user_id: number | null;
+  // Nullable only because faculty_id was relaxed for an unrelated
+  // Secretary-facing feature (see the Secretary module completion
+  // migration) — every row Faculty/HoD create/read still always has
+  // faculty_id set, so this is a compile-time nullability fix, not a real
+  // behavior change for them. A Secretary-authored row has faculty: null
+  // for real (no faculty row exists for that account).
   faculty: {
     id: number;
     first_name: string;
     last_name: string;
     designation: string;
     departments: { id: number; name: string; code: string } | null;
-  };
+  } | null;
 }
 
 function computeOverallStatus(
@@ -78,6 +90,7 @@ function toResponse(leave: FacultyLeaveRow) {
     ),
     created_at: leave.created_at,
     faculty: leave.faculty,
+    staff_user_id: leave.staff_user_id,
   };
 }
 
@@ -102,8 +115,6 @@ export class FacultyLeavesService {
    * the HoD stage entirely.
    */
   async create(dto: CreateFacultyLeafDto, currentUser: JwtPayload) {
-    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-
     const fromDate = new Date(dto.from_date);
     const toDate = new Date(dto.to_date);
     const today = new Date(new Date().toISOString().slice(0, 10));
@@ -117,6 +128,28 @@ export class FacultyLeavesService {
     if (fromDate > toDate) {
       throw new BadRequestException('from_date must be on or before to_date');
     }
+
+    // Secretary (or any non-Faculty staff account) — no faculty row exists,
+    // so there's no HoD to review this at all; goes straight to the HR
+    // Payroll stage (hod_approval_status pre-approved), keyed by
+    // staff_user_id instead of faculty_id. Mirrors the existing "an HoD's
+    // own leave skips the HoD stage" precedent below.
+    if (currentUser.role === ROLES.SECRETARY) {
+      const leave = await this.prisma.faculty_leaves.create({
+        data: {
+          staff_user_id: currentUser.sub,
+          from_date: fromDate,
+          to_date: toDate,
+          reason: dto.reason,
+          hod_approval_status: 'approved',
+        },
+        select: FACULTY_LEAVE_SELECT,
+      });
+      this.logger.log(`Staff leave request created: id=${leave.id}`);
+      return toResponse(leave);
+    }
+
+    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
 
     const leave = await this.prisma.faculty_leaves.create({
       data: {
@@ -182,6 +215,10 @@ export class FacultyLeavesService {
       where.faculty = { department_id: hod.department_id };
     } else if (currentUser.role === ROLES.HR_PAYROLL) {
       where.hod_approval_status = 'approved';
+    } else if (currentUser.role === ROLES.SECRETARY) {
+      // Own requests only, keyed by staff_user_id — no faculty row exists.
+      delete where.faculty_id;
+      where.staff_user_id = currentUser.sub;
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -209,16 +246,22 @@ export class FacultyLeavesService {
       throw new NotFoundException('Faculty leave request not found');
     }
 
-    if (currentUser.role === ROLES.FACULTY) {
+    if (currentUser.role === ROLES.SECRETARY) {
+      if (leave.staff_user_id !== currentUser.sub) {
+        throw new ForbiddenException(
+          'You may only view your own leave requests',
+        );
+      }
+    } else if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-      if (leave.faculty.id !== faculty.id) {
+      if (leave.faculty?.id !== faculty.id) {
         throw new ForbiddenException(
           'You may only view your own leave requests',
         );
       }
     } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
-      if (leave.faculty.departments?.id !== hod.department_id) {
+      if (leave.faculty?.departments?.id !== hod.department_id) {
         throw new ForbiddenException(
           'You may only view leave requests from your own department',
         );
@@ -252,6 +295,12 @@ export class FacultyLeavesService {
 
     if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (existing.faculty_id === null) {
+        throw new InternalServerErrorException({
+          message: 'This leave request has no faculty on record',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
       if (existing.faculty_id === hod.id) {
         throw new ForbiddenException({
           message: 'You cannot review your own leave request',
@@ -303,7 +352,7 @@ export class FacultyLeavesService {
     // requester - never the other stage's approver, since data only ever
     // carries the one field the caller was permitted to set above.
     const decidedStatus = data.hod_approval_status ?? data.hr_approval_status;
-    if (decidedStatus !== undefined) {
+    if (decidedStatus !== undefined && existing.faculty_id !== null) {
       const requester = await this.prisma.faculty.findUnique({
         where: { id: existing.faculty_id },
         select: { user_id: true },
@@ -324,10 +373,8 @@ export class FacultyLeavesService {
     return toResponse(leave);
   }
 
-  /** DELETE /faculty-leaves/:id (Faculty only — own request, and only while fully pending). */
-  async remove(id: number, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
-
+  /** DELETE /faculty-leaves/:id (Faculty/Secretary — own request, and only while fully pending). */
+  async remove(id: number, userId: number, role?: string) {
     const existing = await this.prisma.faculty_leaves.findUnique({
       where: { id },
     });
@@ -335,18 +382,35 @@ export class FacultyLeavesService {
       throw new NotFoundException('Faculty leave request not found');
     }
 
-    if (existing.faculty_id !== faculty.id) {
-      throw new ForbiddenException(
-        'You may only delete your own leave requests',
-      );
+    if (role === ROLES.SECRETARY) {
+      if (existing.staff_user_id !== userId) {
+        throw new ForbiddenException(
+          'You may only delete your own leave requests',
+        );
+      }
+    } else {
+      const faculty = await this.resolveFacultyByUserId(userId);
+      if (existing.faculty_id !== faculty.id) {
+        throw new ForbiddenException(
+          'You may only delete your own leave requests',
+        );
+      }
     }
 
-    if (
-      existing.hod_approval_status !== 'pending' ||
-      existing.hr_approval_status !== 'pending'
-    ) {
+    // A Secretary's own request has hod_approval_status pre-set to
+    // 'approved' at creation (no HoD exists to review it — see create()) —
+    // that's a real, permanent state for these rows, not "already
+    // reviewed", so only hr_approval_status gates withdrawal for them.
+    // Faculty/HoD requests keep the original both-stages-pending rule.
+    const stillWithdrawable =
+      role === ROLES.SECRETARY
+        ? existing.hr_approval_status === 'pending'
+        : existing.hod_approval_status === 'pending' &&
+          existing.hr_approval_status === 'pending';
+
+    if (!stillWithdrawable) {
       throw new ConflictException(
-        'Only a fully pending leave request can be withdrawn',
+        'Only a still-pending leave request can be withdrawn',
       );
     }
 
@@ -354,6 +418,52 @@ export class FacultyLeavesService {
 
     this.logger.log(`Faculty leave request deleted: id=${id}`);
     return { id, deleted: true };
+  }
+
+  /**
+   * PATCH-equivalent self-edit: a Secretary may amend the dates/reason of
+   * their OWN leave request while it's still awaiting HR Payroll — once HR
+   * has decided, edits are frozen (same "no editing a decided request"
+   * principle as the HoD/HR update() gate above, just for the requester's
+   * own fields instead of the approval fields).
+   */
+  async updateOwnStaffRequest(
+    id: number,
+    userId: number,
+    dto: { from_date?: string; to_date?: string; reason?: string },
+  ) {
+    const existing = await this.prisma.faculty_leaves.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Faculty leave request not found');
+    }
+    if (existing.staff_user_id !== userId) {
+      throw new ForbiddenException('You may only edit your own leave requests');
+    }
+    if (existing.hr_approval_status !== 'pending') {
+      throw new ConflictException(
+        'This request has already been decided and can no longer be edited',
+      );
+    }
+
+    const data: { from_date?: Date; to_date?: Date; reason?: string } = {};
+    if (dto.from_date) data.from_date = new Date(dto.from_date);
+    if (dto.to_date) data.to_date = new Date(dto.to_date);
+    if (dto.reason !== undefined) data.reason = dto.reason;
+
+    const fromDate = data.from_date ?? existing.from_date;
+    const toDate = data.to_date ?? existing.to_date;
+    if (fromDate > toDate) {
+      throw new BadRequestException('from_date must be on or before to_date');
+    }
+
+    const updated = await this.prisma.faculty_leaves.update({
+      where: { id },
+      data,
+      select: FACULTY_LEAVE_SELECT,
+    });
+    return toResponse(updated);
   }
 
   private async resolveFacultyByUserId(userId: number) {

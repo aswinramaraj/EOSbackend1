@@ -161,8 +161,16 @@ export class AttendanceService {
    * (class + optional subject + date), all inside a single transaction —
    * either every row is inserted or none are.
    */
-  async create(dto: CreateAttendanceDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  async create(dto: CreateAttendanceDto, userId: number, userRole?: string) {
+    // Secretary added for the Secretary Portal's Bulk Attendance "Mark" tab
+    // — has no `faculty` table row, so is handled here exactly like
+    // MediaRequestsService's Secretary branch: skip the faculty-profile
+    // lookup and leave marked_by_faculty_id null (the column is already
+    // nullable — see this file's own comment on `faculty` in AttendanceRow).
+    const faculty =
+      userRole === ROLES.SECRETARY
+        ? null
+        : await this.resolveFacultyByUserId(userId);
 
     const klass = await this.prisma.classes.findUnique({
       where: { id: dto.class_id },
@@ -258,7 +266,7 @@ export class AttendanceService {
                 subject_id: dto.subject_id,
                 attendance_date: attendanceDate,
                 status: r.status,
-                marked_by_faculty_id: faculty.id,
+                marked_by_faculty_id: faculty?.id ?? null,
                 marked_by_user_id: userId,
               },
               select: { id: true, student_id: true, status: true },
@@ -290,11 +298,9 @@ export class AttendanceService {
         department: klass.departments,
       },
       subject,
-      faculty: {
-        id: faculty.id,
-        first_name: faculty.first_name,
-        last_name: faculty.last_name,
-      },
+      faculty: faculty
+        ? { id: faculty.id, first_name: faculty.first_name, last_name: faculty.last_name }
+        : null,
       date: dto.date,
       total_present: created.filter((r) => r.status === 'present').length,
       total_absent: created.filter((r) => r.status === 'absent').length,

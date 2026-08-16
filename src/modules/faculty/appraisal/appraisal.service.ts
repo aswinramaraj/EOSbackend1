@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -28,6 +29,7 @@ const APPRAISAL_SELECT = {
   hod_remarks: true,
   management_approved_at: true,
   created_at: true,
+  staff_user_id: true,
   faculty: {
     select: {
       id: true,
@@ -80,6 +82,13 @@ interface AppraisalRequestRow {
   hod_remarks: string | null;
   management_approved_at: Date | null;
   created_at: Date;
+  // Real column, added by the Secretary module completion migration — set
+  // for Secretary-authored (non-Faculty) requests, null for Faculty/HoD
+  // requests (which keep using faculty_id, unchanged).
+  staff_user_id: number | null;
+  // Null for a genuine Secretary-authored row (no faculty row exists for
+  // that account) — this is a real, expected state now, not just a
+  // compile-time nullability fix.
   faculty: {
     id: number;
     first_name: string;
@@ -87,7 +96,7 @@ interface AppraisalRequestRow {
     designation: string;
     department_id: number;
     departments: { name: string };
-  };
+  } | null;
   users_appraisal_requests_hod_reviewed_byTousers: {
     id: number;
     email: string;
@@ -122,7 +131,8 @@ function toResponse(row: AppraisalRequestRow) {
     id: row.id,
     academic_year: row.academic_year,
     status: row.status,
-    faculty: {
+    staff_user_id: row.staff_user_id,
+    faculty: row.faculty && {
       id: row.faculty.id,
       first_name: row.faculty.first_name,
       last_name: row.faculty.last_name,
@@ -177,14 +187,19 @@ export class AppraisalService {
    * scoring - same "goes directly to HR" treatment as Leave/OD.
    */
   async create(dto: CreateAppraisalDto, currentUser: JwtPayload) {
-    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
+    const isSecretary = currentUser.role === ROLES.SECRETARY;
+    const faculty = isSecretary
+      ? null
+      : await this.resolveFacultyByUserId(currentUser.sub);
 
     const existing = await this.prisma.appraisal_requests.findFirst({
-      where: { faculty_id: faculty.id, academic_year: dto.academic_year },
+      where: isSecretary
+        ? { staff_user_id: currentUser.sub, academic_year: dto.academic_year }
+        : { faculty_id: faculty!.id, academic_year: dto.academic_year },
     });
     if (existing) {
       throw new ConflictException(
-        `An appraisal request already exists for this faculty for ${dto.academic_year}`,
+        `An appraisal request already exists for ${dto.academic_year}`,
       );
     }
 
@@ -221,7 +236,9 @@ export class AppraisalService {
     const request = await this.prisma.$transaction(async (tx) => {
       const header = await tx.appraisal_requests.create({
         data: {
-          faculty_id: faculty.id,
+          ...(isSecretary
+            ? { staff_user_id: currentUser.sub }
+            : { faculty_id: faculty!.id }),
           academic_year: dto.academic_year,
           ...(isHodSelfSubmission
             ? {
@@ -230,6 +247,11 @@ export class AppraisalService {
                 hod_reviewed_at: new Date(),
               }
             : {}),
+          // Secretary (or any non-Faculty staff account) — no HoD exists
+          // to review it, so this goes straight to the HR scoring stage,
+          // same skip-the-HoD-stage treatment as an HoD's own submission
+          // above, just with no hod_reviewed_by (there was no reviewer).
+          ...(isSecretary ? { status: 'hod_reviewed' as const } : {}),
         },
       });
 
@@ -248,17 +270,19 @@ export class AppraisalService {
     });
 
     this.logger.log(
-      `Appraisal request created: id=${request.id} faculty=${faculty.id}`,
+      `Appraisal request created: id=${request.id}` +
+        (isSecretary ? ` staff_user=${currentUser.sub}` : ` faculty=${faculty!.id}`),
     );
 
-    // An HoD's own self-submission skips the HoD stage entirely (see this
-    // method's own doc comment) and has no one department-level to notify.
-    if (!isHodSelfSubmission) {
-      const hodUserId = await this.resolveDepartmentHodUserId(faculty.department_id);
+    // An HoD's own self-submission (or a Secretary's, with no department at
+    // all) skips the HoD stage entirely and has no one department-level to
+    // notify.
+    if (!isHodSelfSubmission && !isSecretary) {
+      const hodUserId = await this.resolveDepartmentHodUserId(faculty!.department_id);
       if (hodUserId) {
         await this.notifyAppraisal(hodUserId, {
           title: 'New appraisal request to review',
-          message: `${faculty.first_name} ${faculty.last_name} submitted an appraisal for ${dto.academic_year}.`,
+          message: `${faculty!.first_name} ${faculty!.last_name} submitted an appraisal for ${dto.academic_year}.`,
           type: 'approval_request_pending',
           related_entity_id: request.id,
         });
@@ -341,6 +365,9 @@ export class AppraisalService {
     } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty = { department_id: hod.department_id };
+    } else if (currentUser.role === ROLES.SECRETARY) {
+      delete where.faculty_id;
+      where.staff_user_id = currentUser.sub;
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -371,16 +398,22 @@ export class AppraisalService {
       throw new NotFoundException('Appraisal request not found');
     }
 
-    if (currentUser.role === ROLES.FACULTY) {
+    if (currentUser.role === ROLES.SECRETARY) {
+      if (request.staff_user_id !== currentUser.sub) {
+        throw new ForbiddenException(
+          'You may only view your own appraisal requests',
+        );
+      }
+    } else if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-      if (request.faculty.id !== faculty.id) {
+      if (request.faculty?.id !== faculty.id) {
         throw new ForbiddenException(
           'You may only view your own appraisal requests',
         );
       }
     } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
-      if (request.faculty.department_id !== hod.department_id) {
+      if (request.faculty?.department_id !== hod.department_id) {
         throw new ForbiddenException(
           'You may only view appraisal requests from your own department',
         );
@@ -407,6 +440,13 @@ export class AppraisalService {
       throw new NotFoundException('Appraisal request not found');
     }
 
+    if (existing.faculty_id === null) {
+      throw new InternalServerErrorException({
+        message: 'This appraisal request has no faculty on record',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
     if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
       // An HoD can now submit their OWN appraisal too (see create()) -
@@ -419,7 +459,7 @@ export class AppraisalService {
           errorCode: 'CANNOT_REVIEW_OWN_REQUEST',
         });
       }
-      if (existing.faculty.department_id !== hod.department_id) {
+      if (existing.faculty?.department_id !== hod.department_id) {
         throw new ForbiddenException(
           'You may only review appraisal requests from your own department',
         );
@@ -430,10 +470,8 @@ export class AppraisalService {
     return this.applyHrAction(id, existing.status, existing.faculty_id, dto, currentUser.sub);
   }
 
-  /** DELETE /appraisal/:id (Faculty only — own request, only while still 'submitted'). */
-  async remove(id: number, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
-
+  /** DELETE /appraisal/:id (Faculty/Secretary — own request, only while not yet acted on). */
+  async remove(id: number, userId: number, role?: string) {
     const existing = await this.prisma.appraisal_requests.findUnique({
       where: { id },
     });
@@ -441,16 +479,32 @@ export class AppraisalService {
       throw new NotFoundException('Appraisal request not found');
     }
 
-    if (existing.faculty_id !== faculty.id) {
-      throw new ForbiddenException(
-        'You may only delete your own appraisal requests',
-      );
-    }
-
-    if (existing.status !== 'submitted') {
-      throw new ConflictException(
-        'Only a request still in the submitted stage can be deleted',
-      );
+    // A Secretary's own request starts at 'hod_reviewed' (no HoD exists to
+    // review it — see create()), so that's their real "nothing has acted
+    // on this yet" state, same role 'submitted' plays for Faculty/HoD.
+    if (role === ROLES.SECRETARY) {
+      if (existing.staff_user_id !== userId) {
+        throw new ForbiddenException(
+          'You may only delete your own appraisal requests',
+        );
+      }
+      if (existing.status !== 'hod_reviewed') {
+        throw new ConflictException(
+          'This request has already been scored and can no longer be deleted',
+        );
+      }
+    } else {
+      const faculty = await this.resolveFacultyByUserId(userId);
+      if (existing.faculty_id !== faculty.id) {
+        throw new ForbiddenException(
+          'You may only delete your own appraisal requests',
+        );
+      }
+      if (existing.status !== 'submitted') {
+        throw new ConflictException(
+          'Only a request still in the submitted stage can be deleted',
+        );
+      }
     }
 
     // appraisal_entries cascade-deletes via schema's onDelete: Cascade on this FK.

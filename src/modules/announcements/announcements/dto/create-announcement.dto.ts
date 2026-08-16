@@ -13,6 +13,7 @@ import {
 import {
   target_audience_enum,
   announcement_status_enum,
+  announcement_category_enum,
 } from '../../../../../generated/prisma/client';
 
 export class CreateAnnouncementDto {
@@ -111,4 +112,15 @@ export class CreateAnnouncementDto {
   @IsString()
   @MaxLength(20)
   priority?: string;
+
+  /**
+   * Real column (`announcements.category`) — was a schema column with no
+   * DTO field and never written by the service until now (the Secretary
+   * module's composer needs it for its Category selector: ACADEMIC/
+   * DEPARTMENT/EVENT/EMERGENCY/GENERAL). No migration needed, the column
+   * already existed.
+   */
+  @IsOptional()
+  @IsEnum(announcement_category_enum)
+  category?: announcement_category_enum;
 }

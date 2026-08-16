@@ -21,6 +21,7 @@ const PAYSLIP_SELECT = {
   file_url: true,
   requested_at: true,
   purpose: true,
+  staff_user_id: true,
   faculty: {
     select: { id: true, first_name: true, last_name: true, designation: true },
   },
@@ -34,12 +35,19 @@ interface PayslipRequestRow {
   file_url: string | null;
   requested_at: Date;
   purpose: string | null;
+  staff_user_id: number | null;
+  // Nullable only because the underlying faculty_id column was relaxed to
+  // support a different, unrelated Secretary-facing feature (see the
+  // Secretary module completion migration) — every row THIS module ever
+  // creates or reads still always has faculty_id set (create() below is
+  // still Faculty-only), so this stays a compile-time nullability fix,
+  // not a real behavior change.
   faculty: {
     id: number;
     first_name: string;
     last_name: string;
     designation: string;
-  };
+  } | null;
 }
 
 function parseMonthString(month: string): { year: number; month: number } {
@@ -60,6 +68,7 @@ function toResponse(row: PayslipRequestRow) {
     requested_at: row.requested_at,
     purpose: row.purpose,
     faculty: row.faculty,
+    staff_user_id: row.staff_user_id,
   };
 }
 
@@ -76,9 +85,30 @@ export class PayslipRequestsService {
    * still 'pending' or already 'processed' — a 'rejected' one (e.g. wrong
    * month, salary not finalized yet) can be re-requested.
    */
-  async create(dto: CreatePayslipRequestDto, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  async create(dto: CreatePayslipRequestDto, userId: number, role?: string) {
     const { year, month } = parseMonthString(dto.month);
+
+    // Secretary (or any non-Faculty staff account) — no faculty row exists;
+    // keyed by staff_user_id instead. Same one-active-request-per-month
+    // rule applies.
+    if (role === ROLES.SECRETARY) {
+      const existing = await this.prisma.payslip_requests.findFirst({
+        where: { staff_user_id: userId, year, month, status: { not: 'rejected' } },
+      });
+      if (existing) {
+        throw new ConflictException(
+          `A payslip request already exists for ${dto.month}`,
+        );
+      }
+      const request = await this.prisma.payslip_requests.create({
+        data: { staff_user_id: userId, year, month, purpose: dto.purpose },
+        select: PAYSLIP_SELECT,
+      });
+      this.logger.log(`Staff payslip request created: id=${request.id}`);
+      return toResponse(request);
+    }
+
+    const faculty = await this.resolveFacultyByUserId(userId);
 
     const existing = await this.prisma.payslip_requests.findFirst({
       where: {
@@ -121,6 +151,9 @@ export class PayslipRequestsService {
     if (currentUser.role === ROLES.FACULTY || currentUser.role === ROLES.HOD) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.SECRETARY) {
+      delete where.faculty_id;
+      where.staff_user_id = currentUser.sub;
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -149,7 +182,13 @@ export class PayslipRequestsService {
 
     if (currentUser.role === ROLES.FACULTY || currentUser.role === ROLES.HOD) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-      if (request.faculty.id !== faculty.id) {
+      if (request.faculty?.id !== faculty.id) {
+        throw new ForbiddenException(
+          'You may only view your own payslip requests',
+        );
+      }
+    } else if (currentUser.role === ROLES.SECRETARY) {
+      if (request.staff_user_id !== currentUser.sub) {
         throw new ForbiddenException(
           'You may only view your own payslip requests',
         );
@@ -192,10 +231,44 @@ export class PayslipRequestsService {
     return toResponse(updated);
   }
 
-  /** DELETE /payslip-requests/:id (Faculty only — own request, only while still 'pending'). */
-  async remove(id: number, userId: number) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+  /**
+   * PATCH /me/my-payslip-requests/:id — self-edit of the requester's OWN
+   * still-'pending' payslip request (purpose only — month/year are
+   * immutable once created, since a new month is just a new request).
+   */
+  async updateOwnPurpose(id: number, userId: number, role: string | undefined, purpose: string) {
+    const existing = await this.prisma.payslip_requests.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('Payslip request not found');
+    }
 
+    if (role === ROLES.SECRETARY) {
+      if (existing.staff_user_id !== userId) {
+        throw new ForbiddenException('You may only edit your own payslip requests');
+      }
+    } else {
+      const faculty = await this.resolveFacultyByUserId(userId);
+      if (existing.faculty_id !== faculty.id) {
+        throw new ForbiddenException('You may only edit your own payslip requests');
+      }
+    }
+
+    if (existing.status !== 'pending') {
+      throw new ConflictException(
+        'This request has already been processed and can no longer be edited',
+      );
+    }
+
+    const updated = await this.prisma.payslip_requests.update({
+      where: { id },
+      data: { purpose },
+      select: PAYSLIP_SELECT,
+    });
+    return toResponse(updated);
+  }
+
+  /** DELETE /payslip-requests/:id (Faculty only — own request, only while still 'pending'). */
+  async remove(id: number, userId: number, role?: string) {
     const existing = await this.prisma.payslip_requests.findUnique({
       where: { id },
     });
@@ -203,10 +276,19 @@ export class PayslipRequestsService {
       throw new NotFoundException('Payslip request not found');
     }
 
-    if (existing.faculty_id !== faculty.id) {
-      throw new ForbiddenException(
-        'You may only withdraw your own payslip requests',
-      );
+    if (role === ROLES.SECRETARY) {
+      if (existing.staff_user_id !== userId) {
+        throw new ForbiddenException(
+          'You may only withdraw your own payslip requests',
+        );
+      }
+    } else {
+      const faculty = await this.resolveFacultyByUserId(userId);
+      if (existing.faculty_id !== faculty.id) {
+        throw new ForbiddenException(
+          'You may only withdraw your own payslip requests',
+        );
+      }
     }
 
     if (existing.status !== 'pending') {

@@ -28,20 +28,25 @@ import { ListMediaRequestQueryDto } from './dto/list-media-request-query.dto';
 export class MediaRequestsController {
   constructor(private readonly mediaRequestsService: MediaRequestsService) {}
 
-  /** POST /api/v1/media-requests — Faculty only. */
+  /**
+   * POST /api/v1/media-requests — Faculty, Secretary. Secretary added for
+   * the Secretary Portal's Media Request screen — has no `faculty` table
+   * row, so is handled by a distinct branch in the service that skips the
+   * faculty-profile lookup entirely (see resolveRequesterContext).
+   */
   @Post('media-requests')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
   create(
     @Body() createMediaRequestDto: CreateMediaRequestDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.mediaRequestsService.create(createMediaRequestDto, user.sub);
+    return this.mediaRequestsService.create(createMediaRequestDto, user);
   }
 
-  /** GET /api/v1/media-requests — Faculty (own only) / Media Room (all). Paginated, filterable. */
+  /** GET /api/v1/media-requests — Faculty/Secretary (own only) / Media Room (all). Paginated, filterable. */
   @Get('media-requests')
-  @Roles(ROLES.FACULTY, ROLES.MEDIA_ROOM)
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY, ROLES.MEDIA_ROOM)
   findAll(
     @Query() query: ListMediaRequestQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -49,9 +54,9 @@ export class MediaRequestsController {
     return this.mediaRequestsService.findAll(query, user);
   }
 
-  /** GET /api/v1/media-requests/:id — Faculty (own only) / Media Room (all). */
+  /** GET /api/v1/media-requests/:id — Faculty/Secretary (own only) / Media Room (all). */
   @Get('media-requests/:id')
-  @Roles(ROLES.FACULTY, ROLES.MEDIA_ROOM)
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY, ROLES.MEDIA_ROOM)
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -69,13 +74,13 @@ export class MediaRequestsController {
     return this.mediaRequestsService.update(id, updateMediaRequestDto);
   }
 
-  /** DELETE /api/v1/media-requests/:id — Faculty only, own request, only while still 'pending'. */
+  /** DELETE /api/v1/media-requests/:id — Faculty/Secretary, own request, only while still 'pending'. */
   @Delete('media-requests/:id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.mediaRequestsService.remove(id, user.sub);
+    return this.mediaRequestsService.remove(id, user);
   }
 }

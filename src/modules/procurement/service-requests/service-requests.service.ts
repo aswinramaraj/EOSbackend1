@@ -73,6 +73,13 @@ function deriveStatus(row: ProposalRow): string {
   }
   if (row.status === 'pending') return 'pending_hod';
   if (row.status === 'hod_approved') return 'pending_finance';
+  // See identical note in purchase-requests.service.ts's deriveStatus —
+  // a separate PrincipalApprovalsService can move a row to
+  // 'principal_approved'; financeReview() still gates on 'hod_approved'
+  // only, a pre-existing cross-module conflict out of scope to resolve
+  // here. Handled so it at least doesn't fall through to a misleading
+  // 'approved' label.
+  if (row.status === 'principal_approved') return 'pending_finance';
   return 'approved'; // finance_approved
 }
 

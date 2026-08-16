@@ -13,6 +13,8 @@ interface DirectoryRow {
   dept_code: string | null;
   dept_name: string | null;
   semester: number | null;
+  class_id: number | null;
+  section: string | null;
   present_count: bigint | null;
   total_count: bigint | null;
   cgpa: string | null;
@@ -87,6 +89,9 @@ export class PrincipalStudentsService {
     if (dto.department_id !== undefined) {
       filters.push(Prisma.sql`cl.department_id = ${dto.department_id}`);
     }
+    if (dto.class_id !== undefined) {
+      filters.push(Prisma.sql`st.class_id = ${dto.class_id}`);
+    }
     if (dto.year !== undefined) {
       // No literal "year of study" column exists; derived from current_semester
       // assuming 2 semesters per academic year (institution-wide convention).
@@ -150,6 +155,7 @@ export class PrincipalStudentsService {
         st.id, st.student_id_no, st.roll_no,
         soa.first_name, soa.last_name, u.email,
         d.code AS dept_code, d.name AS dept_name, cl.current_semester AS semester,
+        cl.id AS class_id, cl.section AS section,
         sa.present_count, sa.total_count,
         sc.cgpa::text AS cgpa,
         sf.total_demand::text AS total_demand, sf.total_paid::text AS total_paid, sf.has_concession
@@ -193,6 +199,8 @@ export class PrincipalStudentsService {
             department_code: row.dept_code,
             department_name: row.dept_name,
             semester: row.semester,
+            class_id: row.class_id,
+            section: row.section,
             attendance_pct: resolveAttendancePct(row),
             cgpa: row.cgpa !== null ? Math.round(Number(row.cgpa) * 100) / 100 : null,
             fee_status: fee.status,

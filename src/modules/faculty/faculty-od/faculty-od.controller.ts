@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -21,6 +22,7 @@ import { FacultyOdService } from './faculty-od.service';
 import { CreateFacultyOdDto } from './dto/create-faculty-od.dto';
 import { ListFacultyOdQueryDto } from './dto/list-faculty-od-query.dto';
 import { UpdateFacultyOdDto } from './dto/update-faculty-od.dto';
+import { UpdateOwnOdDto } from './dto/update-own-od.dto';
 
 @Controller('me')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -33,7 +35,7 @@ export class FacultyOdController {
    * FacultyOdService.create) since they can't review their own OD.
    */
   @Post('create-od')
-  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateFacultyOdDto, @CurrentUser() user: JwtPayload) {
     return this.facultyOdService.create(dto, user);
@@ -41,7 +43,7 @@ export class FacultyOdController {
 
   /** GET /api/v1/me/faculty-od — Faculty (own only)/HoD/HR Payroll. Paginated, filterable. */
   @Get('faculty-od')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   findAll(
     @Query() query: ListFacultyOdQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -58,5 +60,29 @@ export class FacultyOdController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.facultyOdService.update(id, dto, user);
+  }
+
+  /**
+   * PATCH /api/v1/me/my-od/:id — Secretary self-edit of their OWN
+   * still-pending (at HR Payroll) OD request.
+   */
+  @Patch('my-od/:id')
+  @Roles(ROLES.SECRETARY)
+  updateOwn(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateOwnOdDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.facultyOdService.updateOwnStaffRequest(id, user.sub, dto);
+  }
+
+  /** DELETE /api/v1/me/faculty-od/:id — Faculty, HoD or Secretary, own request, only while still pending. */
+  @Delete('faculty-od/:id')
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.facultyOdService.remove(id, user.sub, user.role);
   }
 }

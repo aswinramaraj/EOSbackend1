@@ -87,7 +87,7 @@ export class VenuesController {
    */
   @Post('venue-bookings')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT, ROLES.IQAC, ROLES.HR_PAYROLL)
+  @Roles(ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT, ROLES.IQAC, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
   createBooking(
     @Body() dto: CreateVenueBookingDto,
@@ -101,7 +101,7 @@ export class VenuesController {
    */
   @Get('venue-bookings')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.IQAC, ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT, ROLES.HR_PAYROLL)
+  @Roles(ROLES.IQAC, ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   findAllBookings(
     @Query() query: ListVenueBookingQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -114,7 +114,7 @@ export class VenuesController {
    */
   @Get('venue-bookings/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.IQAC, ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT, ROLES.HR_PAYROLL)
+  @Roles(ROLES.IQAC, ROLES.HOD, ROLES.FACULTY, ROLES.PLACEMENT, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   findOneBooking(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
