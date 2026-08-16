@@ -90,6 +90,16 @@ function deriveStatus(row: ProposalRow): string {
   }
   if (row.status === 'pending') return 'pending_hod';
   if (row.status === 'hod_approved') return 'pending_finance';
+  // NOTE: `PrincipalApprovalsService` (a separate module) can also move a
+  // 'hod_approved' row to 'principal_approved' independently of this
+  // self-service flow. financeReview() below only accepts a row that is
+  // still exactly 'hod_approved', so if Principal acts first on a request
+  // created through this endpoint, Finance's own review would then 422
+  // with INVALID_WORKFLOW_STATE — a real pre-existing conflict between the
+  // two approval chains, out of scope to resolve here (unclear whether
+  // Principal review is even meant to apply to Secretary-raised requests;
+  // flagged to the user rather than guessed at).
+  if (row.status === 'principal_approved') return 'pending_finance';
   return 'approved'; // finance_approved
 }
 

@@ -197,8 +197,8 @@ export class IqacReportsService {
         { header: 'Verification', key: 'verification' },
       ],
       rows: rows.map((r) => ({
-        faculty: `${r.faculty.first_name} ${r.faculty.last_name}`.trim(),
-        department: r.faculty.departments.name,
+        faculty: r.faculty ? `${r.faculty.first_name} ${r.faculty.last_name}`.trim() : 'Staff',
+        department: r.faculty?.departments?.name ?? '—',
         from: r.from_date.toISOString().slice(0, 10),
         to: r.to_date.toISOString().slice(0, 10),
         purpose: r.purpose ?? '',

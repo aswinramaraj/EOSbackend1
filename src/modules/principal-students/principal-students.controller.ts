@@ -8,7 +8,11 @@ import { ListPrincipalStudentsQueryDto } from './dto/list-principal-students-que
 
 @Controller('principal-students')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+// Secretary added alongside Principal — same institution-wide posture as
+// the /announcements module (no secretary→department table exists
+// anywhere in the schema, so Secretary reads the same unscoped aggregates
+// Principal does, rather than a fabricated department-filtered view).
+@Roles(ROLES.PRINCIPAL, ROLES.SECRETARY)
 export class PrincipalStudentsController {
   constructor(private readonly service: PrincipalStudentsService) {}
 

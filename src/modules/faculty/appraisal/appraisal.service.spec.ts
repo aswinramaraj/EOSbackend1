@@ -313,7 +313,7 @@ describe('AppraisalService', () => {
       const result = await service.findOne(1, { sub: 23, role: ROLES.HOD } as any);
 
       expect(result.id).toBe(1);
-      expect(result.faculty.department_name).toBe('CSE');
+      expect(result.faculty!.department_name).toBe('CSE');
     });
   });
 

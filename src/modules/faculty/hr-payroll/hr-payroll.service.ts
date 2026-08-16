@@ -21,6 +21,14 @@ const HR_PAYROLL_SELECT = {
   gross_amount: true,
   net_amount: true,
   paid_at: true,
+  // Real columns on salary_payments — previously fetched-but-dropped from
+  // the response, leaving the faculty-facing payroll screen with only
+  // month/gross/net/paid_at even though status/deductions/LOP are real,
+  // already-populated data.
+  status: true,
+  deductions_amount: true,
+  lop_days: true,
+  lop_amount: true,
   faculty: {
     select: {
       id: true,
@@ -40,6 +48,10 @@ interface HrPayrollRow {
   gross_amount: unknown;
   net_amount: unknown;
   paid_at: Date | null;
+  status: string;
+  deductions_amount: unknown;
+  lop_days: number | null;
+  lop_amount: unknown;
   faculty: {
     id: number;
     prefix: string | null;
@@ -71,6 +83,10 @@ function toResponse(row: HrPayrollRow) {
     gross_amount: Number(row.gross_amount),
     net_amount: Number(row.net_amount),
     paid_at: row.paid_at,
+    status: row.status,
+    deductions_amount: row.deductions_amount === null ? null : Number(row.deductions_amount),
+    lop_days: row.lop_days,
+    lop_amount: row.lop_amount === null ? null : Number(row.lop_amount),
     faculty: row.faculty,
     processed_by: row.users,
   };

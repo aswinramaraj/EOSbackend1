@@ -21,6 +21,13 @@ interface PlacementRow {
   applicants: bigint;
   placed: bigint;
 }
+interface CourseRow {
+  id: number;
+  department_id: number;
+  name: string;
+  code: string;
+  duration_years: number;
+}
 
 /**
  * Principal-only Departments & HoDs overview. HoD identity is resolved via
@@ -83,6 +90,15 @@ export class PrincipalDepartmentsService {
         WHERE total_count > 0
         GROUP BY department_id
       `);
+      const courseRows = await this.prisma.$queryRaw<CountRow[]>(Prisma.sql`
+        SELECT department_id, COUNT(*)::bigint AS count
+        FROM courses
+        GROUP BY department_id
+      `);
+      const courseListRows = await this.prisma.courses.findMany({
+        select: { id: true, department_id: true, name: true, code: true, duration_years: true },
+        orderBy: { name: 'asc' },
+      });
       const placementRows = await this.prisma.$queryRaw<PlacementRow[]>(Prisma.sql`
         WITH dept_students AS (
           SELECT st.id AS student_id, cl.department_id
@@ -104,6 +120,13 @@ export class PrincipalDepartmentsService {
         attendanceRows.map((r) => [r.department_id, r.pct !== null ? Math.round(Number(r.pct) * 10) / 10 : null]),
       );
       const placementMap = new Map(placementRows.map((r) => [r.department_id, r]));
+      const courseMap = new Map(courseRows.map((r) => [r.department_id, Number(r.count)]));
+      const courseListMap = new Map<number, CourseRow[]>();
+      for (const c of courseListRows) {
+        const list = courseListMap.get(c.department_id) ?? [];
+        list.push(c);
+        courseListMap.set(c.department_id, list);
+      }
 
       return {
         total_departments: departments.length,
@@ -117,6 +140,9 @@ export class PrincipalDepartmentsService {
             id: dept.id,
             code: dept.code,
             name: dept.name,
+            established_at: dept.created_at,
+            courses_offered: courseMap.get(dept.id) ?? 0,
+            courses: (courseListMap.get(dept.id) ?? []).map((c) => ({ id: c.id, name: c.name, code: c.code, duration_years: c.duration_years })),
             hod_name: hod ? `${hod.first_name} ${hod.last_name}`.trim() : null,
             students: studentMap.get(dept.id) ?? 0,
             faculty: facultyMap.get(dept.id) ?? 0,

@@ -33,18 +33,28 @@ export class FeeStructureService {
       await this.assertQuotaExists(dto.quota_id);
     }
 
-    // ── 2. Reject duplicate demand_category_id inside the request body ──────
-    const categoryIds = dto.items.map((item) => item.demand_category_id);
-    const uniqueCategoryIds = new Set(categoryIds);
-    if (uniqueCategoryIds.size !== categoryIds.length) {
+    // ── 2. Items must carry the id column matching applies_to, and no dupes ──
+    const idField = this.itemIdFieldForAppliesTo(dto.applies_to);
+    const ids = dto.items.map((item) => {
+      const value = item[idField];
+      if (value == null) {
+        throw new UnprocessableEntityException({
+          message: `Every item must have a ${idField} when applies_to is "${dto.applies_to}"`,
+          errorCode: 'INVALID_FEE_STRUCTURE_ITEM_SOURCE',
+        });
+      }
+      return value;
+    });
+    const uniqueIds = new Set(ids);
+    if (uniqueIds.size !== ids.length) {
       throw new UnprocessableEntityException({
-        message: 'Duplicate demand categories are not allowed',
+        message: 'Duplicate items are not allowed',
         errorCode: 'DUPLICATE_DEMAND_CATEGORY',
       });
     }
 
-    // ── 3. Validate every demand_category_id exists (single batch query) ────
-    await this.assertDemandCategoriesExist([...uniqueCategoryIds]);
+    // ── 3. Validate every referenced id exists (single batch query) ─────────
+    await this.assertItemSourcesExist(idField, [...uniqueIds]);
 
     // ── 4. Create fee structure, its items and any concessions in one tx ────
     try {
@@ -63,7 +73,9 @@ export class FeeStructureService {
             tx.fee_structure_items.create({
               data: {
                 fee_structure_id: feeStructure.id,
-                demand_category_id: item.demand_category_id,
+                demand_category_id: item.demand_category_id ?? null,
+                hostel_room_type_id: item.hostel_room_type_id ?? null,
+                transport_stage_id: item.transport_stage_id ?? null,
                 amount: item.amount,
               },
             }),
@@ -361,25 +373,61 @@ export class FeeStructureService {
     }
   }
 
-  private async assertDemandCategoriesExist(categoryIds: number[]) {
+  /**
+   * Which fee_structure_items column an item is expected to carry, based on
+   * the parent fee structure's applies_to. Kept in one place so create()
+   * validation and item creation always agree on the mapping:
+   *   quota     -> demand_category_id  (tuition/exam/etc. demand categories)
+   *   hostel    -> hostel_room_type_id (room type this hostel fee is for)
+   *   transport -> transport_stage_id  (boarding stage this fare is for)
+   */
+  private itemIdFieldForAppliesTo(
+    appliesTo: fee_structure_applies_to_enum,
+  ): 'demand_category_id' | 'hostel_room_type_id' | 'transport_stage_id' {
+    switch (appliesTo) {
+      case fee_structure_applies_to_enum.hostel:
+        return 'hostel_room_type_id';
+      case fee_structure_applies_to_enum.transport:
+        return 'transport_stage_id';
+      default:
+        return 'demand_category_id';
+    }
+  }
+
+  private async assertItemSourcesExist(
+    idField: 'demand_category_id' | 'hostel_room_type_id' | 'transport_stage_id',
+    ids: number[],
+  ) {
     let found: { id: number }[];
 
     try {
-      found = await this.prisma.demand_categories.findMany({
-        where: { id: { in: categoryIds } },
-        select: { id: true },
-      });
+      if (idField === 'hostel_room_type_id') {
+        found = await this.prisma.hostel_room_types.findMany({
+          where: { id: { in: ids } },
+          select: { id: true },
+        });
+      } else if (idField === 'transport_stage_id') {
+        found = await this.prisma.transport_stages.findMany({
+          where: { id: { in: ids } },
+          select: { id: true },
+        });
+      } else {
+        found = await this.prisma.demand_categories.findMany({
+          where: { id: { in: ids } },
+          select: { id: true },
+        });
+      }
     } catch (err) {
-      this.logger.error('DB error during demand category lookup', err);
+      this.logger.error('DB error during fee structure item source lookup', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong while creating the fee structure.',
         errorCode: 'INTERNAL_ERROR',
       });
     }
 
-    if (found.length !== categoryIds.length) {
+    if (found.length !== ids.length) {
       throw new NotFoundException({
-        message: 'One or more demand categories were not found',
+        message: 'One or more fee structure item sources were not found',
         errorCode: 'DEMAND_CATEGORY_NOT_FOUND',
       });
     }

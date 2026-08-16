@@ -127,6 +127,72 @@ export class StudentHigherEducationService {
     }
   }
 
+  /**
+   * GET /me/mentee-higher-education (Faculty — class advisor only). Scoped
+   * live via class_mentors — every class the caller currently mentors,
+   * resolved fresh on every call, so a reassignment takes effect
+   * immediately with no stale caching of "which class" this faculty advises.
+   */
+  async findAllForMentor(userId: number) {
+    const faculty = await this.prisma.faculty.findUnique({ where: { user_id: userId } });
+    if (!faculty) return [];
+
+    const mentorClasses = await this.prisma.class_mentors.findMany({
+      where: { faculty_id: faculty.id },
+      select: { class_id: true },
+    });
+    const classIds = mentorClasses.map((m) => m.class_id);
+    if (classIds.length === 0) return [];
+
+    try {
+      const rows = await this.prisma.student_higher_education.findMany({
+        where: { students: { class_id: { in: classIds } } },
+        include: {
+          students: {
+            select: {
+              id: true,
+              student_id_no: true,
+              soa_applications: { select: { first_name: true, last_name: true } },
+              users: { select: { email: true } },
+              classes: { select: { section: true } },
+            },
+          },
+        },
+        orderBy: { created_at: 'desc' },
+      });
+
+      return rows.map((row) => ({
+        id: row.id,
+        preferred_course: row.preferred_course,
+        preferred_country: row.preferred_country,
+        preferred_university: row.preferred_university,
+        remarks: row.remarks,
+        created_at: row.created_at,
+        is_scholarship: row.is_scholarship,
+        scholarship_name: row.scholarship_name,
+        scholarship_value: row.scholarship_value !== null ? Number(row.scholarship_value) : null,
+        admission_status: row.admission_status,
+        offer_status: row.offer_status,
+        visa_status: row.visa_status,
+        intake_term: row.intake_term,
+        sop_status: row.sop_status,
+        recommendation_status: row.recommendation_status,
+        research_output: row.research_output,
+        internship_details: row.internship_details,
+        application_submitted_date: row.application_submitted_date,
+        interview_date: row.interview_date,
+        funding_source: row.funding_source,
+        student: toStudentSummary(row.students),
+      }));
+    } catch (err) {
+      this.logger.error('DB error listing student_higher_education for mentor', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
   private async assertDepartmentExists(departmentId: number) {
     const department = await this.prisma.departments.findUnique({
       where: { id: departmentId },

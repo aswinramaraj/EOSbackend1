@@ -7,7 +7,10 @@ import { PrincipalDepartmentsService } from './principal-departments.service';
 
 @Controller('principal-departments')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+// Secretary added — same institution-wide posture as principal-students/
+// principal-faculty/principal-exams/principal-placements (no
+// secretary→department table exists anywhere in the schema).
+@Roles(ROLES.PRINCIPAL, ROLES.SECRETARY)
 export class PrincipalDepartmentsController {
   constructor(private readonly service: PrincipalDepartmentsService) {}
 

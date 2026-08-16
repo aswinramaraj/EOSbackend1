@@ -37,9 +37,15 @@ export class FacultyController {
     return this.facultyService.create(dto, user.sub);
   }
 
-  /** GET /api/v1/faculty — Admin/HoD/HR Payroll. Paginated list, filterable by department_id/status. */
+  /**
+   * GET /api/v1/faculty — Admin/HoD/HR Payroll/Secretary. Paginated list,
+   * filterable by department_id/status. Secretary added for the Secretary
+   * Portal's Reports "faculty summary" table — same institution-wide
+   * posture as /announcements and /principal-* (no secretary→department
+   * table exists, so this reads unscoped like Admin does).
+   */
   @Get('faculty')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   findAll(@Query() query: ListFacultyQueryDto) {
     return this.facultyService.findAll(query);
   }

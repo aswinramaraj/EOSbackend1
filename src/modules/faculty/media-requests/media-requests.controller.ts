@@ -28,7 +28,12 @@ import { ListMediaRequestQueryDto } from './dto/list-media-request-query.dto';
 export class MediaRequestsController {
   constructor(private readonly mediaRequestsService: MediaRequestsService) {}
 
-  /** POST /api/v1/media-requests — Faculty / Secretary. */
+  /**
+   * POST /api/v1/media-requests — Faculty, Secretary. Secretary added for
+   * the Secretary Portal's Media Request screen — has no `faculty` table
+   * row, so is handled by a distinct branch in the service that skips the
+   * faculty-profile lookup entirely (see resolveRequesterContext).
+   */
   @Post('media-requests')
   @Roles(ROLES.FACULTY, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
@@ -69,13 +74,13 @@ export class MediaRequestsController {
     return this.mediaRequestsService.update(id, updateMediaRequestDto);
   }
 
-  /** DELETE /api/v1/media-requests/:id — Faculty / Secretary, own request, only while still 'pending'. */
+  /** DELETE /api/v1/media-requests/:id — Faculty/Secretary, own request, only while still 'pending'. */
   @Delete('media-requests/:id')
   @Roles(ROLES.FACULTY, ROLES.SECRETARY)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.mediaRequestsService.remove(id, user.sub);
+    return this.mediaRequestsService.remove(id, user);
   }
 }

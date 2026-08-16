@@ -23,6 +23,7 @@ import {
   DemandSummaryItemDto,
 } from './dto/fee-payment-student-workspace.dto';
 import { CategoryBreakdownItemDto } from './dto/fee-payment-category-breakdown.dto';
+import { IssueReceiptNumberDto } from './dto/issue-receipt-number.dto';
 
 type DueStatus = 'paid' | 'partial' | 'pending';
 
@@ -222,7 +223,7 @@ export class FeePaymentService {
 
       return {
         fee_structure_item_id: item.id,
-        demand_category_name: item.demand_categories?.name ?? 'General',
+        demand_category_name: item.demand_categories?.name ?? null,
         original_amount: item.amount.toString(),
         already_paid: alreadyPaid.toString(),
         outstanding_amount: outstanding.toString(),
@@ -1488,6 +1489,74 @@ export class FeePaymentService {
       return await this.prisma.fee_payments.findUnique({ where: { id } });
     } catch (err) {
       this.logger.error('DB error during fee payment lookup', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * POST /fee-payments/receipt-numbers
+   *
+   * Issues exactly one new, sequential receipt number (fee_receipt_numbers.id
+   * — a real DB-generated SERIAL, never computed client-side) covering every
+   * fee_payment_id in the request, together in one print action. This is
+   * deliberately separate from fee_payments.receipt_no, which is really each
+   * payment's own internal reference and was never meant to be the number
+   * printed on a receipt.
+   *
+   * Error cases:
+   *  404 FEE_PAYMENT_NOT_FOUND – one or more fee_payment_ids don't exist
+   *  500 INTERNAL_ERROR        – unexpected failure (DB, etc.)
+   */
+  async issueReceiptNumber(
+    dto: IssueReceiptNumberDto,
+    issuedByUserId: number | null,
+  ) {
+    const uniqueIds = [...new Set(dto.fee_payment_ids)];
+
+    let found: { id: number }[];
+    try {
+      found = await this.prisma.fee_payments.findMany({
+        where: { id: { in: uniqueIds } },
+        select: { id: true },
+      });
+    } catch (err) {
+      this.logger.error('DB error while validating fee payments for receipt number', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (found.length !== uniqueIds.length) {
+      throw new NotFoundException({
+        message: 'One or more fee payments were not found',
+        errorCode: 'FEE_PAYMENT_NOT_FOUND',
+      });
+    }
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const receiptNumber = await tx.fee_receipt_numbers.create({
+          data: {
+            print_date: new Date(dto.print_date),
+            issued_by_user_id: issuedByUserId ?? undefined,
+          },
+        });
+
+        await tx.fee_receipt_number_payments.createMany({
+          data: uniqueIds.map((feePaymentId) => ({
+            receipt_number_id: receiptNumber.id,
+            fee_payment_id: feePaymentId,
+          })),
+        });
+
+        return receiptNumber;
+      });
+    } catch (err) {
+      this.logger.error('DB error while issuing receipt number', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

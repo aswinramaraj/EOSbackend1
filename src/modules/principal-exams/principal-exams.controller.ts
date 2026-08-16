@@ -7,7 +7,7 @@ import { PrincipalExamsService } from './principal-exams.service';
 
 @Controller('principal-exams')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.SECRETARY)
 export class PrincipalExamsController {
   constructor(private readonly service: PrincipalExamsService) {}
 

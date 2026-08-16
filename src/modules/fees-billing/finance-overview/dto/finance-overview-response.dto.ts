@@ -29,11 +29,18 @@ export class PaymentStatusDistributionItemDto {
   count: number;
 }
 
+export class CollectionByPaymentModeItemDto {
+  mode: string;
+  totalAmount: string;
+  count: number;
+}
+
 export class FinancialAnalyticsDto {
   demandVsCollection: DemandVsCollectionDto;
   monthlyCollectionTrend: MonthlyCollectionTrendItemDto[];
   departmentOutstanding: DepartmentOutstandingItemDto[];
   paymentStatusDistribution: PaymentStatusDistributionItemDto[];
+  collectionByPaymentMode: CollectionByPaymentModeItemDto[];
 }
 
 export class RecentPaymentItemDto {

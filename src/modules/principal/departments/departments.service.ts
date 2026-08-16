@@ -449,11 +449,17 @@ export class PrincipalDepartmentsService {
     });
     const byFaculty = new Map<number, { earned: number; total: number }>();
     for (const r of records) {
-      const entry = byFaculty.get(r.faculty_id) ?? { earned: 0, total: 0 };
+      // Non-null assertion justified: the where clause above
+      // (faculty_id: { in: facultyIds }) guarantees every row here has a
+      // real faculty_id — faculty_id is only nullable at the schema level
+      // for the unrelated Secretary staff_user_id rows this query never
+      // selects.
+      const facultyId = r.faculty_id!;
+      const entry = byFaculty.get(facultyId) ?? { earned: 0, total: 0 };
       entry.total += 1;
       if (r.status === 'full_day') entry.earned += 1;
       else if (r.status === 'half_day') entry.earned += 0.5;
-      byFaculty.set(r.faculty_id, entry);
+      byFaculty.set(facultyId, entry);
     }
     const result = new Map<number, number>();
     for (const [facultyId, entry] of byFaculty.entries()) {

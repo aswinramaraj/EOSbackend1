@@ -41,7 +41,7 @@ export class AppraisalController {
    * Reference data (divisions + criteria) for the Apply form.
    */
   @Get('appraisal-criteria')
-  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   findCriteria(@Query() query: ListAppraisalCriteriaQueryDto) {
     return this.appraisalService.findCriteria(query);
   }
@@ -53,7 +53,7 @@ export class AppraisalController {
    * treatment as Leave/OD.
    */
   @Post('appraisal_requests')
-  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateAppraisalDto, @CurrentUser() user: JwtPayload) {
     return this.appraisalService.create(dto, user);
@@ -61,7 +61,7 @@ export class AppraisalController {
 
   /** GET /api/v1/appraisal — Faculty (own only)/HoD/HR Payroll. Paginated, filterable. */
   @Get('appraisal_requests')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   findAll(
     @Query() query: ListAppraisalQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -71,7 +71,7 @@ export class AppraisalController {
 
   /** GET /api/v1/appraisal/:id — Faculty (own only)/HoD/HR Payroll. */
   @Get('appraisal_requests/:id')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -92,12 +92,12 @@ export class AppraisalController {
 
   /** DELETE /api/v1/appraisal/:id — Faculty or HoD, own request, only while still 'submitted'. */
   @Delete('appraisal_requests/:id')
-  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.appraisalService.remove(id, user.sub);
+    return this.appraisalService.remove(id, user.sub, user.role);
   }
 
   /**

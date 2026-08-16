@@ -21,6 +21,7 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { FeePaymentService } from './fee-payment.service';
 import { CreateFeePaymentDto } from './dto/create-fee-payment.dto';
 import { UpdateFeePaymentDto } from './dto/update-fee-payment.dto';
+import { IssueReceiptNumberDto } from './dto/issue-receipt-number.dto';
 
 @Controller()
 @Roles(ROLES.ADMIN)
@@ -141,6 +142,27 @@ export class FeePaymentController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.feePaymentService.create(id, dto, user.sub);
+  }
+
+  /**
+   * POST /api/v1/fee-payments/receipt-numbers
+   *
+   * Issues one new sequential receipt number covering every fee_payment_id
+   * in the request body, for the "Print Receipt" action in Payment History —
+   * one receipt number per print click, not per payment, and never the same
+   * thing as fee_payments.receipt_no.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR      – missing/invalid fields
+   *  401 UNAUTHORIZED          – missing/invalid access token
+   *  403 FORBIDDEN             – authenticated user is not an admin
+   *  404 FEE_PAYMENT_NOT_FOUND – one or more fee_payment_ids don't exist
+   *  500 INTERNAL_ERROR        – unexpected server failure
+   */
+  @Post('fee-payments/receipt-numbers')
+  @HttpCode(HttpStatus.CREATED)
+  issueReceiptNumber(@Body() dto: IssueReceiptNumberDto, @CurrentUser() user: JwtPayload) {
+    return this.feePaymentService.issueReceiptNumber(dto, user.sub);
   }
 
   /**

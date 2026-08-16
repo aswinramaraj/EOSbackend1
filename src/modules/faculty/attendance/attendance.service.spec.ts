@@ -95,7 +95,8 @@ describe('AttendanceService', () => {
           date: '2026-08-08',
           records: [{ student_id: 121, status: 'present' }],
         },
-        { sub: 42, email: 'faculty@example.com', role: ROLES.FACULTY, roleId: 1 },
+        42,
+        ROLES.FACULTY,
       );
 
       expect(tx.attendance_records.create).toHaveBeenCalledWith(

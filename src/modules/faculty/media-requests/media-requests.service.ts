@@ -26,6 +26,7 @@ const MEDIA_REQUEST_SELECT = {
   coordinator_name: true,
   contact_number: true,
   media_types: true,
+  requested_by_user_id: true,
   faculty: {
     select: { id: true, first_name: true, last_name: true, designation: true },
   },
@@ -58,9 +59,11 @@ interface MediaRequestRow {
   coordinator_name: string | null;
   contact_number: string | null;
   media_types: string[];
-  // requested_by_faculty_id (schema.prisma) is nullable — every request
-  // created through this service sets it (faculty-only endpoint), but the
-  // column itself allows null, so the relation must be typed that way too.
+  requested_by_user_id: number;
+  // requested_by_faculty_id (schema.prisma) is nullable — a Secretary-
+  // raised request has no faculty row at all, so this relation must be
+  // typed as nullable (it was already nullable before Secretary existed
+  // here too, since the column itself allows null).
   faculty: {
     id: number;
     first_name: string;
@@ -146,6 +149,16 @@ export class MediaRequestsService {
       }
     }
 
+    // event_date is a @db.Date column, but Prisma's client still requires a
+    // full ISO-8601 DateTime string, not a bare "YYYY-MM-DD" date — a plain
+    // date string (which @IsDateString on the DTO happily accepts) throws
+    // "premature end of input" at the Prisma layer. Normalize here rather
+    // than relaxing the DTO validator, since @IsDateString correctly
+    // documents what the API accepts from callers.
+    const eventDate = dto.event_date
+      ? new Date(dto.event_date.includes('T') ? dto.event_date : `${dto.event_date}T00:00:00.000Z`)
+      : undefined;
+
     const request = await this.prisma.media_requests.create({
       data: {
         requested_by_faculty_id: faculty?.id,
@@ -153,7 +166,7 @@ export class MediaRequestsService {
         description: dto.description,
         status: 'pending',
         event_name: dto.event_name,
-        event_date: dto.event_date ? new Date(dto.event_date) : undefined,
+        event_date: eventDate,
         venue_id: dto.venue_id,
         coordinator_name: dto.coordinator_name,
         contact_number: dto.contact_number,
@@ -163,7 +176,7 @@ export class MediaRequestsService {
     });
 
     this.logger.log(
-      `Media request created: id=${request.id} requested_by_user=${userId}`,
+      `Media request created: id=${request.id} requested_by_user=${userId} role=${currentUser.role}`,
     );
     return toResponse(request);
   }
@@ -202,13 +215,13 @@ export class MediaRequestsService {
       throw new NotFoundException('Media request not found');
     }
 
-    if (currentUser.role === ROLES.FACULTY) {
-      const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-      if (request.faculty?.id !== faculty.id) {
-        throw new ForbiddenException(
-          'You may only view your own media requests',
-        );
-      }
+    if (
+      (currentUser.role === ROLES.FACULTY || currentUser.role === ROLES.SECRETARY) &&
+      request.requested_by_user_id !== currentUser.sub
+    ) {
+      throw new ForbiddenException(
+        'You may only view your own media requests',
+      );
     }
 
     return toResponse(request);
@@ -254,7 +267,7 @@ export class MediaRequestsService {
 
     this.logger.log(`Media request ${id} updated to status=${dto.status}`);
 
-    await this.notifications.create({
+    await this.notifications.notify({
       user_id: existing.requested_by_user_id,
       title: `Media request ${dto.status}`,
       message: `Your media request has been ${dto.status}.`,
@@ -263,8 +276,8 @@ export class MediaRequestsService {
     return toResponse(request);
   }
 
-  /** DELETE /media-requests/:id (Faculty / Secretary — own request, only while still 'pending'). */
-  async remove(id: number, userId: number) {
+  /** DELETE /media-requests/:id (Faculty/Secretary — own request, only while still 'pending'). */
+  async remove(id: number, user: JwtPayload) {
     const existing = await this.prisma.media_requests.findUnique({
       where: { id },
     });
@@ -272,7 +285,7 @@ export class MediaRequestsService {
       throw new NotFoundException('Media request not found');
     }
 
-    if (existing.requested_by_user_id !== userId) {
+    if (existing.requested_by_user_id !== user.sub) {
       throw new ForbiddenException(
         'You may only withdraw your own media requests',
       );

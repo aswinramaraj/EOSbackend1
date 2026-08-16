@@ -35,6 +35,13 @@ export class MeNotificationsController {
     return ApiResponse.ok({ count });
   }
 
+  /** GET /me/notifications/panel — the bell dropdown's contents (unread + pinned). */
+  @Get('panel')
+  async panel(@CurrentUser() user: JwtPayload) {
+    const rows = await this.notificationsService.findPanelForUser(user.sub);
+    return ApiResponse.ok(rows);
+  }
+
   @Patch(':id/read')
   markRead(
     @Param('id', ParseIntPipe) id: number,
@@ -47,5 +54,15 @@ export class MeNotificationsController {
   async markAllRead(@CurrentUser() user: JwtPayload) {
     const result = await this.notificationsService.markAllRead(user.sub);
     return ApiResponse.ok({ updated: result.count });
+  }
+
+  @Patch(':id/pin')
+  pin(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.notificationsService.pin(id, user.sub);
+  }
+
+  @Patch(':id/unpin')
+  unpin(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.notificationsService.unpin(id, user.sub);
   }
 }
