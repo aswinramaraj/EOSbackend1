@@ -554,8 +554,13 @@ export class AppraisalService {
     divisionId: number,
     files: Array<{ buffer: Buffer; originalname: string; mimetype: string }>,
     userId: number,
+    role?: string,
   ) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+    // Secretary submissions have no `faculty` row (see create()'s
+    // `staff_user_id` branch) — own-request ownership is checked against
+    // that column instead of resolving a faculty profile that doesn't exist.
+    const isSecretary = role === ROLES.SECRETARY;
+    const faculty = isSecretary ? null : await this.resolveFacultyByUserId(userId);
 
     const existing = await this.prisma.appraisal_requests.findUnique({
       where: { id: requestId },
@@ -563,12 +568,13 @@ export class AppraisalService {
     if (!existing) {
       throw new NotFoundException('Appraisal request not found');
     }
-    if (existing.faculty_id !== faculty.id) {
+    const owns = isSecretary ? existing.staff_user_id === userId : existing.faculty_id === faculty!.id;
+    if (!owns) {
       throw new ForbiddenException(
         'You may only attach files to your own appraisal requests',
       );
     }
-    if (existing.status !== 'submitted') {
+    if (existing.status !== 'submitted' && existing.status !== 'hod_reviewed') {
       throw new ConflictException(
         'Files can only be attached while the request is still in the submitted stage',
       );
@@ -618,13 +624,15 @@ export class AppraisalService {
     return toResponse(request);
   }
 
-  /** DELETE /appraisal_requests/:id/attachments/:attachmentId (Faculty only — own request, only while still 'submitted'). */
+  /** DELETE /appraisal_requests/:id/attachments/:attachmentId (Faculty, HoD or Secretary — own request, only while still 'submitted'/'hod_reviewed'). */
   async removeAttachment(
     requestId: number,
     attachmentId: number,
     userId: number,
+    role?: string,
   ) {
-    const faculty = await this.resolveFacultyByUserId(userId);
+    const isSecretary = role === ROLES.SECRETARY;
+    const faculty = isSecretary ? null : await this.resolveFacultyByUserId(userId);
 
     const request = await this.prisma.appraisal_requests.findUnique({
       where: { id: requestId },
@@ -632,12 +640,13 @@ export class AppraisalService {
     if (!request) {
       throw new NotFoundException('Appraisal request not found');
     }
-    if (request.faculty_id !== faculty.id) {
+    const owns = isSecretary ? request.staff_user_id === userId : request.faculty_id === faculty!.id;
+    if (!owns) {
       throw new ForbiddenException(
         'You may only remove attachments from your own appraisal requests',
       );
     }
-    if (request.status !== 'submitted') {
+    if (request.status !== 'submitted' && request.status !== 'hod_reviewed') {
       throw new ConflictException(
         'Attachments can only be removed while the request is still in the submitted stage',
       );

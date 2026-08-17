@@ -38,6 +38,12 @@ const HR_PAYROLL_SELECT = {
       designation: true,
     },
   },
+  // Real column/relation — Secretary (and any other non-teaching staff)
+  // payroll rows use payee_type='staff' + staff_id instead of faculty_id;
+  // was never selected before since this endpoint was Faculty-only.
+  non_teaching_staff: {
+    select: { id: true, first_name: true, last_name: true },
+  },
   users: { select: { id: true, email: true } },
 } as const;
 
@@ -59,6 +65,7 @@ interface HrPayrollRow {
     last_name: string;
     designation: string;
   } | null;
+  non_teaching_staff: { id: number; first_name: string; last_name: string | null } | null;
   users: { id: number; email: string } | null;
 }
 
@@ -88,6 +95,7 @@ function toResponse(row: HrPayrollRow) {
     lop_days: row.lop_days,
     lop_amount: row.lop_amount === null ? null : Number(row.lop_amount),
     faculty: row.faculty,
+    staff: row.non_teaching_staff,
     processed_by: row.users,
   };
 }
@@ -146,7 +154,7 @@ export class HrPayrollService {
     return toResponse(payroll);
   }
 
-  /** GET /hr-payroll (HR Payroll/Faculty). Faculty is always scoped to their own records. */
+  /** GET /hr-payroll (HR Payroll/Faculty/Secretary). Faculty/Secretary are always scoped to their own records. */
   async findAll(query: ListHrPayrollQueryDto, currentUser: JwtPayload) {
     const where: Record<string, unknown> = {
       payee_type: 'faculty',
@@ -162,6 +170,11 @@ export class HrPayrollService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.SECRETARY) {
+      const staff = await this.resolveStaffByUserId(currentUser.sub);
+      where.payee_type = 'staff';
+      where.faculty_id = undefined;
+      where.staff_id = staff.id;
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -178,20 +191,27 @@ export class HrPayrollService {
     return paginate(rows.map(toResponse), total, query);
   }
 
-  /** GET /hr-payroll/:id (HR Payroll/Faculty). Faculty may only view their own. */
+  /** GET /hr-payroll/:id (HR Payroll/Faculty/Secretary). Faculty/Secretary may only view their own. */
   async findOne(id: number, currentUser: JwtPayload) {
     const payroll = await this.prisma.salary_payments.findUnique({
       where: { id },
       select: HR_PAYROLL_SELECT,
     });
 
-    if (!payroll || !payroll.faculty) {
+    if (!payroll || (!payroll.faculty && !payroll.non_teaching_staff)) {
       throw new NotFoundException('Payroll record not found');
     }
 
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-      if (payroll.faculty.id !== faculty.id) {
+      if (payroll.faculty?.id !== faculty.id) {
+        throw new ForbiddenException(
+          'You may only view your own payroll records',
+        );
+      }
+    } else if (currentUser.role === ROLES.SECRETARY) {
+      const staff = await this.resolveStaffByUserId(currentUser.sub);
+      if (payroll.non_teaching_staff?.id !== staff.id) {
         throw new ForbiddenException(
           'You may only view your own payroll records',
         );
@@ -293,5 +313,24 @@ export class HrPayrollService {
       );
     }
     return faculty;
+  }
+
+  /**
+   * Secretary (and any other non-teaching staff role) has a real
+   * `non_teaching_staff` row keyed by user_id, distinct from `faculty` —
+   * their salary_payments rows use payee_type='staff' + staff_id, not
+   * faculty_id. Resolved the same way resolveFacultyByUserId resolves
+   * Faculty's own profile.
+   */
+  private async resolveStaffByUserId(userId: number) {
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: userId },
+    });
+    if (!staff) {
+      throw new NotFoundException(
+        'Staff profile not found for the authenticated user',
+      );
+    }
+    return staff;
   }
 }

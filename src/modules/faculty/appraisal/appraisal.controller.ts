@@ -101,12 +101,14 @@ export class AppraisalController {
   }
 
   /**
-   * POST /api/v1/appraisal_requests/:id/attachments — Faculty only, own
-   * request, only while still 'submitted'. multipart/form-data: up to 5
-   * files (field name "files", 10MB each) plus a "division_id" text field.
+   * POST /api/v1/appraisal_requests/:id/attachments — Faculty, HoD or
+   * Secretary (own request only), only while still 'submitted'/
+   * 'hod_reviewed' (Secretary submissions skip straight to that stage,
+   * see create()). multipart/form-data: up to 5 files (field name
+   * "files", 10MB each) plus a "division_id" text field.
    */
   @Post('appraisal_requests/:id/attachments')
-  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   @UseInterceptors(
     FilesInterceptor('files', MAX_ATTACHMENT_FILES, {
       limits: { fileSize: MAX_ATTACHMENT_FILE_SIZE_BYTES },
@@ -123,17 +125,18 @@ export class AppraisalController {
       dto.division_id,
       files,
       user.sub,
+      user.role,
     );
   }
 
-  /** DELETE /api/v1/appraisal_requests/:id/attachments/:attachmentId — Faculty or HoD, own request, only while still 'submitted'. */
+  /** DELETE /api/v1/appraisal_requests/:id/attachments/:attachmentId — Faculty, HoD or Secretary, own request, only while still 'submitted'/'hod_reviewed'. */
   @Delete('appraisal_requests/:id/attachments/:attachmentId')
-  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   removeAttachment(
     @Param('id', ParseIntPipe) id: number,
     @Param('attachmentId', ParseIntPipe) attachmentId: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.appraisalService.removeAttachment(id, attachmentId, user.sub);
+    return this.appraisalService.removeAttachment(id, attachmentId, user.sub, user.role);
   }
 }

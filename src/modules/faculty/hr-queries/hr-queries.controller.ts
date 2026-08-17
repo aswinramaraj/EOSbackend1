@@ -23,11 +23,11 @@ const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
 
 @Controller('me/hr-queries')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.FACULTY)
+@Roles(ROLES.FACULTY, ROLES.SECRETARY)
 export class HrQueriesController {
   constructor(private readonly hrQueriesService: HrQueriesService) {}
 
-  /** POST /api/v1/me/hr-queries — multipart, `file` optional. */
+  /** POST /api/v1/me/hr-queries — multipart, `file` optional. Faculty + Secretary. */
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))

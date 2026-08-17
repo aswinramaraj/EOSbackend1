@@ -35,9 +35,9 @@ export class HrPayrollController {
     return this.hrPayrollService.create(dto, user.sub);
   }
 
-  /** GET /api/v1/hr-payroll — HR Payroll (all)/Faculty (own only). Paginated, filterable. */
+  /** GET /api/v1/hr-payroll — HR Payroll (all)/Faculty/Secretary (own only). Paginated, filterable. */
   @Get('hr-payroll')
-  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY)
+  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY, ROLES.SECRETARY)
   findAll(
     @Query() query: ListHrPayrollQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -45,9 +45,9 @@ export class HrPayrollController {
     return this.hrPayrollService.findAll(query, user);
   }
 
-  /** GET /api/v1/hr-payroll/:id — HR Payroll (all)/Faculty (own only). */
+  /** GET /api/v1/hr-payroll/:id — HR Payroll (all)/Faculty/Secretary (own only). */
   @Get('hr-payroll/:id')
-  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY)
+  @Roles(ROLES.HR_PAYROLL, ROLES.FACULTY, ROLES.SECRETARY)
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
