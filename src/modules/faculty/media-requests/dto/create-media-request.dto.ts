@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUrl,
   MaxLength,
 } from 'class-validator';
 
@@ -78,4 +79,15 @@ export class CreateMediaRequestDto {
   @ArrayMinSize(1)
   @IsIn(MEDIA_REQUEST_TYPES, { each: true })
   media_types?: string[];
+
+  /**
+   * Real logos/guest-photo/reference-poster attachment, uploaded ahead of
+   * create via `POST /media-requests/attachments` (same two-step shape as
+   * announcements) — the requester attaches at creation time, not just
+   * Media Room afterwards via `UpdateMediaRequestDto`.
+   */
+  @IsOptional()
+  @IsUrl()
+  @MaxLength(500)
+  media_file_url?: string;
 }

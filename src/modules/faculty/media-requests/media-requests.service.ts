@@ -10,6 +10,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { StorageService } from 'src/common/storage/storage.service';
 import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { CreateMediaRequestDto } from './dto/create-media-request.dto';
 import { UpdateMediaRequestDto } from './dto/update-media-request.dto';
@@ -122,7 +123,27 @@ export class MediaRequestsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly storage: StorageService,
   ) {}
+
+  /**
+   * POST /media-requests/attachments — real file upload (logos/guest
+   * photo/reference poster), same StorageService (Supabase Storage,
+   * public bucket) already used by announcements attachments. Returns a
+   * public URL the caller then sends back as `media_file_url` on create.
+   * Uploaded ahead of create (not tied to an id yet) — same two-step
+   * shape as announcements' own attachment upload.
+   */
+  async uploadAttachment(file: Express.Multer.File) {
+    const { key } = await this.storage.upload(
+      'media-requests',
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+    );
+    const url = this.storage.getPublicUrl(key);
+    return { file_key: key, file_name: file.originalname, url };
+  }
 
   /**
    * POST /media-requests (Faculty / Secretary).
@@ -171,6 +192,7 @@ export class MediaRequestsService {
         coordinator_name: dto.coordinator_name,
         contact_number: dto.contact_number,
         media_types: dto.media_types ?? [],
+        media_file_url: dto.media_file_url,
       },
       select: MEDIA_REQUEST_SELECT,
     });

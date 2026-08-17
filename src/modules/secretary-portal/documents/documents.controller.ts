@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -14,11 +15,23 @@ import { ListDocumentsQueryDto } from './dto/list-documents-query.dto';
  * "Department Document Management" screen. Institution-wide for
  * Secretary/Admin/Principal (no secretary→department table exists).
  */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB, same cap as announcements
+
 @Controller('me/department-documents')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(ROLES.SECRETARY, ROLES.ADMIN, ROLES.PRINCIPAL)
 export class DocumentsController {
   constructor(private readonly documentsService: DocumentsService) {}
+
+  /** POST /me/department-documents/attachments — real upload; call before create(). */
+  @Post('attachments')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
+  uploadAttachment(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException({ message: 'No file was uploaded (expected multipart field "file")', errorCode: 'VALIDATION_ERROR' });
+    }
+    return this.documentsService.uploadAttachment(file);
+  }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)

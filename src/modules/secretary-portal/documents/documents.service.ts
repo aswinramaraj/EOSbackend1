@@ -1,6 +1,7 @@
 import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { StorageService } from 'src/common/storage/storage.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { ListDocumentsQueryDto } from './dto/list-documents-query.dto';
 
@@ -62,7 +63,23 @@ function toResponse(row: {
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
+
+  /**
+   * POST /me/department-documents/attachments — real file upload, same
+   * Supabase-Storage pattern as announcements/media-requests. Returns
+   * { url, size_bytes } which the composer sends back as file_url/
+   * size_bytes on the actual create() call — replaces the previous
+   * hand-typed "size in MB" field with the real uploaded file's size.
+   */
+  async uploadAttachment(file: Express.Multer.File) {
+    const { key } = await this.storage.upload('department-documents', file.originalname, file.buffer, file.mimetype);
+    const url = this.storage.getPublicUrl(key);
+    return { file_key: key, file_name: file.originalname, url, size_bytes: file.size };
+  }
 
   async create(dto: CreateDocumentDto, userId: number) {
     const department = await this.prisma.departments.findUnique({ where: { id: dto.department_id } });
