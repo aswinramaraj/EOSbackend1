@@ -40,11 +40,12 @@ export class OutingsController {
   }
 
   @Patch(':id/decision')
-  decide(
+  async decide(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: DecideOutingDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.outingsService.decide(id, dto, user.sub);
+    const wardenHostelId = await resolveWardenHostelId(this.prisma, user.sub);
+    return this.outingsService.decide(id, dto, user.sub, wardenHostelId);
   }
 }

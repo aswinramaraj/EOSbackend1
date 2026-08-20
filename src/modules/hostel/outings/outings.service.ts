@@ -123,10 +123,34 @@ export class OutingsService {
    *  404 OUTING_NOT_FOUND      – no outing with this id
    *  409 OUTING_ALREADY_DECIDED – outing is not currently pending
    */
-  async decide(id: number, dto: DecideOutingDto, wardenUserId: number) {
-    let outing: { status: string } | null;
+  async decide(
+    id: number,
+    dto: DecideOutingDto,
+    wardenUserId: number,
+    wardenHostelId: number | null,
+  ) {
+    let outing: {
+      status: string;
+      students: {
+        student_hostel_mapping: {
+          hostel_rooms: { hostel_id: number };
+        } | null;
+      };
+    } | null;
     try {
-      outing = await this.prisma.hostel_outings.findUnique({ where: { id } });
+      outing = await this.prisma.hostel_outings.findUnique({
+        where: { id },
+        select: {
+          status: true,
+          students: {
+            select: {
+              student_hostel_mapping: {
+                select: { hostel_rooms: { select: { hostel_id: true } } },
+              },
+            },
+          },
+        },
+      });
     } catch (err) {
       this.logger.error('DB error during outing lookup', err);
       throw new InternalServerErrorException({
@@ -135,7 +159,15 @@ export class OutingsService {
       });
     }
 
-    if (!outing) {
+    // Treat "exists, but not my hostel's resident" the same as "doesn't
+    // exist" — a warden of another hostel can't use this to confirm the
+    // outing request exists.
+    if (
+      !outing ||
+      (wardenHostelId != null &&
+        outing.students.student_hostel_mapping?.hostel_rooms.hostel_id !==
+          wardenHostelId)
+    ) {
       throw new NotFoundException({
         message: 'Outing request not found',
         errorCode: 'OUTING_NOT_FOUND',
