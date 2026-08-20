@@ -76,7 +76,9 @@ export class AuthService {
         roleId: user.roles.id,
       };
 
-      const secret = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
+      // JWT_SECRET presence is enforced at bootstrap (see main.ts) — no
+      // fallback here, since a fallback is exactly the vulnerability.
+      const secret = process.env.JWT_SECRET!;
       const expiresIn = process.env.JWT_EXPIRES_IN || '8h';
       accessToken = jwt.sign(payload, secret, { expiresIn } as any);
     } catch (err) {
