@@ -22,8 +22,9 @@ export class GateLogController {
   ) {}
 
   @Post()
-  create(@Body() dto: CreateGateLogDto, @CurrentUser() user: JwtPayload) {
-    return this.gateLogService.create(dto, user.sub);
+  async create(@Body() dto: CreateGateLogDto, @CurrentUser() user: JwtPayload) {
+    const wardenHostelId = await resolveWardenHostelId(this.prisma, user.sub);
+    return this.gateLogService.create(dto, user.sub, wardenHostelId);
   }
 
   @Get()
