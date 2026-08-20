@@ -110,6 +110,21 @@ describe('LeaveRequestsService', () => {
         status: 'rejected',
       });
     });
+
+    it('additionally filters by hostel_id when provided, alongside routed_to_warden: true', async () => {
+      prisma.student_leaves.findMany.mockResolvedValue([]);
+      prisma.student_leaves.count.mockResolvedValue(0);
+
+      await service.findAll({ hostel_id: 1, page: 1, page_size: 20 });
+
+      const [findManyArgs] = prisma.student_leaves.findMany.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ];
+      expect(findManyArgs.where).toEqual({
+        routed_to_warden: true,
+        students: { student_hostel_mapping: { hostel_rooms: { hostel_id: 1 } } },
+      });
+    });
   });
 
   describe('decide', () => {
@@ -117,7 +132,7 @@ describe('LeaveRequestsService', () => {
       prisma.student_leaves.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.decide(1, { decision: 'approved' }, 99),
+        service.decide(1, { decision: 'approved' }, 99, null),
       ).rejects.toMatchObject({
         status: 404,
         response: { errorCode: 'LEAVE_REQUEST_NOT_FOUND' },
@@ -128,10 +143,29 @@ describe('LeaveRequestsService', () => {
       prisma.student_leaves.findUnique.mockResolvedValue({
         status: 'pending',
         routed_to_warden: false,
+        students: { student_hostel_mapping: null },
       });
 
       await expect(
-        service.decide(1, { decision: 'approved' }, 99),
+        service.decide(1, { decision: 'approved' }, 99, null),
+      ).rejects.toMatchObject({
+        status: 404,
+        response: { errorCode: 'LEAVE_REQUEST_NOT_FOUND' },
+      });
+      expect(prisma.student_leaves.update).not.toHaveBeenCalled();
+    });
+
+    it('throws 404 LEAVE_REQUEST_NOT_FOUND when the request belongs to a different hostel than the caller is scoped to', async () => {
+      prisma.student_leaves.findUnique.mockResolvedValue({
+        status: 'pending',
+        routed_to_warden: true,
+        students: {
+          student_hostel_mapping: { hostel_rooms: { hostel_id: 2 } },
+        },
+      });
+
+      await expect(
+        service.decide(1, { decision: 'approved' }, 99, 1),
       ).rejects.toMatchObject({
         status: 404,
         response: { errorCode: 'LEAVE_REQUEST_NOT_FOUND' },
@@ -143,10 +177,11 @@ describe('LeaveRequestsService', () => {
       prisma.student_leaves.findUnique.mockResolvedValue({
         status: 'warden_approved',
         routed_to_warden: true,
+        students: { student_hostel_mapping: null },
       });
 
       await expect(
-        service.decide(1, { decision: 'approved' }, 99),
+        service.decide(1, { decision: 'approved' }, 99, null),
       ).rejects.toMatchObject({
         status: 409,
         response: { errorCode: 'LEAVE_REQUEST_ALREADY_DECIDED' },
@@ -157,12 +192,15 @@ describe('LeaveRequestsService', () => {
       prisma.student_leaves.findUnique.mockResolvedValue({
         status: 'pending',
         routed_to_warden: true,
+        students: {
+          student_hostel_mapping: { hostel_rooms: { hostel_id: 1 } },
+        },
       });
       prisma.student_leaves.update.mockResolvedValue(
         leaveRow({ status: 'warden_approved' }),
       );
 
-      await service.decide(1, { decision: 'approved' }, 99);
+      await service.decide(1, { decision: 'approved' }, 99, 1);
 
       expect(prisma.student_leaves.update).toHaveBeenCalledWith({
         where: { id: 1 },
@@ -175,12 +213,13 @@ describe('LeaveRequestsService', () => {
       prisma.student_leaves.findUnique.mockResolvedValue({
         status: 'pending',
         routed_to_warden: true,
+        students: { student_hostel_mapping: null },
       });
       prisma.student_leaves.update.mockResolvedValue(
         leaveRow({ status: 'rejected' }),
       );
 
-      await service.decide(1, { decision: 'rejected' }, 99);
+      await service.decide(1, { decision: 'rejected' }, 99, null);
 
       expect(prisma.student_leaves.update).toHaveBeenCalledWith({
         where: { id: 1 },

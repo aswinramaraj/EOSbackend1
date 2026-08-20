@@ -89,11 +89,16 @@ export class LeaveRequestsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** GET /hostel/leave-requests?status=&page=&page_size= — warden-side review queue, mirrors OutingsService.findAll. */
+  /** GET /hostel/leave-requests?status=&hostel_id=&page=&page_size= — warden-side review queue, mirrors OutingsService.findAll. */
   async findAll(dto: SearchLeaveRequestsDto) {
-    const { status, page = 1, page_size = 20 } = dto;
+    const { status, hostel_id, page = 1, page_size = 20 } = dto;
     const where: Prisma.student_leavesWhereInput = { routed_to_warden: true };
     if (status) where.status = status;
+    if (hostel_id) {
+      where.students = {
+        student_hostel_mapping: { hostel_rooms: { hostel_id } },
+      };
+    }
 
     try {
       const [requests, total] = await this.prisma.$transaction([
@@ -133,12 +138,35 @@ export class LeaveRequestsService {
    *                                      isn't this queue's to decide)
    *  409 LEAVE_REQUEST_ALREADY_DECIDED – request is not currently pending
    */
-  async decide(id: number, dto: DecideLeaveRequestDto, wardenUserId: number) {
-    let request: { status: string; routed_to_warden: boolean } | null;
+  async decide(
+    id: number,
+    dto: DecideLeaveRequestDto,
+    wardenUserId: number,
+    wardenHostelId: number | null,
+  ) {
+    let request: {
+      status: string;
+      routed_to_warden: boolean;
+      students: {
+        student_hostel_mapping: {
+          hostel_rooms: { hostel_id: number };
+        } | null;
+      };
+    } | null;
     try {
       request = await this.prisma.student_leaves.findUnique({
         where: { id },
-        select: { status: true, routed_to_warden: true },
+        select: {
+          status: true,
+          routed_to_warden: true,
+          students: {
+            select: {
+              student_hostel_mapping: {
+                select: { hostel_rooms: { select: { hostel_id: true } } },
+              },
+            },
+          },
+        },
       });
     } catch (err) {
       this.logger.error('DB error during hostel leave request lookup', err);
@@ -148,7 +176,16 @@ export class LeaveRequestsService {
       });
     }
 
-    if (!request || !request.routed_to_warden) {
+    // Treat "exists, but not routed to me / not my hostel's resident" the
+    // same as "doesn't exist" — a warden of another hostel can't use this
+    // to confirm the request exists.
+    if (
+      !request ||
+      !request.routed_to_warden ||
+      (wardenHostelId != null &&
+        request.students.student_hostel_mapping?.hostel_rooms.hostel_id !==
+          wardenHostelId)
+    ) {
       throw new NotFoundException({
         message: 'Hostel leave request not found',
         errorCode: 'LEAVE_REQUEST_NOT_FOUND',
@@ -189,11 +226,16 @@ export class LeaveRequestsService {
    * the Warden can see their status here but cannot act on them.
    */
   async findFromAcademicLeave(dto: SearchLeaveRequestsDto) {
-    const { page = 1, page_size = 20 } = dto;
+    const { hostel_id, page = 1, page_size = 20 } = dto;
     const where: Prisma.student_leavesWhereInput = {
       also_on_hostel_leave: true,
       routed_to_warden: false,
     };
+    if (hostel_id) {
+      where.students = {
+        student_hostel_mapping: { hostel_rooms: { hostel_id } },
+      };
+    }
 
     try {
       const [rows, total] = await this.prisma.$transaction([

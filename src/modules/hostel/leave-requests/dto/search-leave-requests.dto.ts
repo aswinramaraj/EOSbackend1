@@ -20,6 +20,12 @@ export class SearchLeaveRequestsDto {
   @Transform(({ value }) => Number(value))
   @IsInt()
   @Min(1)
+  hostel_id?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @IsInt()
+  @Min(1)
   page?: number = 1;
 
   @IsOptional()
