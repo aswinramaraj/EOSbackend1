@@ -32,15 +32,22 @@ export class AttendanceController {
     private readonly meStaffAttendanceService: MeStaffAttendanceService,
   ) {}
 
-  /** POST /api/v1/attendance — Faculty / Secretary. */
+  /**
+   * POST /api/v1/attendance — Faculty, Secretary. Secretary added for the
+   * Secretary Portal's Bulk Attendance "Mark" tab — has no `faculty` table
+   * row, handled by a distinct branch in the service (see
+   * AttendanceService.create) that skips the faculty-profile lookup,
+   * mirroring the same pattern already used for media-requests.
+   */
   @Post('attendance')
   @Roles(ROLES.FACULTY, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateAttendanceDto, @CurrentUser() user: JwtPayload) {
-    return this.attendanceService.create(dto, user);
+    return this.attendanceService.create(dto, user.sub, user.role);
   }
 
   /**
+<<<<<<< HEAD
    * GET /api/v1/me/attendance-records — Admin/HoD/Faculty/Secretary/Student/
    * Parent. Student/Parent are scoped to their own records.
    * Moved off 'me/attendance' (2026-08-21): that path collided with
@@ -50,6 +57,19 @@ export class AttendanceController {
    * 403 "Required role(s): student"). 'attendance-records' matches the path
    * EOS-web-frontend's Secretary code already migrated to expect after
    * independently discovering the same shadowing bug.
+=======
+   * GET /api/v1/attendance-records — Admin/HoD/Faculty/Student/Parent/
+   * Secretary. Student/Parent are scoped to their own records; Secretary
+   * is institution-wide (same posture as Admin/HoD here).
+   *
+   * Renamed from 'attendance' (bare) — that exact path was silently
+   * shadowed by MeProfileController's own student-only 'me/attendance'
+   * route (MeProfileModule registers before AttendanceModule in
+   * app.module.ts, so Nest/Express always matched that one first). This
+   * meant EVERY role here — not just Secretary — has been unable to reach
+   * this endpoint since it was added. Renaming resolves the ambiguity
+   * without touching the unrelated student-profile module.
+>>>>>>> origin/iqac
    */
   @Get('attendance-records')
   @Roles(

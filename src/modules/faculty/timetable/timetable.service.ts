@@ -184,7 +184,12 @@ const TODAY_SLOT_SELECT = {
   end_time: true,
   subject_id: true,
   class_id: true,
-  subjects: { select: { name: true } },
+  // course_type added: the `subjects` relation was already joined here for
+  // `name` — this reuses the same join to also expose whether the period is
+  // a lab (PRACTICAL/THEORY_WITH_PRACTICAL), which the faculty "Today"
+  // timetable screen needs for its real LABS count (previously hardcoded
+  // false client-side despite this join already existing).
+  subjects: { select: { name: true, course_type: true } },
   classes: {
     select: { section: true, departments: { select: { name: true } } },
   },
@@ -197,7 +202,7 @@ interface TodaySlotRow {
   end_time: Date;
   subject_id: number;
   class_id: number;
-  subjects: { name: string };
+  subjects: { name: string; course_type: string | null };
   classes: { section: string; departments: { name: string } };
 }
 
@@ -209,6 +214,7 @@ function toTodaySlotResponse(slot: TodaySlotRow) {
     end_time: formatHHMM(slot.end_time),
     subject_id: slot.subject_id,
     subject_name: slot.subjects.name,
+    course_type: slot.subjects.course_type,
     class_id: slot.class_id,
     class_section: slot.classes.section,
     department_name: slot.classes.departments.name,

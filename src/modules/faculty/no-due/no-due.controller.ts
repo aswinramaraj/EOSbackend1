@@ -50,3 +50,31 @@ export class NoDueController {
     return this.noDueService.approveOverride(studentId, user.sub);
   }
 }
+
+/**
+ * Class-advisor-facing "No Due" view — read-only, scoped to the classes
+ * this faculty mentors (class_mentors) instead of a whole department. No
+ * approve action here: that override stays an HoD-only decision, matching
+ * the design (this screen has no Approve button).
+ */
+@Controller('me/mentee-no-due')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(ROLES.FACULTY)
+export class MenteeNoDueController {
+  constructor(private readonly noDueService: NoDueService) {}
+
+  /** GET /api/v1/me/mentee-no-due/batches */
+  @Get('batches')
+  getBatches(@CurrentUser() user: JwtPayload) {
+    return this.noDueService.getBatchesForMentor(user.sub);
+  }
+
+  /** GET /api/v1/me/mentee-no-due/students?batch_id=&status=&search=&page=&limit= */
+  @Get('students')
+  getStudents(
+    @Query() query: ListNoDueStudentsQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.noDueService.getStudentsForMentor(query, user.sub);
+  }
+}

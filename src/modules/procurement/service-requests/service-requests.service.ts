@@ -9,6 +9,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { CreateServiceRequestDto } from './dto/create-service-request.dto';
 import { ListServiceRequestsQueryDto } from './dto/list-service-requests-query.dto';
 import { HodReviewServiceRequestDto } from './dto/hod-review-service-request.dto';
@@ -73,6 +74,13 @@ function deriveStatus(row: ProposalRow): string {
   }
   if (row.status === 'pending') return 'pending_hod';
   if (row.status === 'hod_approved') return 'pending_finance';
+  // See identical note in purchase-requests.service.ts's deriveStatus —
+  // a separate PrincipalApprovalsService can move a row to
+  // 'principal_approved'; financeReview() still gates on 'hod_approved'
+  // only, a pre-existing cross-module conflict out of scope to resolve
+  // here. Handled so it at least doesn't fall through to a misleading
+  // 'approved' label.
+  if (row.status === 'principal_approved') return 'pending_finance';
   return 'approved'; // finance_approved
 }
 
@@ -104,7 +112,10 @@ function toResponse(row: ProposalRow) {
 export class ServiceRequestsService {
   private readonly logger = new Logger(ServiceRequestsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /** POST /me/service-requests (Secretary only). */
   async create(dto: CreateServiceRequestDto, userId: number) {
@@ -254,6 +265,23 @@ export class ServiceRequestsService {
     this.logger.log(
       `Service request ${id} ${dto.decision === 'approved' ? 'forwarded to Finance' : 'rejected'} by HoD user=${currentUser.sub}`,
     );
+
+    // Real push — this is the module that actually owns /me/service-requests
+    // (a route-collision audit found `secretary/service-requests` was
+    // permanently shadowed and unreachable; that module's own notify() call
+    // never fired for a real request). Only reject is a final decision here
+    // (approved just forwards to Finance, not yet resolved for the requester).
+    if (dto.decision !== 'approved') {
+      await this.notifications.notify({
+        user_id: existing.service_indents.requested_by_user_id,
+        title: 'Service request rejected',
+        message: `Your service request "${existing.service_indents.title ?? existing.service_indents.service_description}" was rejected by your HoD.`,
+        type: 'approval_request_rejected',
+        related_entity_type: 'service_indent',
+        related_entity_id: existing.service_indents.id,
+      });
+    }
+
     return toResponse(proposal as unknown as ProposalRow);
   }
 
@@ -261,6 +289,7 @@ export class ServiceRequestsService {
   async financeReview(id: number, dto: FinanceReviewServiceRequestDto, userId: number) {
     const existing = await this.prisma.service_order_proposals.findUnique({
       where: { id },
+      include: { service_indents: true },
     });
     if (!existing) {
       throw new NotFoundException({
@@ -296,6 +325,18 @@ export class ServiceRequestsService {
     this.logger.log(
       `Service request ${id} ${dto.decision === 'approved' ? 'approved' : 'rejected'} by Finance user=${userId}`,
     );
+
+    // Real push — Finance's decision is the final one for the requester
+    // either way (approved -> ready to convert to an order; rejected -> done).
+    await this.notifications.notify({
+      user_id: existing.service_indents.requested_by_user_id,
+      title: `Service request ${dto.decision}`,
+      message: `Your service request "${existing.service_indents.title ?? existing.service_indents.service_description}" was ${dto.decision} by Finance.`,
+      type: dto.decision === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+      related_entity_type: 'service_indent',
+      related_entity_id: existing.service_indents.id,
+    });
+
     return toResponse(proposal as unknown as ProposalRow);
   }
 

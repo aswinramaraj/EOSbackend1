@@ -26,6 +26,7 @@ import { FinanceReviewServiceRequestDto } from './dto/finance-review-service-req
 /**
  * Mirrors PurchaseRequestsController exactly - see its own doc comment.
  *
+<<<<<<< HEAD
  * Moved off 'me/service-requests' (2026-08-21): that path collided with
  * secretary/service-requests/service-requests.controller.ts, which imports
  * later in app.module.ts and was being silently shadowed by this
@@ -36,6 +37,20 @@ import { FinanceReviewServiceRequestDto } from './dto/finance-review-service-req
  * share a literal path.
  */
 @Controller('me/procurement-service-requests')
+=======
+ * Route moved off `me/service-requests` (was a real, silent collision —
+ * `secretary/service-requests`'s own controller registers the identical
+ * path and, being imported later in app.module.ts, was 100% shadowed and
+ * unreachable despite being a fully real, separate feature over its own
+ * `secretary_service_requests`/`secretary_service_request_items` tables
+ * — multi-item, single-decision, draft-first, distinct from this
+ * module's single-item HoD->Finance->Admin-convert pipeline over
+ * `service_indents`). No other frontend page calls this route (grepped
+ * the whole frontend repo), so renaming here is safe — this module's own
+ * real workflow is unaffected, it's just addressed differently now.
+ */
+@Controller('me/service-indent-requests')
+>>>>>>> origin/iqac
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ServiceRequestsController {
   constructor(private readonly serviceRequestsService: ServiceRequestsService) {}

@@ -48,6 +48,11 @@ export class BorrowRecordsController {
     return this.borrowRecordsService.findOne(id, user);
   }
 
+  // Secretary is deliberately NOT included here — per the user's explicit
+  // call, a real book can only be handed over/checked back in by library
+  // staff at the desk, so there's no genuine self-checkout action for a
+  // Secretary account. The Secretary Library screen is view-only (see
+  // findMyStaffBorrowRecords below).
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('student', 'library', 'admin')
   @Post('library/borrow-records')
@@ -140,4 +145,20 @@ export class BorrowRecordsController {
   getMyDuesSummary(@CurrentUser() user: JwtPayload) {
     return this.borrowRecordsService.getMyDuesSummary(user);
   }
+
+  // GET /me/library/staff-borrow-records — Secretary's own borrow history,
+  // mirroring the student-only route above but keyed by staff_user_id.
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('secretary')
+  @Get('me/library/staff-borrow-records')
+  findMyStaffBorrowRecords(
+    @Query() query: GetMyBorrowRecordsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.borrowRecordsService.findMyStaffBorrowRecords(query, user);
+  }
+
+  // No self-service renew/return/borrow route for Secretary — real books
+  // can only be checked out, renewed and returned by library staff at the
+  // desk (a real-world physical handover), so this is genuinely view-only.
 }

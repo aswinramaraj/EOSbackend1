@@ -45,6 +45,12 @@ import { PrincipalPlacementsModule as PrincipalPlacementsFlatModule } from './mo
 import { PrincipalHostelModule as PrincipalHostelFlatModule } from './modules/principal-hostel/principal-hostel.module';
 import { PrincipalApprovalsModule as PrincipalApprovalsFlatModule } from './modules/principal-approvals/principal-approvals.module';
 import { PrincipalTransportModule as PrincipalTransportFlatModule } from './modules/principal-transport/principal-transport.module';
+import { StartupIdeasModule } from './modules/startup-ideas/startup-ideas.module';
+import { IncubationsModule } from './modules/incubations/incubations.module';
+import { EdcEventsModule } from './modules/edc-events/edc-events.module';
+import { EdcDocumentsModule } from './modules/edc-documents/edc-documents.module';
+import { EdcReportsModule } from './modules/edc-reports/edc-reports.module';
+import { EdcFundingModule } from './modules/edc-funding/edc-funding.module';
 import { PrincipalLibraryModule } from './modules/principal-library/principal-library.module';
 import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
@@ -87,6 +93,7 @@ import { FacultyModule } from './modules/faculty/faculty/faculty.module';
 import { HolidaySlotsModule } from './modules/faculty/holiday-slots/holiday-slots.module';
 import { LeaveTypesModule } from './modules/faculty/leave-types/leave-types.module';
 import { HrPayrollModule } from './modules/faculty/hr-payroll/hr-payroll.module';
+import { HrQueriesModule } from './modules/faculty/hr-queries/hr-queries.module';
 import { LessonPlansModule } from './modules/faculty/lesson-plans/lesson-plans.module';
 import { LmsNotesModule } from './modules/faculty/lms-notes/lms-notes.module';
 import { MediaRequestsModule } from './modules/faculty/media-requests/media-requests.module';
@@ -97,6 +104,7 @@ import { SubjectRecordsModule } from './modules/faculty/subject-records/subject-
 import { StudentAssignmentStatusModule } from './modules/faculty/student-assignment-status/student-assignment-status.module';
 import { TimetableModule } from './modules/faculty/timetable/timetable.module';
 
+import { AuditLogModule } from './modules/fees-billing/audit-log/audit-log.module';
 import { DemandModule } from './modules/fees-billing/demand/demand.module';
 import { EducationLoanDdModule } from './modules/fees-billing/education-loan-dd/education-loan-dd.module';
 import { FeeConcessionModule } from './modules/fees-billing/fee-concessions/fee-concession.module';
@@ -109,6 +117,7 @@ import { GateLedgerModule } from './modules/fees-billing/gate-ledger/gate-ledger
 import { HostelRoomModule } from './modules/fees-billing/hostel-rooms/hostel-room.module';
 import { HostelRoomTypeModule } from './modules/fees-billing/hostel-room-types/hostel-room-type.module';
 import { QuotaModule } from './modules/fees-billing/quota/quota.module';
+import { ReportsModule } from './modules/fees-billing/reports/reports.module';
 import { StudentFeeDemandMappingModule } from './modules/fees-billing/student-fee-demand-mapping/student-fee-demand-mapping.module';
 import { TransportRouteModule } from './modules/fees-billing/transport-routes/transport-route.module';
 import { TransportStageModule } from './modules/fees-billing/transport-stages/transport-stage.module';
@@ -141,6 +150,13 @@ import { VendorsModule } from './modules/procurement/vendors/vendors.module';
 
 import { PurchaseRequestsModule } from './modules/procurement/purchase-requests/purchase-requests.module';
 import { ServiceRequestsModule as ProcurementServiceRequestsModule } from './modules/procurement/service-requests/service-requests.module';
+
+import { DocumentsModule } from './modules/secretary-portal/documents/documents.module';
+import { OutpassModule } from './modules/secretary-portal/outpass/outpass.module';
+import { MeetingsModule } from './modules/secretary-portal/meetings/meetings.module';
+import { EventsModule } from './modules/secretary-portal/events/events.module';
+import { AccreditationModule } from './modules/secretary-portal/accreditation/accreditation.module';
+import { SettingsModule } from './modules/secretary-portal/settings/settings.module';
 
 import { WalletModule } from './modules/wallet/wallet.module';
 
@@ -237,6 +253,12 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     PrincipalSportsModule,
     SportsAdminModule,
     StudentEntrepreneurshipModule,
+    StartupIdeasModule,
+    IncubationsModule,
+    EdcEventsModule,
+    EdcDocumentsModule,
+    EdcReportsModule,
+    EdcFundingModule,
     ProfileModule,
     LmsModule,
     TransportModule,
@@ -277,6 +299,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     FacultyModule,
     HolidaySlotsModule,
     HrPayrollModule,
+    HrQueriesModule,
     LessonPlansModule,
     LmsNotesModule,
     MediaRequestsModule,
@@ -287,6 +310,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     StudentAssignmentStatusModule,
     TimetableModule,
 
+    AuditLogModule,
     DemandModule,
     EducationLoanDdModule,
     FeeConcessionModule,
@@ -299,6 +323,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     HostelRoomModule,
     HostelRoomTypeModule,
     QuotaModule,
+    ReportsModule,
     StudentFeeDemandMappingModule,
     TransportRouteModule,
     TransportStageModule,
@@ -331,6 +356,12 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
 
     PurchaseRequestsModule,
     ProcurementServiceRequestsModule,
+    DocumentsModule,
+    OutpassModule,
+    MeetingsModule,
+    EventsModule,
+    AccreditationModule,
+    SettingsModule,
 
     WalletModule,
 

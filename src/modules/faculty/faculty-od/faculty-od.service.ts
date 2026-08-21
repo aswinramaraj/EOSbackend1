@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -52,6 +53,7 @@ const FACULTY_OD_SELECT = {
   email_sent_at: true,
   email_body: true,
   admin_remarks: true,
+  staff_user_id: true,
   faculty: {
     select: {
       id: true,
@@ -90,6 +92,15 @@ interface FacultyOdRow {
   email_sent_at: Date | null;
   email_body: string | null;
   admin_remarks: string | null;
+  // Real column, added by the Secretary module completion migration — set
+  // for Secretary-authored (non-Faculty) requests, null for Faculty/HoD
+  // requests (which keep using faculty_id, unchanged).
+  staff_user_id: number | null;
+  // Nullable only because faculty_id was relaxed for an unrelated
+  // Secretary-facing feature (see the Secretary module completion
+  // migration) — every row Faculty/HoD create/read still always has
+  // faculty_id (and thus user_id/department_id) set — a genuinely
+  // Secretary-authored row has faculty: null for real instead.
   faculty: {
     id: number;
     first_name: string;
@@ -97,8 +108,8 @@ interface FacultyOdRow {
     designation: string;
     user_id: number;
     department_id: number;
-    departments: { id: number; name: string; code: string };
-  };
+    departments: { id: number; name: string; code: string } | null;
+  } | null;
 }
 
 function computeOverallStatus(
@@ -146,14 +157,19 @@ function toResponse(od: FacultyOdRow) {
     },
     admin_remarks: od.admin_remarks,
     created_at: od.created_at,
-    faculty: {
-      id: od.faculty.id,
-      first_name: od.faculty.first_name,
-      last_name: od.faculty.last_name,
-      designation: od.faculty.designation,
-      department_id: od.faculty.department_id,
-      department_name: od.faculty.departments.name,
-    },
+    // Null for a genuine Secretary-authored row (no faculty row exists for
+    // that account) — real, expected state, not just a compile-time guard.
+    faculty: od.faculty
+      ? {
+          id: od.faculty.id,
+          first_name: od.faculty.first_name,
+          last_name: od.faculty.last_name,
+          designation: od.faculty.designation,
+          department_id: od.faculty.department_id,
+          department_name: od.faculty.departments?.name ?? null,
+        }
+      : null,
+    staff_user_id: od.staff_user_id,
   };
 }
 
@@ -177,8 +193,6 @@ export class FacultyOdService {
    * sending it straight to HR Payroll.
    */
   async create(dto: CreateFacultyOdDto, currentUser: JwtPayload) {
-    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-
     const fromDate = new Date(dto.from_date);
     const toDate = new Date(dto.to_date);
     const today = new Date(new Date().toISOString().slice(0, 10));
@@ -192,6 +206,27 @@ export class FacultyOdService {
     if (fromDate > toDate) {
       throw new BadRequestException('from_date must be on or before to_date');
     }
+
+    // Secretary (or any non-Faculty staff account) — no faculty row, no
+    // HoD to review; goes straight to the HR Payroll stage, keyed by
+    // staff_user_id. Mirrors faculty-leaves' identical Secretary branch.
+    if (currentUser.role === ROLES.SECRETARY) {
+      const od = await this.prisma.faculty_od_requests.create({
+        data: {
+          staff_user_id: currentUser.sub,
+          from_date: fromDate,
+          to_date: toDate,
+          place: dto.place,
+          purpose: dto.purpose,
+          hod_approval_status: 'approved',
+        },
+        select: FACULTY_OD_SELECT,
+      });
+      this.logger.log(`Staff OD request created: id=${od.id}`);
+      return toResponse(od);
+    }
+
+    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
 
     const od = await this.prisma.faculty_od_requests.create({
       data: {
@@ -243,6 +278,9 @@ export class FacultyOdService {
       where.faculty = { department_id: hod.department_id };
     } else if (currentUser.role === ROLES.HR_PAYROLL) {
       where.hod_approval_status = 'approved';
+    } else if (currentUser.role === ROLES.SECRETARY) {
+      delete where.faculty_id;
+      where.staff_user_id = currentUser.sub;
     }
 
     if (currentUser.role === ROLES.IQAC) {
@@ -306,6 +344,12 @@ export class FacultyOdService {
 
     if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      if (existing.faculty_id === null) {
+        throw new InternalServerErrorException({
+          message: 'This OD request has no faculty on record',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
       if (existing.faculty_id === hod.id) {
         throw new ForbiddenException({
           message: 'You cannot review your own OD request',
@@ -463,18 +507,116 @@ export class FacultyOdService {
       `Faculty OD request ${id} verification set to ${dto.verification_status} by IQAC user=${userId}`,
     );
 
-    try {
-      await this.notificationsService.create({
-        user_id: existing.faculty.user_id,
-        title: 'On-duty documents reviewed',
-        message: `IQAC marked your on-duty request "${existing.purpose ?? ''}" as ${dto.verification_status.replace('_', ' ')}.`,
-      });
-    } catch (err) {
-      this.logger.warn(
-        `Failed to notify faculty for OD request ${id}: ${err instanceof Error ? err.message : String(err)}`,
+    // A Secretary-authored row has no faculty, so there's no faculty user
+    // to notify here — this verify workflow is Faculty-only in practice
+    // (IQAC reviews on-duty documents, which only Faculty submit).
+    if (existing.faculty) {
+      try {
+        await this.notificationsService.notify({
+          user_id: existing.faculty.user_id,
+          title: 'On-duty documents reviewed',
+          message: `IQAC marked your on-duty request "${existing.purpose ?? ''}" as ${dto.verification_status.replace('_', ' ')}.`,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Failed to notify faculty for OD request ${id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    return toResponse(updated);
+  }
+
+  /**
+   * DELETE /me/faculty-od/:id (Faculty/HoD/Secretary — own request, only
+   * while still fully pending). This route never previously existed for
+   * this module at all — added to give OD requests real CRUD parity with
+   * faculty-leaves' equivalent withdraw action, same rules: a Secretary's
+   * own request has hod_approval_status pre-set to 'approved' (no HoD to
+   * review it), so only hr_approval_status gates withdrawal for them.
+   */
+  async remove(id: number, userId: number, role?: string) {
+    const existing = await this.prisma.faculty_od_requests.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Faculty OD request not found');
+    }
+
+    if (role === ROLES.SECRETARY) {
+      if (existing.staff_user_id !== userId) {
+        throw new ForbiddenException('You may only delete your own OD requests');
+      }
+    } else {
+      const faculty = await this.resolveFacultyByUserId(userId);
+      if (existing.faculty_id !== faculty.id) {
+        throw new ForbiddenException('You may only delete your own OD requests');
+      }
+    }
+
+    const stillWithdrawable =
+      role === ROLES.SECRETARY
+        ? existing.hr_approval_status === 'pending'
+        : existing.hod_approval_status === 'pending' &&
+          existing.hr_approval_status === 'pending';
+
+    if (!stillWithdrawable) {
+      throw new ConflictException(
+        'Only a still-pending OD request can be withdrawn',
       );
     }
 
+    await this.prisma.faculty_od_requests.delete({ where: { id } });
+    this.logger.log(`Faculty OD request deleted: id=${id}`);
+    return { id, deleted: true };
+  }
+
+  /**
+   * PATCH /me/my-od/:id — Secretary self-edit of their OWN still-pending
+   * (at HR Payroll) OD request. Mirrors faculty-leaves' updateOwnStaffRequest.
+   */
+  async updateOwnStaffRequest(
+    id: number,
+    userId: number,
+    dto: { from_date?: string; to_date?: string; place?: string; purpose?: string },
+  ) {
+    const existing = await this.prisma.faculty_od_requests.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('Faculty OD request not found');
+    }
+    if (existing.staff_user_id !== userId) {
+      throw new ForbiddenException('You may only edit your own OD requests');
+    }
+    if (existing.hr_approval_status !== 'pending') {
+      throw new ConflictException(
+        'This request has already been decided and can no longer be edited',
+      );
+    }
+
+    const data: {
+      from_date?: Date;
+      to_date?: Date;
+      place?: string;
+      purpose?: string;
+    } = {};
+    if (dto.from_date) data.from_date = new Date(dto.from_date);
+    if (dto.to_date) data.to_date = new Date(dto.to_date);
+    if (dto.place !== undefined) data.place = dto.place;
+    if (dto.purpose !== undefined) data.purpose = dto.purpose;
+
+    const fromDate = data.from_date ?? existing.from_date;
+    const toDate = data.to_date ?? existing.to_date;
+    if (fromDate > toDate) {
+      throw new BadRequestException('from_date must be on or before to_date');
+    }
+
+    const updated = await this.prisma.faculty_od_requests.update({
+      where: { id },
+      data,
+      select: FACULTY_OD_SELECT,
+    });
     return toResponse(updated);
   }
 

@@ -16,12 +16,14 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { FeeConcessionService } from './fee-concession.service';
 import { CreateFeeConcessionDto } from './dto/create-fee-concession.dto';
 import { UpdateFeeConcessionDto } from './dto/update-fee-concession.dto';
 
 @Controller()
-@Roles(ROLES.ADMIN)
+@Roles(ROLES.ADMIN, ROLES.BILLING)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class FeeConcessionController {
   constructor(private readonly feeConcessionService: FeeConcessionService) {}
@@ -83,8 +85,9 @@ export class FeeConcessionController {
   create(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateFeeConcessionDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.feeConcessionService.create(id, dto);
+    return this.feeConcessionService.create(id, dto, user.sub);
   }
 
   /**
@@ -102,8 +105,9 @@ export class FeeConcessionController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateFeeConcessionDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.feeConcessionService.update(id, dto);
+    return this.feeConcessionService.update(id, dto, user.sub);
   }
 
   /**
@@ -118,8 +122,9 @@ export class FeeConcessionController {
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateFeeConcessionDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.feeConcessionService.update(id, dto);
+    return this.feeConcessionService.update(id, dto, user.sub);
   }
 
   /**
@@ -132,7 +137,7 @@ export class FeeConcessionController {
    *  500 INTERNAL_ERROR           – unexpected server failure
    */
   @Delete('fee-concessions/:id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.feeConcessionService.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.feeConcessionService.remove(id, user.sub);
   }
 }

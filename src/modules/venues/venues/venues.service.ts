@@ -641,10 +641,15 @@ export class VenuesService {
     };
 
     try {
-      await this.notificationsService.create({
+      // Real push (was .create() — DB-only, no push), matching the same
+      // notify() upgrade made for POP/SOP decisions.
+      await this.notificationsService.notify({
         user_id: booking.users_venue_bookings_booked_by_user_idTousers.id,
         title: 'Venue booking update',
         message: messages[decision] ?? `Your venue booking "${booking.purpose}" was updated.`,
+        type: decision === 'approved' ? 'approval_request_approved' : decision === 'rejected' ? 'approval_request_rejected' : undefined,
+        related_entity_type: 'venue_booking',
+        related_entity_id: booking.id,
       });
     } catch (err) {
       this.logger.warn(

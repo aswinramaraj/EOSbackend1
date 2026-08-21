@@ -97,6 +97,10 @@ export class PrincipalApprovalsService {
   private async unifiedList(): Promise<UnifiedApproval[]> {
     const [leaves, odRequests] = await Promise.all([
       this.prisma.faculty_leaves.findMany({
+        // Excludes Secretary-authored rows (staff_user_id set, faculty_id
+        // null) — those skip straight to HR Payroll and never reach this
+        // Principal approval queue at all (see FacultyLeavesService.create).
+        where: { faculty_id: { not: null } },
         select: {
           id: true,
           from_date: true,
@@ -117,6 +121,7 @@ export class PrincipalApprovalsService {
         },
       }),
       this.prisma.faculty_od_requests.findMany({
+        where: { faculty_id: { not: null } },
         select: {
           id: true,
           from_date: true,
@@ -149,11 +154,14 @@ export class PrincipalApprovalsService {
       return {
         id: l.id,
         kind: 'leave',
+        // Non-null assertion justified: the where clause above
+        // (faculty_id: { not: null }) guarantees every row here has a real
+        // faculty relation.
         faculty: {
-          id: l.faculty.id,
-          name: `${l.faculty.first_name} ${l.faculty.last_name}`,
-          designation: l.faculty.designation,
-          department_code: l.faculty.departments?.code ?? null,
+          id: l.faculty!.id,
+          name: `${l.faculty!.first_name} ${l.faculty!.last_name}`,
+          designation: l.faculty!.designation,
+          department_code: l.faculty!.departments?.code ?? null,
         },
         from_date: toDateOnly(l.from_date),
         to_date: toDateOnly(l.to_date),
@@ -175,11 +183,14 @@ export class PrincipalApprovalsService {
       return {
         id: o.id,
         kind: 'od',
+        // Non-null assertion justified: the where clause above
+        // (faculty_id: { not: null }) guarantees every row here has a real
+        // faculty relation.
         faculty: {
-          id: o.faculty.id,
-          name: `${o.faculty.first_name} ${o.faculty.last_name}`,
-          designation: o.faculty.designation,
-          department_code: o.faculty.departments?.code ?? null,
+          id: o.faculty!.id,
+          name: `${o.faculty!.first_name} ${o.faculty!.last_name}`,
+          designation: o.faculty!.designation,
+          department_code: o.faculty!.departments?.code ?? null,
         },
         from_date: toDateOnly(o.from_date),
         to_date: toDateOnly(o.to_date),

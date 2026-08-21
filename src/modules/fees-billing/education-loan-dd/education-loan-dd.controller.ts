@@ -16,12 +16,14 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { EducationLoanDdService } from './education-loan-dd.service';
 import { CreateEducationLoanDdDto } from './dto/create-education-loan-dd.dto';
 import { UpdateEducationLoanDdDto } from './dto/update-education-loan-dd.dto';
 
 @Controller()
-@Roles(ROLES.ADMIN)
+@Roles(ROLES.ADMIN, ROLES.BILLING)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class EducationLoanDdController {
   constructor(
@@ -87,8 +89,9 @@ export class EducationLoanDdController {
   create(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateEducationLoanDdDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.educationLoanDdService.create(id, dto);
+    return this.educationLoanDdService.create(id, dto, user.sub);
   }
 
   /**
@@ -108,8 +111,9 @@ export class EducationLoanDdController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateEducationLoanDdDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.educationLoanDdService.update(id, dto);
+    return this.educationLoanDdService.update(id, dto, user.sub);
   }
 
   /**
@@ -124,8 +128,9 @@ export class EducationLoanDdController {
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateEducationLoanDdDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.educationLoanDdService.update(id, dto);
+    return this.educationLoanDdService.update(id, dto, user.sub);
   }
 
   /**
@@ -138,7 +143,7 @@ export class EducationLoanDdController {
    *  500 INTERNAL_ERROR              – unexpected server failure
    */
   @Delete('education-loan-dds/:id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.educationLoanDdService.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.educationLoanDdService.remove(id, user.sub);
   }
 }

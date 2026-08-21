@@ -19,6 +19,9 @@ import { AdminUpdateStudentDto } from './dto/admin-update-student.dto';
 import { AdminAttendanceSummaryQueryDto } from './dto/admin-attendance-summary-query.dto';
 import { ResetStudentPasswordDto } from './dto/reset-student-password.dto';
 import { UpdateStudentAddressesDto } from './dto/update-student-addresses.dto';
+import { UpdateStudentContactsDto } from './dto/update-student-contacts.dto';
+import { UpdateStudentFamilyDto } from './dto/update-student-family.dto';
+import { UpdateStudentIdentityMarksDto } from './dto/update-student-identity-marks.dto';
 
 const PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const VALID_ADDRESS_TYPES = Object.values(address_type_enum);
@@ -1088,6 +1091,34 @@ export class StudentsService {
             pincode: true,
           },
         },
+        soa_applications: { select: { first_name: true, last_name: true } },
+        student_contacts: {
+          select: {
+            student_email1: true,
+            student_email2: true,
+            student_mobile: true,
+          },
+        },
+        student_family_details: {
+          select: {
+            father_name: true,
+            father_qualification: true,
+            father_occupation: true,
+            father_annual_income: true,
+            father_email: true,
+            father_mobile: true,
+            mother_name: true,
+            mother_qualification: true,
+            mother_occupation: true,
+            mother_annual_income: true,
+            mother_email: true,
+            mother_mobile: true,
+          },
+        },
+        student_identity_marks: {
+          select: { mark_number: true, description: true },
+          orderBy: { mark_number: 'asc' },
+        },
       },
     });
     if (!row) {
@@ -1096,8 +1127,23 @@ export class StudentsService {
         errorCode: 'STUDENT_NOT_FOUND',
       });
     }
-    const { student_addresses, ...rest } = row;
-    return { ...rest, addresses: student_addresses };
+    const {
+      student_addresses,
+      soa_applications,
+      student_contacts,
+      student_family_details,
+      student_identity_marks,
+      ...rest
+    } = row;
+    return {
+      ...rest,
+      first_name: soa_applications?.first_name ?? null,
+      last_name: soa_applications?.last_name ?? null,
+      addresses: student_addresses,
+      contacts: student_contacts,
+      family: student_family_details,
+      identity_marks: student_identity_marks,
+    };
   }
 
   /**
@@ -1181,6 +1227,152 @@ export class StudentsService {
       },
     });
     return { addresses: rows };
+  }
+
+  /**
+   * PATCH /students/:id/contacts (Admin only) — upserts by student_id, same
+   * "fix it after admission" role addresses/family details fill for their
+   * own tables. Omitted fields are left unchanged, not cleared — a blank
+   * value has to be sent explicitly (empty string) to clear one.
+   */
+  async updateContacts(id: number, dto: UpdateStudentContactsDto) {
+    const student = await this.prisma.students.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    return this.prisma.student_contacts.upsert({
+      where: { student_id: id },
+      create: {
+        student_id: id,
+        student_email1: dto.student_email1,
+        student_email2: dto.student_email2,
+        student_mobile: dto.student_mobile,
+      },
+      update: {
+        student_email1: dto.student_email1,
+        student_email2: dto.student_email2,
+        student_mobile: dto.student_mobile,
+      },
+      select: {
+        student_email1: true,
+        student_email2: true,
+        student_mobile: true,
+      },
+    });
+  }
+
+  /**
+   * PATCH /students/:id/family (Admin only) — upserts by student_id. See
+   * UpdateStudentFamilyDto's own docblock for what this deliberately
+   * doesn't touch (guardian_* columns — not read anywhere on the profile
+   * page either).
+   */
+  async updateFamily(id: number, dto: UpdateStudentFamilyDto) {
+    const student = await this.prisma.students.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const data = {
+      father_name: dto.father_name,
+      father_qualification: dto.father_qualification,
+      father_occupation: dto.father_occupation,
+      father_annual_income: dto.father_annual_income,
+      father_email: dto.father_email,
+      father_mobile: dto.father_mobile,
+      mother_name: dto.mother_name,
+      mother_qualification: dto.mother_qualification,
+      mother_occupation: dto.mother_occupation,
+      mother_annual_income: dto.mother_annual_income,
+      mother_email: dto.mother_email,
+      mother_mobile: dto.mother_mobile,
+    };
+
+    return this.prisma.student_family_details.upsert({
+      where: { student_id: id },
+      create: { student_id: id, ...data },
+      update: data,
+      select: {
+        father_name: true,
+        father_qualification: true,
+        father_occupation: true,
+        father_annual_income: true,
+        father_email: true,
+        father_mobile: true,
+        mother_name: true,
+        mother_qualification: true,
+        mother_occupation: true,
+        mother_annual_income: true,
+        mother_email: true,
+        mother_mobile: true,
+      },
+    });
+  }
+
+  /**
+   * PATCH /students/:id/identity-marks (Admin only) — replaces the whole
+   * set every save (see UpdateStudentIdentityMarksDto's own docblock for
+   * why this can't just be an upsert-in-place like addresses/family: the
+   * list length itself changes, so there's no fixed set of keys to upsert
+   * against). Deletes every existing mark for this student, then recreates
+   * whatever was sent — inside one transaction, so a failure partway
+   * through never leaves the student with a half-replaced list.
+   */
+  async updateIdentityMarks(id: number, dto: UpdateStudentIdentityMarksDto) {
+    const student = await this.prisma.students.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const marks = dto.identity_marks.map((m) => m.mark_number);
+    if (new Set(marks).size !== marks.length) {
+      throw new BadRequestException({
+        message: 'identity_marks cannot repeat the same mark_number',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.student_identity_marks.deleteMany({
+        where: { student_id: id },
+      }),
+      ...(dto.identity_marks.length > 0
+        ? [
+            this.prisma.student_identity_marks.createMany({
+              data: dto.identity_marks.map((m) => ({
+                student_id: id,
+                mark_number: m.mark_number,
+                description: m.description,
+              })),
+            }),
+          ]
+        : []),
+    ]);
+
+    return this.prisma.student_identity_marks.findMany({
+      where: { student_id: id },
+      select: { mark_number: true, description: true },
+      orderBy: { mark_number: 'asc' },
+    });
   }
 
   /**
@@ -1454,13 +1646,33 @@ export class StudentsService {
               is_diff_abled: dto.is_diff_abled,
               diff_abled_info: dto.diff_abled_info,
             },
-            select: { id: true, user_id: true },
+            select: { id: true, user_id: true, soa_application_id: true },
           });
 
           if (dto.status !== undefined) {
             await tx.users.update({
               where: { id: student.user_id },
               data: { status: dto.status },
+            });
+          }
+
+          // first_name/last_name live on the linked soa_applications row,
+          // not on students itself (see this DTO's own docblock). Every
+          // student is created from an application (SoaApplicationsService's
+          // perfectEntry flow), so soa_application_id is only null in
+          // practice for data that predates that invariant — fail loudly
+          // rather than silently drop a rename for that record.
+          if (dto.first_name !== undefined || dto.last_name !== undefined) {
+            if (!student.soa_application_id) {
+              throw new UnprocessableEntityException({
+                message:
+                  "This student has no linked application record to rename — its name can't be edited here",
+                errorCode: 'NO_LINKED_APPLICATION',
+              });
+            }
+            await tx.soa_applications.update({
+              where: { id: student.soa_application_id },
+              data: { first_name: dto.first_name, last_name: dto.last_name },
             });
           }
 
@@ -1471,6 +1683,12 @@ export class StudentsService {
 
       return this.findOne(updated.id);
     } catch (err) {
+      // A deliberate exception thrown from inside the transaction above
+      // (NO_LINKED_APPLICATION) — rethrow as-is, don't let the generic
+      // P2002/500 handling below relabel it as an opaque server error.
+      if (err instanceof UnprocessableEntityException) {
+        throw err;
+      }
       if (prismaErrorCode(err) === 'P2002') {
         throw new ConflictException({
           message: 'Value already in use',

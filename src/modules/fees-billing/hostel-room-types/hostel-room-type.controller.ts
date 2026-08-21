@@ -45,18 +45,23 @@ export class HostelRoomTypeController {
   /**
    * GET /api/v1/hostel-room-types
    *
+   * Billing additionally allowed (read-only) so the Fee Structures screen can
+   * show real hostel room type names for hostel-fee items — Billing cannot
+   * create/update/delete room types, only Admin/Gate Warden/Warden can.
+   *
    * Error responses:
    *  401 UNAUTHORIZED   – missing/invalid access token
    *  403 FORBIDDEN      – authenticated user is not an admin
    *  500 INTERNAL_ERROR – unexpected server failure
    */
   @Get()
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN, ROLES.BILLING)
   findAll() {
     return this.hostelRoomTypeService.findAll();
   }
 
   /**
-   * GET /api/v1/hostel-room-types/:id
+   * GET /api/v1/hostel-room-types/:id — Billing additionally allowed, see findAll().
    *
    * Error responses:
    *  401 UNAUTHORIZED               – missing/invalid access token
@@ -65,6 +70,7 @@ export class HostelRoomTypeController {
    *  500 INTERNAL_ERROR             – unexpected server failure
    */
   @Get(':id')
+  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN, ROLES.BILLING)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.hostelRoomTypeService.findOne(id);
   }

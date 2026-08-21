@@ -6,7 +6,7 @@ import { ROLES } from 'src/common/constants/roles.constant';
 import { FinanceOverviewService } from './finance-overview.service';
 
 @Controller()
-@Roles(ROLES.ADMIN)
+@Roles(ROLES.ADMIN, ROLES.BILLING)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class FinanceOverviewController {
   constructor(

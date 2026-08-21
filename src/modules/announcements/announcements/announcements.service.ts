@@ -192,6 +192,7 @@ export class AnnouncementsService {
               status,
               file_key: dto.file_key,
               file_name: dto.file_name,
+              priority: dto.priority,
             },
           });
 
@@ -254,6 +255,7 @@ export class AnnouncementsService {
               status,
               file_key: dto.file_key,
               file_name: dto.file_name,
+              priority: dto.priority,
             },
           });
 
@@ -310,6 +312,7 @@ export class AnnouncementsService {
             status,
             file_key: dto.file_key,
             file_name: dto.file_name,
+            priority: dto.priority,
           },
         });
       } catch (err) {
@@ -330,6 +333,49 @@ export class AnnouncementsService {
       });
     }
 
+    // EDC-specific broadcast labels ('edc_founders'/'edc_inside_college'/
+    // 'edc_all_entrepreneurs') - plain announcements with no class/
+    // department/role targeting mechanism behind them (see the DTO's own
+    // comment). Coordinator-only, mirrors 'teachers'/'roles' being
+    // restricted to their own roles above.
+    if (
+      dto.target_audience === 'edc_founders' ||
+      dto.target_audience === 'edc_inside_college' ||
+      dto.target_audience === 'edc_all_entrepreneurs'
+    ) {
+      if (context.role !== ROLES.EDC_COORDINATOR && context.role !== ROLES.ADMIN) {
+        throw new ForbiddenException({
+          message: 'You are not permitted to post EDC announcements',
+          errorCode: 'ROLE_NOT_PERMITTED',
+        });
+      }
+
+      let announcement: { id: number } & Record<string, unknown>;
+      try {
+        announcement = await this.prisma.announcements.create({
+          data: {
+            posted_by_user_id: user.sub,
+            title: dto.title,
+            content: dto.content,
+            target_audience: dto.target_audience,
+            status,
+            file_key: dto.file_key,
+            file_name: dto.file_name,
+            priority: dto.priority,
+            category: dto.category,
+          },
+        });
+      } catch (err) {
+        this.logger.error('DB error while creating EDC announcement', err);
+        throw new InternalServerErrorException({
+          message: 'Something went wrong. Please try again.',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
+
+      return this.toResponseShape({ ...announcement, announcement_class_mapping: [] });
+    }
+
     await this.assertClassesValid(dto.class_ids!, context);
 
     let announcement: { id: number } & Record<string, unknown>;
@@ -345,6 +391,7 @@ export class AnnouncementsService {
             status,
             file_key: dto.file_key,
             file_name: dto.file_name,
+            priority: dto.priority,
           },
         });
 
@@ -416,7 +463,12 @@ export class AnnouncementsService {
       return context.departmentId;
     }
 
-    if (context.role === ROLES.ADMIN || context.role === ROLES.PRINCIPAL) {
+    if (
+      context.role === ROLES.ADMIN ||
+      context.role === ROLES.PRINCIPAL ||
+      context.role === ROLES.SECRETARY ||
+      context.role === ROLES.BILLING
+    ) {
       if (requestedDepartmentId === undefined) {
         return null;
       }
@@ -711,6 +763,8 @@ export class AnnouncementsService {
           dto.status !== undefined ||
           dto.file_key !== undefined ||
           dto.file_name !== undefined ||
+          dto.priority !== undefined ||
+          dto.category !== undefined ||
           resolvedDepartmentId !== undefined
         ) {
           await tx.announcements.update({
@@ -724,6 +778,7 @@ export class AnnouncementsService {
               department_id: resolvedDepartmentId,
               file_key: dto.file_key,
               file_name: dto.file_name,
+              priority: dto.priority,
             },
           });
         }
@@ -828,6 +883,20 @@ export class AnnouncementsService {
 
       case ROLES.PRINCIPAL:
         return { role: ROLES.PRINCIPAL, userId: user.sub, roleId: user.roleId };
+
+      case ROLES.EDC_COORDINATOR:
+        return { role: ROLES.EDC_COORDINATOR, userId: user.sub, roleId: user.roleId };
+
+      // No secretary→department linkage exists anywhere in the schema
+      // (checked: no such column on any table) — treated as institution-wide,
+      // same as Admin/Principal, rather than inventing a department scope.
+      case ROLES.SECRETARY:
+        return { role: ROLES.SECRETARY, userId: user.sub, roleId: user.roleId };
+
+      // Billing is institution-wide too — same posture as Secretary (no
+      // billing->department linkage exists anywhere in the schema either).
+      case ROLES.BILLING:
+        return { role: ROLES.BILLING, userId: user.sub, roleId: user.roleId };
 
       case ROLES.HOD: {
         const faculty = await this.getFacultyByUserId(user.sub);
@@ -961,6 +1030,24 @@ export class AnnouncementsService {
       // buildVisibilityQuery above).
       case ROLES.PRINCIPAL:
         return {};
+
+      // Institution-wide, same as Admin/Principal — see resolveUserContext.
+      case ROLES.SECRETARY:
+        return {};
+
+      // Institution-wide, same as Secretary — see resolveUserContext.
+      case ROLES.BILLING:
+        return {};
+
+      // EDC coordinator has no recipient list to resolve (no "founders"
+      // user table exists yet) - sees only what they authored themselves,
+      // plus anything explicitly role-targeted at edc_coordinator via the
+      // generic 'roles' broadcast mechanism. Same shape as HOD/FACULTY's
+      // own "own-authored OR role-targeted" clauses.
+      case ROLES.EDC_COORDINATOR:
+        return {
+          OR: [{ posted_by_user_id: context.userId }, roleTargeted],
+        };
 
       case ROLES.HOD:
         return {
@@ -1126,13 +1213,16 @@ export class AnnouncementsService {
 
     // Placement Cell reaches students across every department for drives —
     // same unrestricted class selection as Admin/Principal, not scoped to
-    // one department the way HOD/Faculty are.
+    // one department the way HOD/Faculty are. Secretary is institution-wide
+    // too (no secretary->department table exists anywhere in the schema).
     if (
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
       context.role === ROLES.PLACEMENT ||
       context.role === ROLES.HIGHER_EDUCATION ||
-      context.role === ROLES.MEDICAL_CENTRE
+      context.role === ROLES.MEDICAL_CENTRE ||
+      context.role === ROLES.SECRETARY ||
+      context.role === ROLES.BILLING
     ) {
       return;
     }
@@ -1146,7 +1236,13 @@ export class AnnouncementsService {
   // ── Role-set validation (shared by create and update) ───────────────────
 
   private assertRoleTargetingPermitted(context: UserContext) {
-    if (context.role !== ROLES.ADMIN && context.role !== ROLES.PRINCIPAL) {
+    if (
+      context.role !== ROLES.ADMIN &&
+      context.role !== ROLES.PRINCIPAL &&
+      // Billing's real "All HoDs" audience option (fee-due escalation
+      // notices to department heads) needs role targeting too.
+      context.role !== ROLES.BILLING
+    ) {
       throw new ForbiddenException({
         message: 'You are not permitted to target announcements by role',
         errorCode: 'ROLE_NOT_PERMITTED',
@@ -1155,11 +1251,11 @@ export class AnnouncementsService {
   }
 
   /**
-   * GET /announcements/lookup/all-classes — Higher Education Cell only. The
-   * cell has no department/batch scope of its own, and its announcements
-   * are always students-wide (never a role broadcast), so this returns
-   * every class in one flat list rather than requiring a batch/department
-   * picker like Admin's lookup/classes does.
+   * GET /announcements/lookup/all-classes — Higher Education Cell / Billing.
+   * Neither cell has a department/batch scope of its own and both cells'
+   * announcements are always students-wide, so this returns every class in
+   * one flat list rather than requiring a batch/department picker like
+   * Admin's lookup/classes does.
    */
   async lookupAllClasses() {
     const classes = await this.prisma.classes.findMany({
