@@ -466,7 +466,8 @@ export class AnnouncementsService {
     if (
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
-      context.role === ROLES.SECRETARY
+      context.role === ROLES.SECRETARY ||
+      context.role === ROLES.BILLING
     ) {
       if (requestedDepartmentId === undefined) {
         return null;
@@ -892,6 +893,11 @@ export class AnnouncementsService {
       case ROLES.SECRETARY:
         return { role: ROLES.SECRETARY, userId: user.sub, roleId: user.roleId };
 
+      // Billing is institution-wide too — same posture as Secretary (no
+      // billing->department linkage exists anywhere in the schema either).
+      case ROLES.BILLING:
+        return { role: ROLES.BILLING, userId: user.sub, roleId: user.roleId };
+
       case ROLES.HOD: {
         const faculty = await this.getFacultyByUserId(user.sub);
 
@@ -1027,6 +1033,10 @@ export class AnnouncementsService {
 
       // Institution-wide, same as Admin/Principal — see resolveUserContext.
       case ROLES.SECRETARY:
+        return {};
+
+      // Institution-wide, same as Secretary — see resolveUserContext.
+      case ROLES.BILLING:
         return {};
 
       // EDC coordinator has no recipient list to resolve (no "founders"
@@ -1211,7 +1221,8 @@ export class AnnouncementsService {
       context.role === ROLES.PLACEMENT ||
       context.role === ROLES.HIGHER_EDUCATION ||
       context.role === ROLES.MEDICAL_CENTRE ||
-      context.role === ROLES.SECRETARY
+      context.role === ROLES.SECRETARY ||
+      context.role === ROLES.BILLING
     ) {
       return;
     }
@@ -1225,7 +1236,13 @@ export class AnnouncementsService {
   // ── Role-set validation (shared by create and update) ───────────────────
 
   private assertRoleTargetingPermitted(context: UserContext) {
-    if (context.role !== ROLES.ADMIN && context.role !== ROLES.PRINCIPAL) {
+    if (
+      context.role !== ROLES.ADMIN &&
+      context.role !== ROLES.PRINCIPAL &&
+      // Billing's real "All HoDs" audience option (fee-due escalation
+      // notices to department heads) needs role targeting too.
+      context.role !== ROLES.BILLING
+    ) {
       throw new ForbiddenException({
         message: 'You are not permitted to target announcements by role',
         errorCode: 'ROLE_NOT_PERMITTED',
@@ -1234,11 +1251,11 @@ export class AnnouncementsService {
   }
 
   /**
-   * GET /announcements/lookup/all-classes — Higher Education Cell only. The
-   * cell has no department/batch scope of its own, and its announcements
-   * are always students-wide (never a role broadcast), so this returns
-   * every class in one flat list rather than requiring a batch/department
-   * picker like Admin's lookup/classes does.
+   * GET /announcements/lookup/all-classes — Higher Education Cell / Billing.
+   * Neither cell has a department/batch scope of its own and both cells'
+   * announcements are always students-wide, so this returns every class in
+   * one flat list rather than requiring a batch/department picker like
+   * Admin's lookup/classes does.
    */
   async lookupAllClasses() {
     const classes = await this.prisma.classes.findMany({

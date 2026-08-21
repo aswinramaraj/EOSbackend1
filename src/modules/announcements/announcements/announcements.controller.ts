@@ -27,24 +27,29 @@ import { AnnouncementsService } from './announcements.service';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 import { ListAnnouncementsQueryDto } from './dto/list-announcements-query.dto';
+import { AuditLogService } from 'src/modules/fees-billing/audit-log/audit-log.service';
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
 
 @Controller('announcements')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AnnouncementsController {
-  constructor(private readonly announcementsService: AnnouncementsService) {}
+  constructor(
+    private readonly announcementsService: AnnouncementsService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   /**
    * GET /api/v1/announcements/lookup/roles
-   * Admin/Principal only — every backend role, for the "Target roles"
-   * checkbox grid (target_audience: 'roles').
+   * Admin/Principal/Billing — every backend role, for the "Target roles"
+   * checkbox grid (target_audience: 'roles'). Billing needs this for its
+   * real "All HoDs" audience option (picks out the real 'hod' role id).
    *
    * Error responses:
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
    */
   @Get('lookup/roles')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.BILLING)
   lookupRoles() {
     return this.announcementsService.lookupRoles();
   }
@@ -57,7 +62,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
    */
   @Get('lookup/departments')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.SECRETARY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.SECRETARY, ROLES.BILLING)
   lookupDepartments(@Query('batch_id', ParseIntPipe) batchId: number) {
     return this.announcementsService.lookupDepartmentsForBatch(batchId);
   }
@@ -73,7 +78,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 404 HOD_FACULTY_RECORD_NOT_FOUND, 500 INTERNAL_ERROR
    */
   @Get('lookup/classes')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.SECRETARY)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.SECRETARY, ROLES.BILLING)
   lookupClasses(
     @Query('batch_id', ParseIntPipe) batchId: number,
     @Query('department_id', new ParseIntPipe({ optional: true }))
@@ -99,12 +104,12 @@ export class AnnouncementsController {
 
   /**
    * GET /api/v1/announcements/lookup/all-classes
-   * Higher Education Cell only — every class in one flat list, since the
-   * cell's announcements are always students-wide with no department/batch
-   * scope to narrow by.
+   * Higher Education Cell / Billing — every class in one flat list, since
+   * both cells' announcements are always institution-wide (students across
+   * every department) with no department/batch scope to narrow by.
    */
   @Get('lookup/all-classes')
-  @Roles(ROLES.HIGHER_EDUCATION)
+  @Roles(ROLES.HIGHER_EDUCATION, ROLES.BILLING)
   lookupAllClasses() {
     return this.announcementsService.lookupAllClasses();
   }
@@ -145,6 +150,7 @@ export class AnnouncementsController {
     ROLES.HIGHER_EDUCATION,
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
+    ROLES.BILLING,
   )
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }),
@@ -180,9 +186,18 @@ export class AnnouncementsController {
     ROLES.HIGHER_EDUCATION,
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
+    ROLES.BILLING,
   )
-  create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
-    return this.announcementsService.create(dto, user);
+  async create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
+    const result = await this.announcementsService.create(dto, user);
+    void this.auditLog.record({
+      entity_type: 'announcement',
+      entity_id: (result as { id: number }).id,
+      action: 'created',
+      performed_by_user_id: user.sub,
+      new_value: { title: dto.title, target_audience: dto.target_audience },
+    });
+    return result;
   }
 
   /**
@@ -281,13 +296,22 @@ export class AnnouncementsController {
     ROLES.HIGHER_EDUCATION,
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
+    ROLES.BILLING,
   )
-  update(
+  async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.announcementsService.update(id, dto, user);
+    const result = await this.announcementsService.update(id, dto, user);
+    void this.auditLog.record({
+      entity_type: 'announcement',
+      entity_id: id,
+      action: 'updated',
+      performed_by_user_id: user.sub,
+      new_value: dto as Record<string, unknown>,
+    });
+    return result;
   }
 
   /**
@@ -308,13 +332,22 @@ export class AnnouncementsController {
     ROLES.HIGHER_EDUCATION,
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
+    ROLES.BILLING,
   )
-  patch(
+  async patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.announcementsService.update(id, dto, user);
+    const result = await this.announcementsService.update(id, dto, user);
+    void this.auditLog.record({
+      entity_type: 'announcement',
+      entity_id: id,
+      action: 'updated',
+      performed_by_user_id: user.sub,
+      new_value: dto as Record<string, unknown>,
+    });
+    return result;
   }
 
   /**
@@ -336,11 +369,20 @@ export class AnnouncementsController {
     ROLES.HIGHER_EDUCATION,
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
+    ROLES.BILLING,
   )
-  remove(
+  async remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.announcementsService.remove(id, user);
+    const result = await this.announcementsService.remove(id, user);
+    void this.auditLog.record({
+      entity_type: 'announcement',
+      entity_id: id,
+      action: 'deleted',
+      performed_by_user_id: user.sub,
+      old_value: { title: (result as { title?: string }).title },
+    });
+    return result;
   }
 }

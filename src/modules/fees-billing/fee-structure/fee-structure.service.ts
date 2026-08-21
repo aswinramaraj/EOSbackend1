@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { fee_structure_applies_to_enum } from '../../../../generated/prisma/client';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { AddConcessionDto } from './dto/add-concession.dto';
 import { CreateFeeStructureDto } from './dto/create-fee-structure.dto';
 import { UpdateFeeStructureDto } from './dto/update-fee-structure.dto';
@@ -16,7 +17,10 @@ import { UpdateFeeStructureDto } from './dto/update-fee-structure.dto';
 export class FeeStructureService {
   private readonly logger = new Logger(FeeStructureService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   /**
    * POST /fee-structures
@@ -27,7 +31,7 @@ export class FeeStructureService {
    *  422 DUPLICATE_DEMAND_CATEGORY     – same demand_category_id repeated in items
    *  500 INTERNAL_ERROR                – unexpected failure (DB, etc.)
    */
-  async create(dto: CreateFeeStructureDto) {
+  async create(dto: CreateFeeStructureDto, performedByUserId: number) {
     // ── 1. Validate quota only when applies_to requires it ──────────────────
     if (dto.applies_to === fee_structure_applies_to_enum.quota) {
       await this.assertQuotaExists(dto.quota_id);
@@ -58,7 +62,7 @@ export class FeeStructureService {
 
     // ── 4. Create fee structure, its items and any concessions in one tx ────
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const result = await this.prisma.$transaction(async (tx) => {
         const feeStructure = await tx.fee_structures.create({
           data: {
             name: dto.name,
@@ -102,6 +106,15 @@ export class FeeStructureService {
           fee_concessions: concessions,
         };
       });
+
+      await this.recordFeeStructureAudit('created', result.id, performedByUserId, undefined, {
+        name: result.name,
+        applies_to: result.applies_to,
+        academic_year: result.academic_year,
+        items_count: result.fee_structure_items.length,
+      });
+
+      return result;
     } catch (err) {
       this.logger.error('DB error while creating fee structure', err);
       throw new InternalServerErrorException({
@@ -109,6 +122,23 @@ export class FeeStructureService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  private async recordFeeStructureAudit(
+    action: 'created' | 'updated' | 'deleted',
+    feeStructureId: number,
+    performedByUserId: number,
+    old_value?: Record<string, unknown>,
+    new_value?: Record<string, unknown>,
+  ) {
+    await this.auditLog.record({
+      entity_type: 'fee_structure',
+      entity_id: feeStructureId,
+      action,
+      performed_by_user_id: performedByUserId,
+      old_value,
+      new_value,
+    });
   }
 
   /**
@@ -119,7 +149,11 @@ export class FeeStructureService {
    *  422 CONCESSION_EXCEEDS_TOTAL   – concession_amount exceeds the total fee structure amount
    *  500 INTERNAL_ERROR             – unexpected failure (DB, etc.)
    */
-  async addConcession(id: number, dto: AddConcessionDto) {
+  async addConcession(
+    id: number,
+    dto: AddConcessionDto,
+    performedByUserId: number,
+  ) {
     await this.assertFeeStructureExists(id);
 
     const totalAmount = await this.sumFeeStructureItemsAmount(id);
@@ -133,13 +167,26 @@ export class FeeStructureService {
     }
 
     try {
-      return await this.prisma.fee_concessions.create({
+      const created = await this.prisma.fee_concessions.create({
         data: {
           fee_structure_id: id,
           concession_amount: dto.concession_amount,
           is_settled: false,
         },
       });
+
+      await this.auditLog.record({
+        entity_type: 'fee_concession',
+        entity_id: created.id,
+        action: 'created',
+        performed_by_user_id: performedByUserId,
+        new_value: {
+          fee_structure_id: created.fee_structure_id,
+          concession_amount: created.concession_amount.toString(),
+        },
+      });
+
+      return created;
     } catch (err) {
       this.logger.error('DB error while creating fee concession', err);
       throw new InternalServerErrorException({
@@ -186,7 +233,11 @@ export class FeeStructureService {
    *  404 QUOTA_NOT_FOUND         – quota_id does not exist (applies_to = quota)
    *  500 INTERNAL_ERROR          – unexpected failure (DB, etc.)
    */
-  async update(id: number, dto: UpdateFeeStructureDto) {
+  async update(
+    id: number,
+    dto: UpdateFeeStructureDto,
+    performedByUserId: number,
+  ) {
     const feeStructure = await this.findFeeStructureOrThrow(id);
 
     // ── Validate quota only when the resulting applies_to requires it ───────
@@ -198,7 +249,7 @@ export class FeeStructureService {
     }
 
     try {
-      return await this.prisma.fee_structures.update({
+      const updated = await this.prisma.fee_structures.update({
         where: { id },
         data: {
           name: dto.name,
@@ -207,6 +258,24 @@ export class FeeStructureService {
           academic_year: dto.academic_year,
         },
       });
+
+      await this.recordFeeStructureAudit(
+        'updated',
+        updated.id,
+        performedByUserId,
+        {
+          name: feeStructure.name,
+          applies_to: feeStructure.applies_to,
+          academic_year: feeStructure.academic_year,
+        },
+        {
+          name: updated.name,
+          applies_to: updated.applies_to,
+          academic_year: updated.academic_year,
+        },
+      );
+
+      return updated;
     } catch (err) {
       this.logger.error('DB error while updating fee structure', err);
       throw new InternalServerErrorException({
@@ -224,17 +293,25 @@ export class FeeStructureService {
    *  409 FEE_STRUCTURE_IN_USE    – fee structure is referenced by student mappings
    *  500 INTERNAL_ERROR          – unexpected failure (DB, etc.)
    */
-  async remove(id: number) {
-    await this.findFeeStructureOrThrow(id);
+  async remove(id: number, performedByUserId: number) {
+    const feeStructure = await this.findFeeStructureOrThrow(id);
     await this.assertFeeStructureNotInUse(id);
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const deleted = await this.prisma.$transaction(async (tx) => {
         await tx.fee_concessions.deleteMany({
           where: { fee_structure_id: id },
         });
         return tx.fee_structures.delete({ where: { id } });
       });
+
+      await this.recordFeeStructureAudit('deleted', deleted.id, performedByUserId, {
+        name: feeStructure.name,
+        applies_to: feeStructure.applies_to,
+        academic_year: feeStructure.academic_year,
+      });
+
+      return deleted;
     } catch (err) {
       this.logger.error('DB error while deleting fee structure', err);
       throw new InternalServerErrorException({

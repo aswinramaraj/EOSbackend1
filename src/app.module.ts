@@ -104,6 +104,7 @@ import { SubjectRecordsModule } from './modules/faculty/subject-records/subject-
 import { StudentAssignmentStatusModule } from './modules/faculty/student-assignment-status/student-assignment-status.module';
 import { TimetableModule } from './modules/faculty/timetable/timetable.module';
 
+import { AuditLogModule } from './modules/fees-billing/audit-log/audit-log.module';
 import { DemandModule } from './modules/fees-billing/demand/demand.module';
 import { EducationLoanDdModule } from './modules/fees-billing/education-loan-dd/education-loan-dd.module';
 import { FeeConcessionModule } from './modules/fees-billing/fee-concessions/fee-concession.module';
@@ -116,6 +117,7 @@ import { GateLedgerModule } from './modules/fees-billing/gate-ledger/gate-ledger
 import { HostelRoomModule } from './modules/fees-billing/hostel-rooms/hostel-room.module';
 import { HostelRoomTypeModule } from './modules/fees-billing/hostel-room-types/hostel-room-type.module';
 import { QuotaModule } from './modules/fees-billing/quota/quota.module';
+import { ReportsModule } from './modules/fees-billing/reports/reports.module';
 import { StudentFeeDemandMappingModule } from './modules/fees-billing/student-fee-demand-mapping/student-fee-demand-mapping.module';
 import { TransportRouteModule } from './modules/fees-billing/transport-routes/transport-route.module';
 import { TransportStageModule } from './modules/fees-billing/transport-stages/transport-stage.module';
@@ -308,6 +310,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     StudentAssignmentStatusModule,
     TimetableModule,
 
+    AuditLogModule,
     DemandModule,
     EducationLoanDdModule,
     FeeConcessionModule,
@@ -320,6 +323,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     HostelRoomModule,
     HostelRoomTypeModule,
     QuotaModule,
+    ReportsModule,
     StudentFeeDemandMappingModule,
     TransportRouteModule,
     TransportStageModule,

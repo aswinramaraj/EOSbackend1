@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma, fee_structure_applies_to_enum } from '../../../../generated/prisma/client';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateFeeStructureItemDto } from './dto/create-fee-structure-item.dto';
 import { UpdateFeeStructureItemDto } from './dto/update-fee-structure-item.dto';
 
@@ -17,7 +18,10 @@ type ItemIdField = 'demand_category_id' | 'hostel_room_type_id' | 'transport_sta
 export class FeeStructureItemService {
   private readonly logger = new Logger(FeeStructureItemService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   /**
    * GET /fee-structure-items
@@ -91,7 +95,11 @@ export class FeeStructureItemService {
    *  404 DEMAND_CATEGORY_NOT_FOUND            – the referenced id doesn't exist
    *  409 FEE_STRUCTURE_ITEM_EXISTS            – this fee structure already has an item for this source
    */
-  async create(feeStructureId: number, dto: CreateFeeStructureItemDto) {
+  async create(
+    feeStructureId: number,
+    dto: CreateFeeStructureItemDto,
+    performedByUserId: number,
+  ) {
     const feeStructure = await this.findFeeStructureOrThrow(feeStructureId);
     const idField = this.itemIdFieldForAppliesTo(feeStructure.applies_to);
     const sourceId = this.requireSourceId(dto, idField);
@@ -100,7 +108,7 @@ export class FeeStructureItemService {
     await this.assertNoDuplicate(idField, feeStructureId, sourceId);
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const item = await this.prisma.$transaction(async (tx) => {
         const item = await tx.fee_structure_items.create({
           data: {
             fee_structure_id: feeStructureId,
@@ -115,6 +123,20 @@ export class FeeStructureItemService {
 
         return item;
       });
+
+      await this.auditLog.record({
+        entity_type: 'fee_structure_item',
+        entity_id: item.id,
+        action: 'created',
+        performed_by_user_id: performedByUserId,
+        new_value: {
+          fee_structure_id: item.fee_structure_id,
+          amount: item.amount.toString(),
+          [idField]: sourceId,
+        },
+      });
+
+      return item;
     } catch (err) {
       this.logger.error('DB error while creating fee structure item', err);
       throw new InternalServerErrorException({
@@ -137,7 +159,11 @@ export class FeeStructureItemService {
    *  404 DEMAND_CATEGORY_NOT_FOUND            – the referenced id doesn't exist
    *  409 FEE_STRUCTURE_ITEM_EXISTS            – this fee structure already has an item for this source
    */
-  async update(id: number, dto: UpdateFeeStructureItemDto) {
+  async update(
+    id: number,
+    dto: UpdateFeeStructureItemDto,
+    performedByUserId: number,
+  ) {
     const item = await this.findById(id);
 
     if (!item) {
@@ -160,7 +186,7 @@ export class FeeStructureItemService {
     }
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const updated = await this.prisma.$transaction(async (tx) => {
         const updated = await tx.fee_structure_items.update({
           where: { id },
           data: {
@@ -173,6 +199,17 @@ export class FeeStructureItemService {
 
         return updated;
       });
+
+      await this.auditLog.record({
+        entity_type: 'fee_structure_item',
+        entity_id: updated.id,
+        action: 'updated',
+        performed_by_user_id: performedByUserId,
+        old_value: { amount: item.amount.toString(), [idField]: currentSourceId },
+        new_value: { amount: updated.amount.toString(), [idField]: sourceId },
+      });
+
+      return updated;
     } catch (err) {
       this.logger.error('DB error while updating fee structure item', err);
       throw new InternalServerErrorException({
@@ -188,7 +225,7 @@ export class FeeStructureItemService {
    * Error cases:
    *  404 FEE_STRUCTURE_ITEM_NOT_FOUND – no item with the given id
    */
-  async remove(id: number) {
+  async remove(id: number, performedByUserId: number) {
     const item = await this.findById(id);
 
     if (!item) {
@@ -199,7 +236,7 @@ export class FeeStructureItemService {
     }
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const deleted = await this.prisma.$transaction(async (tx) => {
         const deleted = await tx.fee_structure_items.delete({
           where: { id },
         });
@@ -208,6 +245,19 @@ export class FeeStructureItemService {
 
         return deleted;
       });
+
+      await this.auditLog.record({
+        entity_type: 'fee_structure_item',
+        entity_id: deleted.id,
+        action: 'deleted',
+        performed_by_user_id: performedByUserId,
+        old_value: {
+          fee_structure_id: deleted.fee_structure_id,
+          amount: deleted.amount.toString(),
+        },
+      });
+
+      return deleted;
     } catch (err) {
       this.logger.error('DB error while deleting fee structure item', err);
       throw new InternalServerErrorException({

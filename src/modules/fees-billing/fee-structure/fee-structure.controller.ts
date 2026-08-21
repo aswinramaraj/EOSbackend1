@@ -15,6 +15,8 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { FeeStructureService } from './fee-structure.service';
 import { AddConcessionDto } from './dto/add-concession.dto';
 import { CreateFeeStructureDto } from './dto/create-fee-structure.dto';
@@ -38,10 +40,13 @@ export class FeeStructureController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
   @UseGuards(JwtAuthGuard, RolesGuard)
-  create(@Body() createFeeStructureDto: CreateFeeStructureDto) {
-    return this.feeStructureService.create(createFeeStructureDto);
+  create(
+    @Body() createFeeStructureDto: CreateFeeStructureDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.feeStructureService.create(createFeeStructureDto, user.sub);
   }
 
   /**
@@ -57,13 +62,14 @@ export class FeeStructureController {
    */
   @Post(':id/concessions')
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
   @UseGuards(JwtAuthGuard, RolesGuard)
   addConcession(
     @Param('id') id: string,
     @Body() addConcessionDto: AddConcessionDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.feeStructureService.addConcession(+id, addConcessionDto);
+    return this.feeStructureService.addConcession(+id, addConcessionDto, user.sub);
   }
 
   /**
@@ -75,7 +81,7 @@ export class FeeStructureController {
    *  500 INTERNAL_ERROR – unexpected server failure
    */
   @Get()
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
   @UseGuards(JwtAuthGuard, RolesGuard)
   findAll() {
     return this.feeStructureService.findAll();
@@ -91,7 +97,7 @@ export class FeeStructureController {
    *  500 INTERNAL_ERROR           – unexpected server failure
    */
   @Get(':id')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
   @UseGuards(JwtAuthGuard, RolesGuard)
   findOne(@Param('id') id: string) {
     return this.feeStructureService.findOne(+id);
@@ -109,14 +115,36 @@ export class FeeStructureController {
    *  500 INTERNAL_ERROR           – unexpected server failure
    */
   @Put(':id')
-  @Patch(':id')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
   @UseGuards(JwtAuthGuard, RolesGuard)
   update(
     @Param('id') id: string,
     @Body() updateFeeStructureDto: UpdateFeeStructureDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.feeStructureService.update(+id, updateFeeStructureDto);
+    return this.feeStructureService.update(+id, updateFeeStructureDto, user.sub);
+  }
+
+  /**
+   * PATCH /api/v1/fee-structures/:id
+   *
+   * Same behaviour as PUT — kept as a separate handler because NestJS route
+   * metadata cannot be shared by stacking two HTTP-method decorators on one
+   * method (a real bug found and fixed this session: PATCH was previously
+   * 404ing since @Patch's metadata silently overwrote @Put's on the same
+   * method).
+   *
+   * Error responses: see PUT /api/v1/fee-structures/:id
+   */
+  @Patch(':id')
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  patch(
+    @Param('id') id: string,
+    @Body() updateFeeStructureDto: UpdateFeeStructureDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.feeStructureService.update(+id, updateFeeStructureDto, user.sub);
   }
 
   /**
@@ -130,9 +158,9 @@ export class FeeStructureController {
    *  500 INTERNAL_ERROR           – unexpected server failure
    */
   @Delete(':id')
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
   @UseGuards(JwtAuthGuard, RolesGuard)
-  remove(@Param('id') id: string) {
-    return this.feeStructureService.remove(+id);
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.feeStructureService.remove(+id, user.sub);
   }
 }

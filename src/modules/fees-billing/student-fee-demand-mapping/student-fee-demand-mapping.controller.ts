@@ -21,7 +21,7 @@ import { CreateStudentFeeDemandMappingDto } from './dto/create-student-fee-deman
 import { UpdateStudentFeeDemandMappingDto } from './dto/update-student-fee-demand-mapping.dto';
 
 @Controller('student-fee-demand-mappings')
-@Roles(ROLES.ADMIN)
+@Roles(ROLES.ADMIN, ROLES.BILLING)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class StudentFeeDemandMappingController {
   constructor(

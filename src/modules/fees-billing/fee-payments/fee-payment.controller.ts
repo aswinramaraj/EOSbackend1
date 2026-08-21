@@ -24,7 +24,7 @@ import { UpdateFeePaymentDto } from './dto/update-fee-payment.dto';
 import { IssueReceiptNumberDto } from './dto/issue-receipt-number.dto';
 
 @Controller()
-@Roles(ROLES.ADMIN)
+@Roles(ROLES.ADMIN, ROLES.BILLING)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class FeePaymentController {
   constructor(private readonly feePaymentService: FeePaymentService) {}
