@@ -927,6 +927,54 @@ export class SoaApplicationsService {
     return paginate(rows, total, query);
   }
 
+  /**
+   * GET /soa-applications/admitted-cutoff-summary
+   * Average cutoff — (Physics + Chemistry) / 2 + Maths — across every
+   * application that has actually been admitted. "Admitted" here means a
+   * linked `students` row exists, not merely status === 'admission_confirmed'
+   * (see PERFECT_ENTRY_ELIGIBLE_STATUS's doc-comment above: some
+   * admission_confirmed applications haven't finished Perfect Entry yet and
+   * so have no students row). Applications missing any of the three marks
+   * are excluded from the average rather than treated as 0, which would
+   * silently drag it down.
+   */
+  async getAdmittedCutoffSummary() {
+    const rows = await this.prisma.soa_applications.findMany({
+      where: { students: { isNot: null } },
+      select: {
+        cutoff_physics: true,
+        cutoff_chemistry: true,
+        cutoff_maths: true,
+      },
+    });
+
+    const cutoffs = rows
+      .filter(
+        (r) =>
+          r.cutoff_physics !== null &&
+          r.cutoff_chemistry !== null &&
+          r.cutoff_maths !== null,
+      )
+      .map(
+        (r) =>
+          (Number(r.cutoff_physics) + Number(r.cutoff_chemistry)) / 2 +
+          Number(r.cutoff_maths),
+      );
+
+    const average_cutoff =
+      cutoffs.length > 0
+        ? Math.round(
+            (cutoffs.reduce((sum, c) => sum + c, 0) / cutoffs.length) * 100,
+          ) / 100
+        : null;
+
+    return {
+      average_cutoff,
+      admitted_count: rows.length,
+      counted_count: cutoffs.length,
+    };
+  }
+
   /** GET /soa-applications/:id */
   async findOne(id: number) {
     const row = await this.prisma.soa_applications.findUnique({

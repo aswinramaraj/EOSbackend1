@@ -3,6 +3,7 @@ import { IsDateString, IsEnum, IsInt, IsOptional, Min } from 'class-validator';
 export enum BorrowerType {
   student = 'student',
   faculty = 'faculty',
+  staff = 'staff',
 }
 
 export class CreateBorrowRecordDto {

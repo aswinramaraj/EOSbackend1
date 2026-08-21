@@ -23,6 +23,7 @@ import { UpdateDriveDto } from './dto/update-drive.dto';
 import { ListDrivesQueryDto } from './dto/list-drives-query.dto';
 import { CreateDriveApplicationDto } from './dto/create-drive-application.dto';
 import { UpdateDriveApplicationStatusDto } from './dto/update-drive-application-status.dto';
+import { UpdatePlacementStatusDto } from './dto/update-placement-status.dto';
 import { GetPlacementStatsQueryDto } from './dto/get-placement-stats-query.dto';
 import {
   ExportReportQueryDto,
@@ -114,18 +115,41 @@ export class DrivesController {
     return this.drivesService.getStudentReport(query.batch_id);
   }
 
+  @Get('report')
+  getDriveReport() {
+    return this.drivesService.getDriveReport();
+  }
+
   // Declared before 'student-report/:studentId' — otherwise "export" would
   // be swallowed as a (non-numeric, 400-ing) :studentId value.
   @Get('student-report/export')
   async exportStudentReport(
     @Query() query: ExportStudentReportQueryDto,
+    @CurrentUser() user: JwtPayload,
     @Res() res: Response,
   ) {
     const table = await this.drivesService.buildStudentReportTable(
       query.batch_id,
       query.class,
     );
+    await this.drivesService.logReportExport(
+      user.sub,
+      'export_student_report',
+      { ...query },
+    );
     await this.sendReportFile(table, query.format, res);
+  }
+
+  /**
+   * GET /api/v1/drives/reports/generated-count
+   * Real count of report exports (both kinds below) logged to audit_logs
+   * since the start of the current month — backs the Reports page's
+   * "Generated this month" tile.
+   */
+  @Get('reports/generated-count')
+  async getReportsGeneratedCount() {
+    const count = await this.drivesService.countReportExportsThisMonth();
+    return { count };
   }
 
   @Get('student-report/:studentId')
@@ -136,6 +160,7 @@ export class DrivesController {
   @Get('reports/export')
   async exportReport(
     @Query() query: ExportReportQueryDto,
+    @CurrentUser() user: JwtPayload,
     @Res() res: Response,
   ) {
     const table = await this.drivesService.buildReportTable(
@@ -143,6 +168,9 @@ export class DrivesController {
       query.view ?? 'class',
       query.department,
     );
+    await this.drivesService.logReportExport(user.sub, 'export_class_report', {
+      ...query,
+    });
     await this.sendReportFile(table, query.format, res);
   }
 
@@ -184,6 +212,24 @@ export class DrivesController {
   @Get('students/:studentId/history')
   getHistoryForStudentId(@Param('studentId', ParseIntPipe) studentId: number) {
     return this.drivesService.getHistoryForStudentId(studentId);
+  }
+
+  // Full profile (identity + all applications + all offers) — powers the
+  // Placement Drives student detail page.
+  @Get('students/:studentId/profile')
+  getStudentProfile(@Param('studentId', ParseIntPipe) studentId: number) {
+    return this.drivesService.getStudentProfile(studentId);
+  }
+
+  // Placement Officer explicitly records eligibility/opt-out for the
+  // Students page's "Eligible this cycle"/"Opted out" tiles — neither is
+  // honestly computable from existing data (see query.md #17).
+  @Patch('students/:studentId/placement-status')
+  updatePlacementStatus(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Body() dto: UpdatePlacementStatusDto,
+  ) {
+    return this.drivesService.updatePlacementStatus(studentId, dto);
   }
 
   @Patch(':id')

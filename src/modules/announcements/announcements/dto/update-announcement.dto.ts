@@ -21,13 +21,13 @@ import {
 import { SOCIAL_POST_FORMATS } from './create-announcement.dto';
 
 export class UpdateAnnouncementDto {
-  @ValidateIf((dto) => dto.title !== undefined)
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.title !== undefined)
   @IsString()
   @IsNotEmpty()
   @MaxLength(150)
   title?: string;
 
-  @ValidateIf((dto) => dto.content !== undefined)
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.content !== undefined)
   @IsString()
   @IsNotEmpty()
   content?: string;
@@ -39,41 +39,41 @@ export class UpdateAnnouncementDto {
    * a draft can sit with no target_audience/class_ids/department_id
    * forever, but publishing it demands them just like a fresh create.
    */
-  @ValidateIf((dto) => dto.status !== undefined)
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.status !== undefined)
   @IsEnum(announcement_status_enum)
   status?: announcement_status_enum;
 
-  @ValidateIf((dto) => dto.target_audience !== undefined)
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.target_audience !== undefined)
   @IsEnum(target_audience_enum)
   target_audience?: target_audience_enum;
 
-  @ValidateIf((dto) => dto.class_ids !== undefined)
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.class_ids !== undefined)
   @IsArray()
   @ArrayNotEmpty()
   @ArrayUnique()
   @IsInt({ each: true })
   class_ids?: number[];
 
-  @ValidateIf((dto) => dto.department_id !== undefined)
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.department_id !== undefined)
   @IsInt()
   department_id?: number;
 
-  @ValidateIf((dto) => dto.role_ids !== undefined)
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.role_ids !== undefined)
   @IsArray()
   @ArrayNotEmpty()
   @ArrayUnique()
   @IsInt({ each: true })
   role_ids?: number[];
 
-  @ValidateIf((dto) => dto.category !== undefined)
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.category !== undefined)
   @IsEnum(announcement_category_enum)
   category?: announcement_category_enum;
 
-  @ValidateIf((dto) => dto.file_key !== undefined)
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.file_key !== undefined)
   @IsString()
   file_key?: string;
 
-  @ValidateIf((dto) => dto.file_name !== undefined)
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.file_name !== undefined)
   @IsString()
   @MaxLength(255)
   file_name?: string;
@@ -102,4 +102,9 @@ export class UpdateAnnouncementDto {
   @IsOptional()
   @IsBoolean()
   allow_comments?: boolean;
+
+  @ValidateIf((dto: UpdateAnnouncementDto) => dto.priority !== undefined)
+  @IsString()
+  @MaxLength(20)
+  priority?: string;
 }

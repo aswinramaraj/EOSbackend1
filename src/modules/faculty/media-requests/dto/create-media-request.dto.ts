@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUrl,
   MaxLength,
 } from 'class-validator';
 
@@ -36,6 +37,13 @@ export const MEDIA_REQUEST_TYPES = [
  * payload keeps working unchanged. `requested_by_faculty_id`,
  * `requested_by_user_id` and `status` (always starts 'pending') are never
  * client-supplied.
+ *
+ * event_name/event_date/venue_id/coordinator_name/contact_number/
+ * media_types are real columns on `media_requests` that existed on the
+ * table already but were never accepted by this DTO — added here (no
+ * migration, the columns were simply unused) so the Secretary Portal's
+ * richer composer (event name/date/venue/coordinator/media types) has
+ * somewhere real to write to, instead of the old `description`-only shape.
  */
 export class CreateMediaRequestDto {
   @IsString()
@@ -76,4 +84,15 @@ export class CreateMediaRequestDto {
   @IsOptional()
   @IsDateString({}, { message: 'poster_needed_by must be a valid ISO date' })
   poster_needed_by?: string;
+
+  /**
+   * Real logos/guest-photo/reference-poster attachment, uploaded ahead of
+   * create via `POST /media-requests/attachments` (same two-step shape as
+   * announcements) — the requester attaches at creation time, not just
+   * Media Room afterwards via `UpdateMediaRequestDto`.
+   */
+  @IsOptional()
+  @IsUrl()
+  @MaxLength(500)
+  media_file_url?: string;
 }

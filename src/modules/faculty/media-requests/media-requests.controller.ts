@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -10,8 +11,11 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -23,10 +27,31 @@ import { CreateMediaRequestDto } from './dto/create-media-request.dto';
 import { UpdateMediaRequestDto } from './dto/update-media-request.dto';
 import { ListMediaRequestQueryDto } from './dto/list-media-request-query.dto';
 
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB, same cap as announcements
+
 @Controller('me')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class MediaRequestsController {
   constructor(private readonly mediaRequestsService: MediaRequestsService) {}
+
+  /**
+   * POST /media-requests/attachments — real upload (logos/guest photo/
+   * reference poster), same Supabase-Storage-backed pattern as
+   * announcements. Returns { url } which the composer then sends back as
+   * `media_file_url` on the actual POST /media-requests create call.
+   */
+  @Post('media-requests/attachments')
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY, ROLES.MEDIA_ROOM)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
+  uploadAttachment(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.mediaRequestsService.uploadAttachment(file);
+  }
 
   /** POST /api/v1/media-requests — Faculty / Secretary / Media Room (internal request, no faculty profile needed — same path as Secretary). */
   @Post('media-requests')
@@ -76,6 +101,6 @@ export class MediaRequestsController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.mediaRequestsService.remove(id, user.sub);
+    return this.mediaRequestsService.remove(id, user);
   }
 }

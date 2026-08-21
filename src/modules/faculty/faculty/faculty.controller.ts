@@ -37,9 +37,15 @@ export class FacultyController {
     return this.facultyService.create(dto, user.sub);
   }
 
-  /** GET /api/v1/faculty — Admin/HoD/HR Payroll. Paginated list, filterable by department_id/status. */
+  /**
+   * GET /api/v1/faculty — Admin/HoD/HR Payroll/Secretary. Paginated list,
+   * filterable by department_id/status. Secretary added for the Secretary
+   * Portal's Reports "faculty summary" table — same institution-wide
+   * posture as /announcements and /principal-* (no secretary→department
+   * table exists, so this reads unscoped like Admin does).
+   */
   @Get('faculty')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   findAll(@Query() query: ListFacultyQueryDto) {
     return this.facultyService.findAll(query);
   }
@@ -56,11 +62,18 @@ export class FacultyController {
 
   /** PATCH /api/v1/faculty/profile — faculty self-service update of editable fields only. */
 
-  /** GET /api/v1/faculty/:id — Admin/HoD/HR Payroll. Excludes sensitive HR information. */
+  /**
+   * GET /api/v1/faculty/:id — Admin/HoD/HR Payroll. Sensitive HR
+   * information (Aadhaar/PAN/bank details) is included only for
+   * Admin/HR Payroll callers — see findOneForAdmin()'s own doc comment.
+   */
   @Get('faculty/:id')
   @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.facultyService.findOneForAdmin(id);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.facultyService.findOneForAdmin(id, user.role);
   }
 
   /** PATCH /api/v1/faculty/:id — Admin/HR Payroll. Distinct from the faculty's own /profile update. */

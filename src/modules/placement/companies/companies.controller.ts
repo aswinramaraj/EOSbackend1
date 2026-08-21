@@ -38,6 +38,11 @@ export class CompaniesController {
     return this.companiesService.findAll(query);
   }
 
+  @Get('report')
+  getReport() {
+    return this.companiesService.getCompanyReport();
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.companiesService.findOne(id);

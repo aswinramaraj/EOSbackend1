@@ -82,7 +82,7 @@ const SCORECARD_METRICS = [
   { key: 'equipment_utilisation', name: 'Equipment utilisation', isPercent: true },
 ] as const;
 
-interface ScorecardMetricOut {
+export interface ScorecardMetricOut {
   key: string;
   name: string;
   is_percent: boolean;

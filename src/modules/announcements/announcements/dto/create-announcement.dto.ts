@@ -46,20 +46,26 @@ export class CreateAnnouncementDto {
    * Required once status is 'published' (or omitted, defaulting to
    * 'published') — never required for a draft.
    */
-  @ValidateIf((dto) => dto.status !== 'draft')
+  @ValidateIf((dto: CreateAnnouncementDto) => dto.status !== 'draft')
   @IsEnum(target_audience_enum)
   target_audience?: target_audience_enum;
 
   /**
-   * Required for every target_audience except 'teachers' and 'roles' -
-   * that's the class-targeted flow, persisted via announcement_class_mapping.
-   * Never required for a draft.
+   * Required for every target_audience except 'teachers', 'roles', and the
+   * EDC-specific audiences ('edc_founders'/'edc_inside_college'/
+   * 'edc_all_entrepreneurs') - those three are plain broadcast labels with
+   * no class/department/role targeting mechanism behind them (no "founders"
+   * recipient list exists in the schema yet), same category of exception
+   * as 'teachers'/'roles'. Never required for a draft.
    */
   @ValidateIf(
-    (dto) =>
+    (dto: CreateAnnouncementDto) =>
       dto.status !== 'draft' &&
       dto.target_audience !== 'teachers' &&
-      dto.target_audience !== 'roles',
+      dto.target_audience !== 'roles' &&
+      dto.target_audience !== 'edc_founders' &&
+      dto.target_audience !== 'edc_inside_college' &&
+      dto.target_audience !== 'edc_all_entrepreneurs',
   )
   @IsArray()
   @ArrayNotEmpty()
@@ -74,7 +80,10 @@ export class CreateAnnouncementDto {
    * own department (enforced in the service, see resolveTeacherTargetDepartment);
    * Admin may target any department, or omit it for an all-faculty broadcast.
    */
-  @ValidateIf((dto) => dto.status !== 'draft' && dto.target_audience === 'teachers')
+  @ValidateIf(
+    (dto: CreateAnnouncementDto) =>
+      dto.status !== 'draft' && dto.target_audience === 'teachers',
+  )
   @IsOptional()
   @IsInt()
   department_id?: number;
@@ -86,17 +95,15 @@ export class CreateAnnouncementDto {
    * "broadcast to everyone" is just every role id from GET
    * /announcements/lookup/roles, not a distinct value.
    */
-  @ValidateIf((dto) => dto.status !== 'draft' && dto.target_audience === 'roles')
+  @ValidateIf(
+    (dto: CreateAnnouncementDto) =>
+      dto.status !== 'draft' && dto.target_audience === 'roles',
+  )
   @IsArray()
   @ArrayNotEmpty()
   @ArrayUnique()
   @IsInt({ each: true })
   role_ids?: number[];
-
-  /** Purely a display tag on the list (emergency/department/academic/event/general) — orthogonal to target_audience, which controls actual visibility. */
-  @IsOptional()
-  @IsEnum(announcement_category_enum)
-  category?: announcement_category_enum;
 
   /** From POST /announcements/attachments' response — never uploaded here. */
   @IsOptional()
@@ -107,6 +114,27 @@ export class CreateAnnouncementDto {
   @IsString()
   @MaxLength(255)
   file_name?: string;
+
+  /**
+   * Real column (`announcements.priority`), added specifically for the EDC
+   * module's High/Medium/Normal tags — free text, not an enum, since no
+   * fixed severity scale exists anywhere else in the schema to reuse.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  priority?: string;
+
+  /**
+   * Real column (`announcements.category`) — was a schema column with no
+   * DTO field and never written by the service until now (the Secretary
+   * module's composer needs it for its Category selector: ACADEMIC/
+   * DEPARTMENT/EVENT/EMERGENCY/GENERAL). No migration needed, the column
+   * already existed.
+   */
+  @IsOptional()
+  @IsEnum(announcement_category_enum)
+  category?: announcement_category_enum;
 
   /**
    * Real column, previously never read/written by this service — reactivated

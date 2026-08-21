@@ -28,24 +28,29 @@ import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 import { ListAnnouncementsQueryDto } from './dto/list-announcements-query.dto';
 import { CreateAnnouncementCommentDto } from './dto/create-announcement-comment.dto';
+import { AuditLogService } from 'src/modules/fees-billing/audit-log/audit-log.service';
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
 
 @Controller('announcements')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AnnouncementsController {
-  constructor(private readonly announcementsService: AnnouncementsService) {}
+  constructor(
+    private readonly announcementsService: AnnouncementsService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   /**
    * GET /api/v1/announcements/lookup/roles
-   * Admin/Principal only — every backend role, for the "Target roles"
-   * checkbox grid (target_audience: 'roles').
+   * Admin/Principal/Billing — every backend role, for the "Target roles"
+   * checkbox grid (target_audience: 'roles'). Billing needs this for its
+   * real "All HoDs" audience option (picks out the real 'hod' role id).
    *
    * Error responses:
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
    */
   @Get('lookup/roles')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.BILLING)
   lookupRoles() {
     return this.announcementsService.lookupRoles();
   }
@@ -58,7 +63,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
    */
   @Get('lookup/departments')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.SECRETARY, ROLES.BILLING)
   lookupDepartments(@Query('batch_id', ParseIntPipe) batchId: number) {
     return this.announcementsService.lookupDepartmentsForBatch(batchId);
   }
@@ -74,7 +79,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 404 HOD_FACULTY_RECORD_NOT_FOUND, 500 INTERNAL_ERROR
    */
   @Get('lookup/classes')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.SECRETARY, ROLES.BILLING)
   lookupClasses(
     @Query('batch_id', ParseIntPipe) batchId: number,
     @Query('department_id', new ParseIntPipe({ optional: true }))
@@ -100,12 +105,12 @@ export class AnnouncementsController {
 
   /**
    * GET /api/v1/announcements/lookup/all-classes
-   * Higher Education Cell only — every class in one flat list, since the
-   * cell's announcements are always students-wide with no department/batch
-   * scope to narrow by.
+   * Higher Education Cell / Billing — every class in one flat list, since
+   * both cells' announcements are always institution-wide (students across
+   * every department) with no department/batch scope to narrow by.
    */
   @Get('lookup/all-classes')
-  @Roles(ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
+  @Roles(ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM, ROLES.BILLING)
   lookupAllClasses() {
     return this.announcementsService.lookupAllClasses();
   }
@@ -126,20 +131,33 @@ export class AnnouncementsController {
 
   /**
    * POST /api/v1/announcements/attachments
-   * Admin/HOD/Faculty — uploads a single file to Supabase Storage (private
-   * bucket, see StorageService) and returns its storage key + a short-lived
-   * signed URL. The key is what gets attached to an announcement's
-   * file_key column on create/update — this endpoint itself never touches
-   * the announcements table.
+   * Admin/HOD/Faculty/Principal/Placement/Higher Education — uploads a
+   * single file to Supabase Storage (private bucket, see StorageService)
+   * and returns its storage key + a short-lived signed URL. The key is what
+   * gets attached to an announcement's file_key column on create/update —
+   * this endpoint itself never touches the announcements table.
    *
    * Error responses:
    *  400 VALIDATION_ERROR – no file, or file too large (>10MB)
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
    */
   @Post('attachments')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
-  uploadAttachment(@UploadedFile() file: Express.Multer.File) {
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+    ROLES.EDC_COORDINATOR,
+    ROLES.SECRETARY,
+    ROLES.BILLING,
+    ROLES.MEDIA_ROOM,
+  )
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }),
+  )
+  uploadAttachments(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException({
         message: 'No file was uploaded (expected multipart field "file")',
@@ -161,9 +179,68 @@ export class AnnouncementsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
-  create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
-    return this.announcementsService.create(dto, user);
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+    ROLES.EDC_COORDINATOR,
+    ROLES.SECRETARY,
+    ROLES.BILLING,
+    ROLES.MEDIA_ROOM,
+  )
+  async create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
+    const result = await this.announcementsService.create(dto, user);
+    void this.auditLog.record({
+      entity_type: 'announcement',
+      entity_id: (result as { id: number }).id,
+      action: 'created',
+      performed_by_user_id: user.sub,
+      new_value: { title: dto.title, target_audience: dto.target_audience },
+    });
+    return result;
+  }
+
+  /**
+   * POST /api/v1/announcements/:id/attachment
+   * Only the announcement's own author may attach a file to it (same
+   * ownership rule as PUT/PATCH/DELETE) — a separate call after create(),
+   * for attaching a file to an announcement that already exists (as opposed
+   * to POST /announcements/attachments' upload-then-create-with-file_key
+   * flow for a brand new post).
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR – no file in the "file" field
+   *  403 NOT_OWNER
+   *  404 ANNOUNCEMENT_NOT_FOUND
+   *  500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
+   */
+  @Post(':id/attachment')
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+  )
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }),
+  )
+  uploadAttachment(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.announcementsService.attachFileToAnnouncement(id, file, user);
   }
 
   /**
@@ -213,13 +290,32 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Put(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
-  update(
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+    ROLES.EDC_COORDINATOR,
+    ROLES.SECRETARY,
+    ROLES.BILLING,
+    ROLES.MEDIA_ROOM,
+  )
+  async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.announcementsService.update(id, dto, user);
+    const result = await this.announcementsService.update(id, dto, user);
+    void this.auditLog.record({
+      entity_type: 'announcement',
+      entity_id: id,
+      action: 'updated',
+      performed_by_user_id: user.sub,
+      new_value: dto as Record<string, unknown>,
+    });
+    return result;
   }
 
   /**
@@ -231,13 +327,32 @@ export class AnnouncementsController {
    * Error responses: see PUT /api/v1/announcements/:id
    */
   @Patch(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
-  patch(
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+    ROLES.EDC_COORDINATOR,
+    ROLES.SECRETARY,
+    ROLES.BILLING,
+    ROLES.MEDIA_ROOM,
+  )
+  async patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.announcementsService.update(id, dto, user);
+    const result = await this.announcementsService.update(id, dto, user);
+    void this.auditLog.record({
+      entity_type: 'announcement',
+      entity_id: id,
+      action: 'updated',
+      performed_by_user_id: user.sub,
+      new_value: dto as Record<string, unknown>,
+    });
+    return result;
   }
 
   /**
@@ -250,12 +365,31 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Delete(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
-  remove(
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.PLACEMENT,
+    ROLES.HIGHER_EDUCATION,
+    ROLES.EDC_COORDINATOR,
+    ROLES.SECRETARY,
+    ROLES.BILLING,
+    ROLES.MEDIA_ROOM,
+  )
+  async remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.announcementsService.remove(id, user);
+    const result = await this.announcementsService.remove(id, user);
+    void this.auditLog.record({
+      entity_type: 'announcement',
+      entity_id: id,
+      action: 'deleted',
+      performed_by_user_id: user.sub,
+      old_value: { title: (result as { title?: string }).title },
+    });
+    return result;
   }
 
   /**

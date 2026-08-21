@@ -24,6 +24,9 @@ import { AdminUpdateStudentDto } from './dto/admin-update-student.dto';
 import { AdminAttendanceSummaryQueryDto } from './dto/admin-attendance-summary-query.dto';
 import { ResetStudentPasswordDto } from './dto/reset-student-password.dto';
 import { UpdateStudentAddressesDto } from './dto/update-student-addresses.dto';
+import { UpdateStudentContactsDto } from './dto/update-student-contacts.dto';
+import { UpdateStudentFamilyDto } from './dto/update-student-family.dto';
+import { UpdateStudentIdentityMarksDto } from './dto/update-student-identity-marks.dto';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
@@ -120,6 +123,33 @@ export class StudentsController {
     @Body() dto: UpdateStudentAddressesDto,
   ) {
     return this.studentsService.updateAddresses(id, dto);
+  }
+
+  /** PATCH /students/:id/contacts — fix personal email/mobile after admission (see StudentsService.updateContacts). */
+  @Patch(':id/contacts')
+  updateContacts(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateStudentContactsDto,
+  ) {
+    return this.studentsService.updateContacts(id, dto);
+  }
+
+  /** PATCH /students/:id/family — fix parent details after admission (see StudentsService.updateFamily). */
+  @Patch(':id/family')
+  updateFamily(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateStudentFamilyDto,
+  ) {
+    return this.studentsService.updateFamily(id, dto);
+  }
+
+  /** PATCH /students/:id/identity-marks — replaces the whole set (see StudentsService.updateIdentityMarks). */
+  @Patch(':id/identity-marks')
+  updateIdentityMarks(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateStudentIdentityMarksDto,
+  ) {
+    return this.studentsService.updateIdentityMarks(id, dto);
   }
 
   /** POST /students/:id/photo (multipart, field "file") — change/replace an existing student's photo. */

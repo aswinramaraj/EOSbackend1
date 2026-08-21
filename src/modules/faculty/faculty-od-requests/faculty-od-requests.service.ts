@@ -54,14 +54,19 @@ interface OdRequestRow {
   verification_status: string;
   admin_remarks: string | null;
   created_at: Date;
+  // Nullable only because faculty_id was relaxed for an unrelated
+  // Secretary-facing feature elsewhere (see the Secretary module
+  // completion migration) — every row THIS module creates/reads still
+  // always has faculty_id set (create() is still Faculty-only), so this
+  // is a compile-time nullability fix, not a real behavior change.
   faculty: {
     id: number;
     first_name: string;
     last_name: string;
     designation: string;
     department_id: number;
-    departments: { id: number; name: string };
-  };
+    departments: { id: number; name: string } | null;
+  } | null;
 }
 
 function computeOverallStatus(
@@ -96,13 +101,15 @@ function toResponse(row: OdRequestRow) {
     verification_status: row.verification_status,
     admin_remarks: row.admin_remarks,
     created_at: row.created_at,
-    faculty: {
-      id: row.faculty.id,
-      first_name: row.faculty.first_name,
-      last_name: row.faculty.last_name,
-      designation: row.faculty.designation,
-      department: row.faculty.departments,
-    },
+    faculty: row.faculty
+      ? {
+          id: row.faculty.id,
+          first_name: row.faculty.first_name,
+          last_name: row.faculty.last_name,
+          designation: row.faculty.designation,
+          department: row.faculty.departments,
+        }
+      : null,
   };
 }
 
@@ -197,12 +204,12 @@ export class FacultyOdRequestsService {
 
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-      if (odRequest.faculty.id !== faculty.id) {
+      if (odRequest.faculty?.id !== faculty.id) {
         throw new ForbiddenException('You may only view your own OD requests');
       }
     } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
-      if (odRequest.faculty.department_id !== hod.department_id) {
+      if (odRequest.faculty?.department_id !== hod.department_id) {
         throw new ForbiddenException(
           'You may only view OD requests within your own department',
         );
@@ -245,7 +252,7 @@ export class FacultyOdRequestsService {
 
     if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
-      if (existing.faculty.department_id !== hod.department_id) {
+      if (existing.faculty?.department_id !== hod.department_id) {
         throw new ForbiddenException(
           'You may only act on OD requests within your own department',
         );

@@ -57,27 +57,46 @@ function toSocialShape(row: SocialPostDetailsRow | undefined) {
 interface UserContext {
   role: string;
   userId: number;
-  roleId: number;
+  // Optional — NON_TEACHING_STAFF resolves no roleId (see resolveUserContext).
+  roleId?: number;
   departmentId?: number;
   assignedClassIds?: number[];
   studentClassId?: number | null;
   linkedStudentClassIds?: number[];
 }
 
-/** Shape of the `users` relation once findAll/findOne include it for the poster name/role lookup. */
-interface PosterRelation {
-  email: string;
-  roles: { name: string };
-  faculty: { first_name: string; last_name: string; designation: string } | null;
-}
-
-const POSTED_BY_INCLUDE = {
-  select: {
-    email: true,
-    roles: { select: { name: true } },
-    faculty: { select: { first_name: true, last_name: true, designation: true } },
+/**
+ * Shared by findAll/findOne. `users`/`faculty` resolve a real "posted by"
+ * name+role+designation+department. `classes`/`roles` resolve human-readable
+ * audience labels (department code + section, role name) instead of raw ids.
+ */
+const ANNOUNCEMENT_RESPONSE_INCLUDE = {
+  announcement_class_mapping: {
+    select: {
+      class_id: true,
+      classes: {
+        select: { section: true, departments: { select: { code: true } } },
+      },
+    },
   },
-} as const;
+  announcement_role_mapping: {
+    select: { role_id: true, roles: { select: { name: true } } },
+  },
+  users: {
+    select: {
+      email: true,
+      roles: { select: { name: true } },
+      faculty: {
+        select: {
+          first_name: true,
+          last_name: true,
+          designation: true,
+          departments: { select: { code: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.announcementsInclude;
 
 @Injectable()
 export class AnnouncementsService {
@@ -90,10 +109,10 @@ export class AnnouncementsService {
   ) {}
 
   /**
-   * POST /announcements/attachments (Admin/HOD/Faculty).
-   * Pure storage passthrough — never touches the announcements table.
-   * `key` is what the caller then sends back as `file_key` on
-   * create()/update() once that column exists.
+   * POST /announcements/attachments (Admin/HOD/Faculty/Principal/Placement/
+   * Higher Education). Pure storage passthrough — never touches the
+   * announcements table. `file_key` is what the caller then sends back on
+   * create()/update() to attach it to a brand-new post.
    */
   async uploadAttachment(file: Express.Multer.File) {
     const { key } = await this.storage.upload(
@@ -104,6 +123,56 @@ export class AnnouncementsService {
     );
     const url = this.storage.getPublicUrl(key);
     return { file_key: key, file_name: file.originalname, url };
+  }
+
+  /**
+   * POST /announcements/:id/attachment
+   * Only the announcement's own author may attach a file to an announcement
+   * that already exists — a separate call after create(), as opposed to
+   * uploadAttachment()'s upload-then-create-with-file_key flow for a brand
+   * new post.
+   *
+   * Error cases:
+   *  403 NOT_OWNER
+   *  404 ANNOUNCEMENT_NOT_FOUND
+   *  500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
+   */
+  async attachFileToAnnouncement(
+    id: number,
+    file: Express.Multer.File,
+    user: JwtPayload,
+  ) {
+    const context = await this.resolveUserContext(user);
+    const existing = await this.findVisibleById(id, context);
+
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Announcement not found',
+        errorCode: 'ANNOUNCEMENT_NOT_FOUND',
+      });
+    }
+
+    this.assertOwnership(existing, user, context);
+
+    const { key } = await this.storage.upload(
+      'announcements',
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+    );
+
+    try {
+      return await this.prisma.announcements.update({
+        where: { id },
+        data: { file_key: key, file_name: file.originalname },
+      });
+    } catch (err) {
+      this.logger.error('DB error while saving announcement attachment', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
   }
 
   /**
@@ -135,7 +204,7 @@ export class AnnouncementsService {
         await this.assertClassesValid(dto.class_ids, context);
       }
       if (dto.role_ids !== undefined) {
-        await this.assertRoleTargetingPermitted(context);
+        this.assertRoleTargetingPermitted(context);
         await this.assertRolesValid(dto.role_ids);
       }
 
@@ -155,6 +224,7 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : undefined,
+              priority: dto.priority,
             },
           });
 
@@ -199,7 +269,7 @@ export class AnnouncementsService {
     // broadcast - mutually exclusive with the 'students'/'teachers' branches
     // below, matching the DTO's own ValidateIf split.
     if (dto.target_audience === 'roles') {
-      await this.assertRoleTargetingPermitted(context);
+      this.assertRoleTargetingPermitted(context);
       await this.assertRolesValid(dto.role_ids!);
 
       let announcement: { id: number } & Record<string, unknown>;
@@ -215,6 +285,7 @@ export class AnnouncementsService {
               status,
               file_key: dto.file_key,
               file_name: dto.file_name,
+              priority: dto.priority,
             },
           });
 
@@ -243,7 +314,10 @@ export class AnnouncementsService {
       return this.toResponseShape({
         ...announcement,
         announcement_class_mapping: [],
-        announcement_role_mapping: dto.role_ids!.map((role_id) => ({ role_id })),
+        announcement_role_mapping: dto.role_ids!.map((role_id) => ({
+          role_id,
+          roles: null,
+        })),
       });
     }
 
@@ -269,6 +343,7 @@ export class AnnouncementsService {
             status,
             file_key: dto.file_key,
             file_name: dto.file_name,
+            priority: dto.priority,
           },
         });
       } catch (err) {
@@ -283,6 +358,52 @@ export class AnnouncementsService {
         departmentId,
       });
       await this.afterAnnouncementCreated(announcement.id, user, dto);
+
+      return this.toResponseShape({
+        ...announcement,
+        announcement_class_mapping: [],
+      });
+    }
+
+    // EDC-specific broadcast labels ('edc_founders'/'edc_inside_college'/
+    // 'edc_all_entrepreneurs') - plain announcements with no class/
+    // department/role targeting mechanism behind them (see the DTO's own
+    // comment). Coordinator-only, mirrors 'teachers'/'roles' being
+    // restricted to their own roles above.
+    if (
+      dto.target_audience === 'edc_founders' ||
+      dto.target_audience === 'edc_inside_college' ||
+      dto.target_audience === 'edc_all_entrepreneurs'
+    ) {
+      if (context.role !== ROLES.EDC_COORDINATOR && context.role !== ROLES.ADMIN) {
+        throw new ForbiddenException({
+          message: 'You are not permitted to post EDC announcements',
+          errorCode: 'ROLE_NOT_PERMITTED',
+        });
+      }
+
+      let announcement: { id: number } & Record<string, unknown>;
+      try {
+        announcement = await this.prisma.announcements.create({
+          data: {
+            posted_by_user_id: user.sub,
+            title: dto.title,
+            content: dto.content,
+            target_audience: dto.target_audience,
+            status,
+            file_key: dto.file_key,
+            file_name: dto.file_name,
+            priority: dto.priority,
+            category: dto.category,
+          },
+        });
+      } catch (err) {
+        this.logger.error('DB error while creating EDC announcement', err);
+        throw new InternalServerErrorException({
+          message: 'Something went wrong. Please try again.',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
 
       return this.toResponseShape({ ...announcement, announcement_class_mapping: [] });
     }
@@ -302,6 +423,7 @@ export class AnnouncementsService {
             status,
             file_key: dto.file_key,
             file_name: dto.file_name,
+            priority: dto.priority,
           },
         });
 
@@ -329,7 +451,10 @@ export class AnnouncementsService {
 
     return this.toResponseShape({
       ...announcement,
-      announcement_class_mapping: dto.class_ids!.map((class_id) => ({ class_id })),
+      announcement_class_mapping: dto.class_ids!.map((class_id) => ({
+        class_id,
+        classes: null,
+      })),
     });
   }
 
@@ -358,14 +483,20 @@ export class AnnouncementsService {
         requestedDepartmentId !== context.departmentId
       ) {
         throw new ForbiddenException({
-          message: 'You may only post faculty announcements to your own department',
+          message:
+            'You may only post faculty announcements to your own department',
           errorCode: 'DEPARTMENT_OUTSIDE_SCOPE',
         });
       }
       return context.departmentId;
     }
 
-    if (context.role === ROLES.ADMIN || context.role === ROLES.PRINCIPAL) {
+    if (
+      context.role === ROLES.ADMIN ||
+      context.role === ROLES.PRINCIPAL ||
+      context.role === ROLES.SECRETARY ||
+      context.role === ROLES.BILLING
+    ) {
       if (requestedDepartmentId === undefined) {
         return null;
       }
@@ -399,7 +530,11 @@ export class AnnouncementsService {
     announcementId: number,
     title: string,
     targetAudience: target_audience_enum,
-    opts: { classIds?: number[]; departmentId?: number | null; roleIds?: number[] },
+    opts: {
+      classIds?: number[];
+      departmentId?: number | null;
+      roleIds?: number[];
+    },
   ): Promise<void> {
     try {
       const userIds = await this.resolveAnnouncementRecipientUserIds(
@@ -426,7 +561,11 @@ export class AnnouncementsService {
 
   private async resolveAnnouncementRecipientUserIds(
     targetAudience: target_audience_enum,
-    opts: { classIds?: number[]; departmentId?: number | null; roleIds?: number[] },
+    opts: {
+      classIds?: number[];
+      departmentId?: number | null;
+      roleIds?: number[];
+    },
   ): Promise<number[]> {
     switch (targetAudience) {
       case 'students': {
@@ -486,11 +625,7 @@ export class AnnouncementsService {
     try {
       announcements = await this.prisma.announcements.findMany({
         where,
-        include: {
-          announcement_class_mapping: { select: { class_id: true } },
-          announcement_role_mapping: { select: { role_id: true } },
-          users: POSTED_BY_INCLUDE,
-        },
+        include: ANNOUNCEMENT_RESPONSE_INCLUDE,
         orderBy: { created_at: 'desc' },
       });
     } catch (err) {
@@ -574,11 +709,7 @@ export class AnnouncementsService {
     try {
       announcement = await this.prisma.announcements.findFirst({
         where: { AND: [{ id }, where] },
-        include: {
-          announcement_class_mapping: { select: { class_id: true } },
-          announcement_role_mapping: { select: { role_id: true } },
-          users: POSTED_BY_INCLUDE,
-        },
+        include: ANNOUNCEMENT_RESPONSE_INCLUDE,
       });
     } catch (err) {
       this.logger.error('DB error during announcement lookup', err);
@@ -637,7 +768,7 @@ export class AnnouncementsService {
 
     this.assertOwnership(existing, user, context);
 
-    const existingStatus = existing.status as announcement_status_enum;
+    const existingStatus = existing.status;
     const resultStatus = dto.status ?? existingStatus;
 
     // Whenever target_audience is explicitly supplied — most importantly
@@ -648,7 +779,10 @@ export class AnnouncementsService {
     if (dto.target_audience !== undefined) {
       resolvedDepartmentId =
         dto.target_audience === 'teachers'
-          ? await this.resolveTeacherTargetDepartment(dto.department_id, context)
+          ? await this.resolveTeacherTargetDepartment(
+              dto.department_id,
+              context,
+            )
           : null;
     }
 
@@ -663,7 +797,8 @@ export class AnnouncementsService {
       });
     }
 
-    const effectiveTargetAudience = dto.target_audience ?? existing.target_audience;
+    const effectiveTargetAudience =
+      dto.target_audience ?? existing.target_audience;
 
     if (dto.class_ids !== undefined) {
       await this.assertClassesValid(dto.class_ids, context);
@@ -673,9 +808,10 @@ export class AnnouncementsService {
       effectiveTargetAudience !== 'teachers' &&
       effectiveTargetAudience !== 'roles'
     ) {
-      const currentMappingCount = await this.prisma.announcement_class_mapping.count({
-        where: { announcement_id: id },
-      });
+      const currentMappingCount =
+        await this.prisma.announcement_class_mapping.count({
+          where: { announcement_id: id },
+        });
       if (currentMappingCount === 0) {
         throw new BadRequestException({
           message: 'class_ids is required to publish this draft',
@@ -685,16 +821,17 @@ export class AnnouncementsService {
     }
 
     if (dto.role_ids !== undefined) {
-      await this.assertRoleTargetingPermitted(context);
+      this.assertRoleTargetingPermitted(context);
       await this.assertRolesValid(dto.role_ids);
     } else if (
       resultStatus === 'published' &&
       existingStatus === 'draft' &&
       effectiveTargetAudience === 'roles'
     ) {
-      const currentRoleMappingCount = await this.prisma.announcement_role_mapping.count({
-        where: { announcement_id: id },
-      });
+      const currentRoleMappingCount =
+        await this.prisma.announcement_role_mapping.count({
+          where: { announcement_id: id },
+        });
       if (currentRoleMappingCount === 0) {
         throw new BadRequestException({
           message: 'role_ids is required to publish this draft',
@@ -715,6 +852,7 @@ export class AnnouncementsService {
           dto.file_key !== undefined ||
           dto.file_name !== undefined ||
           dto.scheduled_at !== undefined ||
+          dto.priority !== undefined ||
           resolvedDepartmentId !== undefined
         ) {
           await tx.announcements.update({
@@ -729,6 +867,7 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : undefined,
+              priority: dto.priority,
             },
           });
         }
@@ -752,10 +891,11 @@ export class AnnouncementsService {
           await this.syncRoleMapping(tx, id, dto.role_ids);
           roleIds = dto.role_ids;
         } else {
-          const currentRoleMappings = await tx.announcement_role_mapping.findMany({
-            where: { announcement_id: id },
-            select: { role_id: true },
-          });
+          const currentRoleMappings =
+            await tx.announcement_role_mapping.findMany({
+              where: { announcement_id: id },
+              select: { role_id: true },
+            });
           roleIds = currentRoleMappings.map((m) => m.role_id);
         }
 
@@ -764,8 +904,14 @@ export class AnnouncementsService {
         });
         return this.toResponseShape({
           ...updated,
-          announcement_class_mapping: classIds.map((class_id) => ({ class_id })),
-          announcement_role_mapping: roleIds.map((role_id) => ({ role_id })),
+          announcement_class_mapping: classIds.map((class_id) => ({
+            class_id,
+            classes: null,
+          })),
+          announcement_role_mapping: roleIds.map((role_id) => ({
+            role_id,
+            roles: null,
+          })),
         });
       });
     } catch (err) {
@@ -829,6 +975,20 @@ export class AnnouncementsService {
 
       case ROLES.PRINCIPAL:
         return { role: ROLES.PRINCIPAL, userId: user.sub, roleId: user.roleId };
+
+      case ROLES.EDC_COORDINATOR:
+        return { role: ROLES.EDC_COORDINATOR, userId: user.sub, roleId: user.roleId };
+
+      // No secretary→department linkage exists anywhere in the schema
+      // (checked: no such column on any table) — treated as institution-wide,
+      // same as Admin/Principal, rather than inventing a department scope.
+      case ROLES.SECRETARY:
+        return { role: ROLES.SECRETARY, userId: user.sub, roleId: user.roleId };
+
+      // Billing is institution-wide too — same posture as Secretary (no
+      // billing->department linkage exists anywhere in the schema either).
+      case ROLES.BILLING:
+        return { role: ROLES.BILLING, userId: user.sub, roleId: user.roleId };
 
       case ROLES.HOD: {
         const faculty = await this.getFacultyByUserId(user.sub);
@@ -904,6 +1064,15 @@ export class AnnouncementsService {
         };
       }
 
+      case ROLES.PLACEMENT:
+        return { role: ROLES.PLACEMENT, userId: user.sub, roleId: user.roleId };
+
+      // 3 real accounts hold this legacy role — no roleId flows from the
+      // JWT for it (predates this repo's own role seed), unlike every case
+      // above.
+      case ROLES.NON_TEACHING_STAFF:
+        return { role: ROLES.NON_TEACHING_STAFF, userId: user.sub };
+
       default:
         return { role: user.role, userId: user.sub, roleId: user.roleId };
     }
@@ -923,7 +1092,9 @@ export class AnnouncementsService {
     return {
       AND: [
         this.buildRoleVisibilityQuery(context),
-        { OR: [{ status: 'published' }, { posted_by_user_id: context.userId }] },
+        {
+          OR: [{ status: 'published' }, { posted_by_user_id: context.userId }],
+        },
       ],
     };
   }
@@ -939,21 +1110,43 @@ export class AnnouncementsService {
     context: UserContext,
   ): Prisma.announcementsWhereInput {
     const roleTargeted: Prisma.announcementsWhereInput = {
-      announcement_role_mapping: { some: { role_id: context.roleId } },
+      announcement_role_mapping: { some: { role_id: context.roleId ?? -1 } },
     };
 
     switch (context.role) {
       case ROLES.ADMIN:
         return {};
 
+      // Principal is institution-wide leadership — same broadcast tier as
+      // Admin, sees everything (subject to the draft rule in
+      // buildVisibilityQuery above).
       case ROLES.PRINCIPAL:
         return {};
+
+      // Institution-wide, same as Admin/Principal — see resolveUserContext.
+      case ROLES.SECRETARY:
+        return {};
+
+      // Institution-wide, same as Secretary — see resolveUserContext.
+      case ROLES.BILLING:
+        return {};
+
+      // EDC coordinator has no recipient list to resolve (no "founders"
+      // user table exists yet) - sees only what they authored themselves,
+      // plus anything explicitly role-targeted at edc_coordinator via the
+      // generic 'roles' broadcast mechanism. Same shape as HOD/FACULTY's
+      // own "own-authored OR role-targeted" clauses.
+      case ROLES.EDC_COORDINATOR:
+        return {
+          OR: [{ posted_by_user_id: context.userId }, roleTargeted],
+        };
 
       case ROLES.HOD:
         return {
           OR: [
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
+            { users: { roles: { name: ROLES.PRINCIPAL } } },
             // Admin's org-wide faculty broadcasts (department_id: null) —
             // an HOD is also faculty and should see those.
             { target_audience: 'teachers', department_id: null },
@@ -968,6 +1161,7 @@ export class AnnouncementsService {
           OR: [
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
+            { users: { roles: { name: ROLES.PRINCIPAL } } },
             {
               AND: [
                 { users: { roles: { name: ROLES.HOD } } },
@@ -1020,6 +1214,35 @@ export class AnnouncementsService {
           ],
         };
       }
+
+      // Placement Cell has no class/department scope of its own (it targets
+      // students across every department for drives, not one class) —
+      // visibility is its own posts, Admin's, Principal's, plus anything
+      // explicitly targeted at the Placement role via announcement_role_mapping
+      // (the reference design's "Placement cell staff" audience option).
+      case ROLES.PLACEMENT:
+        return {
+          OR: [
+            { posted_by_user_id: context.userId },
+            { users: { roles: { name: ROLES.ADMIN } } },
+            { users: { roles: { name: ROLES.PRINCIPAL } } },
+            roleTargeted,
+          ],
+        };
+
+      // Non-teaching staff have no class/department scope either (3 real
+      // accounts hold this role today) and previously fell through to
+      // `default` — seeing nothing, ever, regardless of what was posted.
+      // Broadcast-tier only (own posts, Admin's, Principal's): there is no
+      // richer targeting concept for this role anywhere in the schema.
+      case ROLES.NON_TEACHING_STAFF:
+        return {
+          OR: [
+            { posted_by_user_id: context.userId },
+            { users: { roles: { name: ROLES.ADMIN } } },
+            { users: { roles: { name: ROLES.PRINCIPAL } } },
+          ],
+        };
 
       // Higher Education Cell, Medical Centre and Media Room have no
       // class/department scope of their own — they only ever post/see
@@ -1081,12 +1304,19 @@ export class AnnouncementsService {
       return;
     }
 
+    // Placement Cell reaches students across every department for drives —
+    // same unrestricted class selection as Admin/Principal, not scoped to
+    // one department the way HOD/Faculty are. Secretary is institution-wide
+    // too (no secretary->department table exists anywhere in the schema).
     if (
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
+      context.role === ROLES.PLACEMENT ||
       context.role === ROLES.HIGHER_EDUCATION ||
       context.role === ROLES.MEDICAL_CENTRE ||
-      context.role === ROLES.MEDIA_ROOM
+      context.role === ROLES.MEDIA_ROOM ||
+      context.role === ROLES.SECRETARY ||
+      context.role === ROLES.BILLING
     ) {
       return;
     }
@@ -1099,8 +1329,14 @@ export class AnnouncementsService {
 
   // ── Role-set validation (shared by create and update) ───────────────────
 
-  private async assertRoleTargetingPermitted(context: UserContext) {
-    if (context.role !== ROLES.ADMIN && context.role !== ROLES.PRINCIPAL) {
+  private assertRoleTargetingPermitted(context: UserContext) {
+    if (
+      context.role !== ROLES.ADMIN &&
+      context.role !== ROLES.PRINCIPAL &&
+      // Billing's real "All HoDs" audience option (fee-due escalation
+      // notices to department heads) needs role targeting too.
+      context.role !== ROLES.BILLING
+    ) {
       throw new ForbiddenException({
         message: 'You are not permitted to target announcements by role',
         errorCode: 'ROLE_NOT_PERMITTED',
@@ -1109,14 +1345,16 @@ export class AnnouncementsService {
   }
 
   /**
-   * GET /announcements/lookup/all-classes — Higher Education Cell only. The
-   * cell has no department/batch scope of its own, and its announcements
-   * are always students-wide (never a role broadcast), so this returns
-   * every class in one flat list rather than requiring a batch/department
-   * picker like Admin's lookup/classes does.
+   * GET /announcements/lookup/all-classes — Higher Education Cell / Billing.
+   * Neither cell has a department/batch scope of its own and both cells'
+   * announcements are always students-wide, so this returns every class in
+   * one flat list rather than requiring a batch/department picker like
+   * Admin's lookup/classes does.
    */
   async lookupAllClasses() {
-    const classes = await this.prisma.classes.findMany({ select: { id: true } });
+    const classes = await this.prisma.classes.findMany({
+      select: { id: true },
+    });
     return classes.map((c) => c.id);
   }
 
@@ -1509,47 +1747,67 @@ export class AnnouncementsService {
   ) {
     const classMappings = (announcement.announcement_class_mapping ?? []) as {
       class_id: number;
+      classes: { section: string; departments: { code: string } } | null;
     }[];
     const roleMappings = (announcement.announcement_role_mapping ?? []) as {
       role_id: number;
+      roles: { name: string } | null;
     }[];
-    const { announcement_class_mapping, announcement_role_mapping, users, ...rest } =
-      announcement;
+
+    const poster = announcement.users as
+      | {
+          email: string;
+          roles: { name: string } | null;
+          faculty: {
+            first_name: string;
+            last_name: string;
+            designation: string;
+            departments: { code: string } | null;
+          } | null;
+        }
+      | null
+      | undefined;
+
+    // Built via omit rather than destructure-to-omit so the excluded keys
+    // don't trip no-unused-vars.
+    const rest = { ...announcement };
+    delete rest.announcement_class_mapping;
+    delete rest.announcement_role_mapping;
+    delete rest.users;
+
     const fileKey = announcement.file_key as string | null | undefined;
+
     return {
       ...rest,
+      // Derived fresh from file_key on every read rather than trusting a
+      // stored file_url — avoids ever serving an expired signed URL.
       file_url: fileKey ? this.storage.getPublicUrl(fileKey) : null,
       class_ids: classMappings.map((m) => m.class_id),
+      class_labels: classMappings
+        .map((m) =>
+          m.classes
+            ? `${m.classes.departments.code}-${m.classes.section}`
+            : null,
+        )
+        .filter((label): label is string => label != null),
       role_ids: roleMappings.map((m) => m.role_id),
+      role_labels: roleMappings
+        .map((m) => m.roles?.name)
+        .filter((name): name is string => name != null),
       // Only present when the caller's query included the `users` relation
       // (findAll/findOne, for the student-facing read views) — every other
-      // call site (create/update/approve/...) doesn't fetch it, so this is
-      // undefined there and JSON.stringify drops it, same as today.
-      posted_by: this.resolvePostedBy(
-        users as PosterRelation | null | undefined,
-      ),
-    };
-  }
-
-  /**
-   * first_name/last_name (via faculty) is the real display name for any
-   * staff poster (Principal/HoD/Faculty are all faculty rows — see
-   * MeLeavesListService.approved_by_hod for the identical email-fallback
-   * pattern used everywhere else in this codebase for a user with no
-   * better name source). role comes from roles.name, the same functional
-   * role string the JWT itself carries (admin/principal/hod/faculty/...).
-   */
-  private resolvePostedBy(
-    poster: PosterRelation | null | undefined,
-  ): { name: string; role: string; designation: string | null } | undefined {
-    if (!poster) return undefined;
-    const name = poster.faculty
-      ? `${poster.faculty.first_name} ${poster.faculty.last_name}`
-      : poster.email;
-    return {
-      name,
-      role: poster.roles.name,
-      designation: poster.faculty?.designation ?? null,
+      // call site (create/update/...) doesn't fetch it, so this is
+      // undefined there and JSON.stringify drops it.
+      posted_by: poster
+        ? {
+            name: poster.faculty
+              ? `${poster.faculty.first_name} ${poster.faculty.last_name}`
+              : poster.email,
+            role: poster.roles?.name ?? 'unknown',
+            designation: poster.faculty?.designation ?? null,
+            department: poster.faculty?.departments?.code ?? null,
+          }
+        : undefined,
     };
   }
 

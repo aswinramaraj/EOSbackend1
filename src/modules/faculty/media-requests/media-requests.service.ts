@@ -11,6 +11,7 @@ import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { Prisma } from '../../../../generated/prisma/client';
+import { StorageService } from 'src/common/storage/storage.service';
 import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { CreateMediaRequestDto } from './dto/create-media-request.dto';
 import { UpdateMediaRequestDto } from './dto/update-media-request.dto';
@@ -28,6 +29,7 @@ const MEDIA_REQUEST_SELECT = {
   contact_number: true,
   media_types: true,
   poster_needed_by: true,
+  requested_by_user_id: true,
   faculty: {
     select: { id: true, first_name: true, last_name: true, designation: true },
   },
@@ -68,9 +70,11 @@ interface MediaRequestRow {
   contact_number: string | null;
   media_types: string[];
   poster_needed_by: Date | null;
-  // requested_by_faculty_id (schema.prisma) is nullable — every request
-  // created through this service sets it (faculty-only endpoint), but the
-  // column itself allows null, so the relation must be typed that way too.
+  requested_by_user_id: number;
+  // requested_by_faculty_id (schema.prisma) is nullable — a Secretary-
+  // raised request has no faculty row at all, so this relation must be
+  // typed as nullable (it was already nullable before Secretary existed
+  // here too, since the column itself allows null).
   faculty: {
     id: number;
     first_name: string;
@@ -134,7 +138,27 @@ export class MediaRequestsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly storage: StorageService,
   ) {}
+
+  /**
+   * POST /media-requests/attachments — real file upload (logos/guest
+   * photo/reference poster), same StorageService (Supabase Storage,
+   * public bucket) already used by announcements attachments. Returns a
+   * public URL the caller then sends back as `media_file_url` on create.
+   * Uploaded ahead of create (not tied to an id yet) — same two-step
+   * shape as announcements' own attachment upload.
+   */
+  async uploadAttachment(file: Express.Multer.File) {
+    const { key } = await this.storage.upload(
+      'media-requests',
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+    );
+    const url = this.storage.getPublicUrl(key);
+    return { file_key: key, file_name: file.originalname, url };
+  }
 
   /**
    * POST /media-requests (Faculty / Secretary).
@@ -161,6 +185,16 @@ export class MediaRequestsService {
       }
     }
 
+    // event_date is a @db.Date column, but Prisma's client still requires a
+    // full ISO-8601 DateTime string, not a bare "YYYY-MM-DD" date — a plain
+    // date string (which @IsDateString on the DTO happily accepts) throws
+    // "premature end of input" at the Prisma layer. Normalize here rather
+    // than relaxing the DTO validator, since @IsDateString correctly
+    // documents what the API accepts from callers.
+    const eventDate = dto.event_date
+      ? new Date(dto.event_date.includes('T') ? dto.event_date : `${dto.event_date}T00:00:00.000Z`)
+      : undefined;
+
     const request = await this.prisma.media_requests.create({
       data: {
         requested_by_faculty_id: faculty?.id,
@@ -168,12 +202,13 @@ export class MediaRequestsService {
         description: dto.description,
         status: 'pending',
         event_name: dto.event_name,
-        event_date: dto.event_date ? new Date(dto.event_date) : undefined,
+        event_date: eventDate,
         venue_id: dto.venue_id,
         coordinator_name: dto.coordinator_name,
         contact_number: dto.contact_number,
         media_types: dto.media_types ?? [],
         poster_needed_by: dto.poster_needed_by ? new Date(dto.poster_needed_by) : undefined,
+        media_file_url: dto.media_file_url,
       },
       select: MEDIA_REQUEST_SELECT,
     });
@@ -181,7 +216,7 @@ export class MediaRequestsService {
     await this.logStatus(request.id, 'pending');
 
     this.logger.log(
-      `Media request created: id=${request.id} requested_by_user=${userId}`,
+      `Media request created: id=${request.id} requested_by_user=${userId} role=${currentUser.role}`,
     );
     return toResponse(request);
   }
@@ -220,13 +255,13 @@ export class MediaRequestsService {
       throw new NotFoundException('Media request not found');
     }
 
-    if (currentUser.role === ROLES.FACULTY) {
-      const faculty = await this.resolveFacultyByUserId(currentUser.sub);
-      if (request.faculty?.id !== faculty.id) {
-        throw new ForbiddenException(
-          'You may only view your own media requests',
-        );
-      }
+    if (
+      (currentUser.role === ROLES.FACULTY || currentUser.role === ROLES.SECRETARY) &&
+      request.requested_by_user_id !== currentUser.sub
+    ) {
+      throw new ForbiddenException(
+        'You may only view your own media requests',
+      );
     }
 
     return toResponse(request);
@@ -274,7 +309,7 @@ export class MediaRequestsService {
 
     this.logger.log(`Media request ${id} updated to status=${dto.status}`);
 
-    await this.notifications.create({
+    await this.notifications.notify({
       user_id: existing.requested_by_user_id,
       title: `Media request ${dto.status}`,
       message: `Your media request has been ${dto.status}.`,
@@ -283,8 +318,8 @@ export class MediaRequestsService {
     return toResponse(request);
   }
 
-  /** DELETE /media-requests/:id (Faculty / Secretary — own request, only while still 'pending'). */
-  async remove(id: number, userId: number) {
+  /** DELETE /media-requests/:id (Faculty/Secretary — own request, only while still 'pending'). */
+  async remove(id: number, user: JwtPayload) {
     const existing = await this.prisma.media_requests.findUnique({
       where: { id },
     });
@@ -292,7 +327,7 @@ export class MediaRequestsService {
       throw new NotFoundException('Media request not found');
     }
 
-    if (existing.requested_by_user_id !== userId) {
+    if (existing.requested_by_user_id !== user.sub) {
       throw new ForbiddenException(
         'You may only withdraw your own media requests',
       );

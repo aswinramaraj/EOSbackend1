@@ -306,10 +306,17 @@ export class ProductRequestsService {
       `Product request ${id} reviewed: decision=${dto.decision} by user=${reviewerId}`,
     );
 
-    await this.notifications.create({
+    // Real push (not just a DB-only row) — an approval/rejection decision
+    // is exactly the kind of "sensible important action" that should reach
+    // the requester's device, matching the same notify() pattern already
+    // used for faculty leave/OD approvals and student outpass decisions.
+    await this.notifications.notify({
       user_id: existing.requested_by_user_id,
       title: `Product request ${dto.decision}`,
       message: `Your product request "${existing.title}" has been ${dto.decision}.`,
+      type: dto.decision === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+      related_entity_type: 'secretary_product_request',
+      related_entity_id: existing.id,
     });
 
     return toResponse(request);

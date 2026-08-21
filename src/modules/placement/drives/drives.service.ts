@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -29,6 +30,46 @@ function today(): Date {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
+
+interface DriveExtras {
+  mode: string | null;
+  backlogs_allowed: string | null;
+  eligible_department_codes: string | null;
+  round1_label: string | null;
+  round2_label: string | null;
+  round3_label: string | null;
+  result_declaration_note: string | null;
+}
+
+const NO_DRIVE_EXTRAS: DriveExtras = {
+  mode: null,
+  backlogs_allowed: null,
+  eligible_department_codes: null,
+  round1_label: null,
+  round2_label: null,
+  round3_label: null,
+  result_declaration_note: null,
+};
+
+interface OfferExtras {
+  joining_date: Date | null;
+  work_location: string | null;
+}
+
+const NO_OFFER_EXTRAS: OfferExtras = {
+  joining_date: null,
+  work_location: null,
+};
+
+interface PlacementFlags {
+  placement_eligible: boolean | null;
+  placement_opted_out: boolean;
+}
+
+const NO_PLACEMENT_FLAGS: PlacementFlags = {
+  placement_eligible: null,
+  placement_opted_out: false,
+};
 
 @Injectable()
 export class DrivesService {
@@ -55,7 +96,7 @@ export class DrivesService {
       scheduledDate,
     );
 
-    return this.prisma.placement_drives.create({
+    const created = await this.prisma.placement_drives.create({
       data: {
         company_id: dto.company_id,
         scheduled_date: scheduledDate,
@@ -75,6 +116,10 @@ export class DrivesService {
       },
       include: { companies: true },
     });
+
+    await this.writeDriveExtras(created.id, dto);
+    const extras = await this.loadDriveExtras(created.id);
+    return { ...created, ...extras };
   }
 
   async findAll(dto: ListDrivesQueryDto) {
@@ -100,8 +145,102 @@ export class DrivesService {
     return paginate(data, total, dto);
   }
 
+  // One row per drive with real, computed round-progress stats — powers the
+  // Placement Drives list. Unpaginated (small real dataset) so the frontend
+  // can search/sort/paginate client-side, same as the students/companies
+  // report endpoints.
+  async getDriveReport() {
+    const [drives, extras] = await Promise.all([
+      this.prisma.placement_drives.findMany({
+        orderBy: { scheduled_date: 'desc' },
+        include: {
+          companies: { select: { name: true } },
+          student_drive_applications: {
+            select: { status: true, last_cleared_round: true },
+          },
+        },
+      }),
+      this.loadAllDriveExtras(),
+    ]);
+
+    const now = today();
+    return drives.map((d) => {
+      const apps = d.student_drive_applications;
+      const applied = apps.length;
+      const shortlisted = apps.filter(
+        (a) => (a.last_cleared_round ?? 0) >= 1 || a.status === 'placed',
+      ).length;
+      const selected = apps.filter((a) => a.status === 'placed').length;
+      const conversionPct =
+        applied > 0 ? Math.round((selected / applied) * 100) : 0;
+      const displayStatus =
+        d.status === 'completed'
+          ? 'completed'
+          : d.status === 'cancelled'
+            ? 'cancelled'
+            : d.scheduled_date > now
+              ? 'upcoming'
+              : 'ongoing';
+      const rowExtras = extras.get(d.id) ?? NO_DRIVE_EXTRAS;
+
+      return {
+        id: d.id,
+        company_name: d.companies.name,
+        job_role: d.job_role,
+        scheduled_date: d.scheduled_date,
+        package_lpa: d.package_lpa != null ? Number(d.package_lpa) : null,
+        mode: rowExtras.mode,
+        applied,
+        shortlisted,
+        selected,
+        conversion_pct: conversionPct,
+        status: d.status,
+        display_status: displayStatus,
+      };
+    });
+  }
+
   async findOne(id: number) {
-    return this.findOrThrow(id);
+    const drive = await this.prisma.placement_drives.findUnique({
+      where: { id },
+      include: {
+        companies: true,
+        student_drive_applications: {
+          select: { status: true, last_cleared_round: true },
+        },
+      },
+    });
+    if (!drive) throw new NotFoundException(`Drive ${id} not found`);
+
+    const { student_drive_applications: apps, ...driveFields } = drive;
+    const applied = apps.length;
+    const shortlisted = apps.filter(
+      (a) => (a.last_cleared_round ?? 0) >= 1 || a.status === 'placed',
+    ).length;
+    const interviewed = apps.filter(
+      (a) => (a.last_cleared_round ?? 0) >= 2 || a.status === 'placed',
+    ).length;
+    const selected = apps.filter((a) => a.status === 'placed').length;
+    const now = today();
+    const displayStatus =
+      driveFields.status === 'completed'
+        ? 'completed'
+        : driveFields.status === 'cancelled'
+          ? 'cancelled'
+          : driveFields.scheduled_date > now
+            ? 'upcoming'
+            : 'ongoing';
+    const extras = await this.loadDriveExtras(id);
+
+    return {
+      ...driveFields,
+      applied_count: applied,
+      shortlisted_count: shortlisted,
+      interviewed_count: interviewed,
+      selected_count: selected,
+      display_status: displayStatus,
+      ...extras,
+    };
   }
 
   async update(id: number, dto: UpdateDriveDto) {
@@ -121,7 +260,7 @@ export class DrivesService {
       scheduledDate,
     );
 
-    return this.prisma.placement_drives.update({
+    const updated = await this.prisma.placement_drives.update({
       where: { id },
       data: {
         company_id: dto.company_id,
@@ -142,6 +281,10 @@ export class DrivesService {
       },
       include: { companies: true },
     });
+
+    await this.writeDriveExtras(id, dto);
+    const extras = await this.loadDriveExtras(id);
+    return { ...updated, ...extras };
   }
 
   async remove(id: number) {
@@ -323,10 +466,28 @@ export class DrivesService {
         ...(roundReached !== undefined
           ? { last_cleared_round: roundReached }
           : {}),
+        offer_response: dto.offer_response,
+        offered_package: dto.offered_package_lpa,
         updated_by_user_id: user.sub,
         updated_at: new Date(),
       },
     });
+
+    // joining_date/work_location are real once query.md #16 runs — read/
+    // written via `$queryRaw` since they predate a `prisma db pull`; this
+    // silently no-ops (not thrown) when the columns don't exist yet.
+    if (dto.joining_date !== undefined || dto.work_location !== undefined) {
+      try {
+        await this.prisma.$executeRaw`
+          UPDATE student_drive_applications SET
+            joining_date = COALESCE(${dto.joining_date ?? null}::date, joining_date),
+            work_location = COALESCE(${dto.work_location ?? null}, work_location)
+          WHERE id = ${application.id}
+        `;
+      } catch {
+        // columns don't exist yet — query.md #16 not run; silently degrade.
+      }
+    }
 
     // dto.status is optional (offer_response/offered_package_lpa can be
     // updated on their own, e.g. from the Offers page) - only notify when a
@@ -405,20 +566,23 @@ export class DrivesService {
    * memory, instead of one request per student.
    */
   async getStudentReport(batchId?: number) {
-    const [students, applications] = await Promise.all([
+    const [students, applications, placementFlags] = await Promise.all([
       this.prisma.students.findMany({
         where: batchId ? { batch_id: batchId } : undefined,
         select: {
           id: true,
           student_id_no: true,
           roll_no: true,
+          register_no: true,
           classes: {
             select: {
               section: true,
+              current_semester: true,
               departments: { select: { name: true, code: true } },
             },
           },
           soa_applications: { select: { first_name: true, last_name: true } },
+          users: { select: { email: true } },
         },
         orderBy: { student_id_no: 'asc' },
       }),
@@ -428,11 +592,13 @@ export class DrivesService {
           status: true,
           last_cleared_round: true,
           updated_at: true,
+          offer_response: true,
           placement_drives: {
             select: { companies: { select: { name: true } } },
           },
         },
       }),
+      this.loadAllPlacementFlags(),
     ]);
 
     const appsByStudent = new Map<number, typeof applications>();
@@ -451,19 +617,36 @@ export class DrivesService {
         ? apps.reduce((a, b) => (progressRank(b) > progressRank(a) ? b : a))
         : null;
       const soa = s.soa_applications;
+      const offersCount = apps.filter(
+        (a) => a.status === 'placed' || a.offer_response != null,
+      ).length;
+      const flags = placementFlags.get(s.id) ?? NO_PLACEMENT_FLAGS;
 
       return {
         id: s.id,
         student_id_no: s.student_id_no,
         roll_no: s.roll_no,
-        name: soa
-          ? [soa.first_name, soa.last_name].filter(Boolean).join(' ')
-          : null,
+        register_no: s.register_no,
+        placement_eligible: flags.placement_eligible,
+        placement_opted_out: flags.placement_opted_out,
+        name:
+          soa?.first_name || soa?.last_name
+            ? [soa?.first_name, soa?.last_name].filter(Boolean).join(' ')
+            : s.users.email,
         class_label: s.classes
           ? `${s.classes.departments.code} - ${s.classes.section}`
           : null,
         department_name: s.classes?.departments.name ?? null,
+        department_code: s.classes?.departments.code ?? null,
+        // III/IV year etc — derived from the real timetable semester
+        // (1-2 → Year I ... 7-8 → Year IV), null if the student has no
+        // class assignment yet.
+        year:
+          s.classes?.current_semester != null
+            ? Math.ceil(s.classes.current_semester / 2)
+            : null,
         drives_applied: apps.length,
+        offers_count: offersCount,
         status: best?.status ?? null,
         last_cleared_round: best?.last_cleared_round ?? null,
         company_name: best?.placement_drives.companies.name ?? null,
@@ -600,7 +783,14 @@ export class DrivesService {
     const weekFromNow = new Date(today);
     weekFromNow.setDate(weekFromNow.getDate() + 7);
 
-    const [companies, drives, applications, students] = await Promise.all([
+    const [
+      companies,
+      drives,
+      applications,
+      students,
+      batches,
+      allStudentsForTrend,
+    ] = await Promise.all([
       this.prisma.companies.findMany({ select: { created_at: true } }),
       this.prisma.placement_drives.findMany({
         select: {
@@ -620,6 +810,8 @@ export class DrivesService {
           status: true,
           updated_at: true,
           offered_package: true,
+          last_cleared_round: true,
+          offer_response: true,
         },
       }),
       this.prisma.students.findMany({
@@ -634,6 +826,14 @@ export class DrivesService {
           },
         },
       }),
+      // Unscoped by batchId (unlike `students` above) — six-year trend
+      // needs every batch's own cohort regardless of the report filter.
+      this.prisma.batches.findMany({
+        orderBy: { start_year: 'desc' },
+        take: 6,
+        select: { id: true, name: true, start_year: true, end_year: true },
+      }),
+      this.prisma.students.findMany({ select: { id: true, batch_id: true } }),
     ]);
 
     const driveById = new Map(drives.map((d) => [d.id, d]));
@@ -798,6 +998,169 @@ export class DrivesService {
         c.created_at.getMonth() === now.getMonth(),
     ).length;
 
+    // Placement funnel — Eligible → Applied → Shortlisted → Interviewed →
+    // Offers → Placed. Shortlisted/Interviewed use `last_cleared_round`
+    // (set independently of a later rejection) rather than `status`, which
+    // would undercount anyone rejected partway through the rounds.
+    const appliedCount = applications.length;
+    const shortlistedCount = applications.filter(
+      (a) => (a.last_cleared_round ?? 0) >= 1,
+    ).length;
+    const interviewedCount = applications.filter(
+      (a) => (a.last_cleared_round ?? 0) >= 2,
+    ).length;
+    const offersCount = applications.filter(
+      (a) => a.status === 'placed' || a.offer_response != null,
+    ).length;
+    const acceptedOffersCount = applications.filter(
+      (a) => a.offer_response === 'accepted',
+    ).length;
+    const funnel = {
+      eligible: eligibleStudentsTotal,
+      applied: appliedCount,
+      shortlisted: shortlistedCount,
+      interviewed: interviewedCount,
+      offers: offersCount,
+      placed: placedWithinScope,
+    };
+
+    // Package bands — accepted-offer packages bucketed into fixed ranges.
+    const PACKAGE_BANDS = [
+      { label: '0–6 LPA', min: 0, max: 6 },
+      { label: '6–10 LPA', min: 6, max: 10 },
+      { label: '10–20 LPA', min: 10, max: 20 },
+      { label: '20 LPA+', min: 20, max: Infinity },
+    ];
+    const packageBands = PACKAGE_BANDS.map((band) => ({
+      label: band.label,
+      count: packages.filter((p) => p >= band.min && p < band.max).length,
+    }));
+
+    // Six-year trend — real placement rate per batch cohort (most recent 6
+    // batches), independent of the optional `batchId` report filter above.
+    const studentIdsByBatch = new Map<number, number[]>();
+    for (const s of allStudentsForTrend) {
+      const list = studentIdsByBatch.get(s.batch_id) ?? [];
+      list.push(s.id);
+      studentIdsByBatch.set(s.batch_id, list);
+    }
+    const sixYearTrend = batches
+      .slice()
+      .sort((a, b) => a.start_year - b.start_year)
+      .map((b) => {
+        const ids = studentIdsByBatch.get(b.id) ?? [];
+        const placedInBatch = ids.filter((id) =>
+          placedStudentIds.has(id),
+        ).length;
+        return {
+          cycle: `${b.start_year}-${String(b.end_year).slice(-2)}`,
+          rate: ids.length
+            ? Math.round((placedInBatch / ids.length) * 1000) / 10
+            : 0,
+        };
+      });
+
+    // Top recruiters — companies with the most placed offers on record.
+    const recruiterMap = new Map<
+      string,
+      { offers: number; packages: number[] }
+    >();
+    for (const [driveId, apps] of appsByDrive) {
+      const drive = driveById.get(driveId);
+      if (!drive) continue;
+      const placedApps = apps.filter((a) => a.status === 'placed');
+      if (placedApps.length === 0) continue;
+      const name = drive.is_disclosed ? drive.companies.name : 'Undisclosed';
+      const entry = recruiterMap.get(name) ?? { offers: 0, packages: [] };
+      entry.offers += placedApps.length;
+      const drivePackageLpa = drive.package_lpa
+        ? Number(drive.package_lpa)
+        : undefined;
+      for (const p of placedApps) {
+        const effectivePackage = p.offered_package
+          ? Number(p.offered_package)
+          : drivePackageLpa;
+        if (effectivePackage !== undefined)
+          entry.packages.push(effectivePackage);
+      }
+      recruiterMap.set(name, entry);
+    }
+    const topRecruiters = Array.from(recruiterMap.entries())
+      .map(([company, v]) => ({
+        company,
+        offers: v.offers,
+        avgPackageLpa: v.packages.length
+          ? Math.round(
+              (v.packages.reduce((sum, p) => sum + p, 0) / v.packages.length) *
+                10,
+            ) / 10
+          : 0,
+      }))
+      .sort((a, b) => b.offers - a.offers)
+      .slice(0, 6);
+
+    // Needs attention — real, threshold-triggered flags computed from the
+    // same data above, not a fixed illustrative list.
+    const attentionFlags: {
+      title: string;
+      description: string;
+      href: string;
+    }[] = [];
+
+    const pendingOffers = applications.filter(
+      (a) => a.offer_response === 'pending',
+    ).length;
+    if (pendingOffers > 0) {
+      attentionFlags.push({
+        title: `${pendingOffers} offer${pendingOffers === 1 ? '' : 's'} awaiting a response`,
+        description: 'Students yet to accept or decline',
+        href: '/placement/offers',
+      });
+    }
+
+    const unscreenedCount = appliedCount - shortlistedCount;
+    if (unscreenedCount > 0) {
+      attentionFlags.push({
+        title: `${unscreenedCount} application${unscreenedCount === 1 ? '' : 's'} not yet screened`,
+        description: 'Never progressed past the initial application',
+        href: '/placement/rounds',
+      });
+    }
+
+    const driveWithNoShortlist = activeDrives
+      .filter((d) => {
+        const apps = appsByDrive.get(d.id) ?? [];
+        return (
+          apps.length > 0 &&
+          apps.every((a) => (a.last_cleared_round ?? 0) === 0)
+        );
+      })
+      .sort(
+        (a, b) => a.scheduled_date.getTime() - b.scheduled_date.getTime(),
+      )[0];
+    if (driveWithNoShortlist) {
+      const name = driveWithNoShortlist.is_disclosed
+        ? driveWithNoShortlist.companies.name
+        : 'An undisclosed company';
+      attentionFlags.push({
+        title: `${name} drive has no shortlist yet`,
+        description: `Drive scheduled ${driveWithNoShortlist.scheduled_date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`,
+        href: `/placement/rounds?drive=${driveWithNoShortlist.id}`,
+      });
+    }
+
+    const appliedStudentIds = new Set(applications.map((a) => a.student_id));
+    const zeroApplicationCount = students.filter(
+      (s) => !appliedStudentIds.has(s.id),
+    ).length;
+    if (zeroApplicationCount > 0) {
+      attentionFlags.push({
+        title: `${zeroApplicationCount} registered student${zeroApplicationCount === 1 ? '' : 's'} with zero applications`,
+        description: 'Have not applied to any drive this cycle',
+        href: '/placement/students',
+      });
+    }
+
     return {
       totalCompanies: companies.length,
       companiesAddedThisMonth,
@@ -806,6 +1169,7 @@ export class DrivesService {
       studentsInProcess,
       studentsInProcessDriveCount,
       studentsPlaced,
+      acceptedOffersCount,
       highestPackageLpa,
       averagePackageLpa,
       offersByMonth,
@@ -815,6 +1179,11 @@ export class DrivesService {
       classWise,
       departmentWise,
       placementRateByDepartment,
+      funnel,
+      packageBands,
+      sixYearTrend,
+      topRecruiters,
+      attentionFlags,
     };
   }
 
@@ -908,54 +1277,97 @@ export class DrivesService {
   }
 
   /**
+   * `audit_logs` has no natural entity for a report export (it's an action,
+   * not a row mutation) — entity_id is a fixed 0 sentinel and the real
+   * context (batch/view/format) lives in new_value instead. This is the
+   * table's first writer; nothing else reads or writes it yet, so 0 can't
+   * collide with an assumption some other caller already relies on.
+   */
+  async logReportExport(
+    userId: number,
+    action: 'export_class_report' | 'export_student_report',
+    params: Record<string, unknown>,
+  ) {
+    await this.prisma.audit_logs.create({
+      data: {
+        entity_type: 'placement_report',
+        entity_id: 0,
+        action,
+        performed_by_user_id: userId,
+        new_value: params as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  async countReportExportsThisMonth(): Promise<number> {
+    const now = new Date();
+    const startOfMonth = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    );
+    return this.prisma.audit_logs.count({
+      where: {
+        entity_type: 'placement_report',
+        performed_at: { gte: startOfMonth },
+      },
+    });
+  }
+
+  /**
    * Every "placed" application across every drive, flattened for the Offers
    * page — one query instead of /drives + one /applications call per drive.
    */
   async getOffers() {
-    const applications = await this.prisma.student_drive_applications.findMany({
-      where: { status: 'placed' },
-      include: {
-        students: {
-          select: {
-            id: true,
-            student_id_no: true,
-            roll_no: true,
-            classes: {
-              select: {
-                section: true,
-                departments: { select: { name: true, code: true } },
+    const [applications, extras] = await Promise.all([
+      this.prisma.student_drive_applications.findMany({
+        where: { status: 'placed' },
+        include: {
+          students: {
+            select: {
+              id: true,
+              student_id_no: true,
+              roll_no: true,
+              register_no: true,
+              classes: {
+                select: {
+                  section: true,
+                  departments: { select: { name: true, code: true } },
+                },
+              },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
               },
             },
-            soa_applications: {
-              select: { first_name: true, last_name: true },
+          },
+          placement_drives: {
+            select: {
+              id: true,
+              job_role: true,
+              package_lpa: true,
+              companies: { select: { name: true } },
             },
           },
         },
-        placement_drives: {
-          select: {
-            id: true,
-            job_role: true,
-            package_lpa: true,
-            companies: { select: { name: true } },
-          },
-        },
-      },
-      orderBy: { updated_at: 'desc' },
-    });
+        orderBy: { updated_at: 'desc' },
+      }),
+      this.loadAllOfferExtras(),
+    ]);
 
     return applications.map((a) => {
       const soa = a.students.soa_applications;
       const classes = a.students.classes;
+      const rowExtras = extras.get(a.id) ?? NO_OFFER_EXTRAS;
       return {
         id: a.id,
         drive_id: a.drive_id,
         student_id: a.student_id,
         student_id_no: a.students.student_id_no,
         roll_no: a.students.roll_no,
+        register_no: a.students.register_no,
         student_name: soa
           ? [soa.first_name, soa.last_name].filter(Boolean).join(' ')
           : null,
         department_name: classes?.departments.name ?? null,
+        department_code: classes?.departments.code ?? null,
         class_label: classes
           ? `${classes.departments.code} - ${classes.section}`
           : null,
@@ -965,8 +1377,92 @@ export class DrivesService {
         // DB column is `offered_package` — API field stays *_lpa for clarity.
         offered_package_lpa: a.offered_package,
         offer_response: a.offer_response,
+        released_at: a.updated_at,
+        joining_date: rowExtras.joining_date,
+        work_location: rowExtras.work_location,
       };
     });
+  }
+
+  /**
+   * `joining_date`/`work_location` are real once query.md #16 runs
+   * (`student_drive_applications` gets the columns) — read via `$queryRaw`
+   * since they predate a `prisma db pull`. Degrades to `NO_OFFER_EXTRAS`
+   * when the columns don't exist yet.
+   */
+  private async loadAllOfferExtras(): Promise<Map<number, OfferExtras>> {
+    try {
+      const rows = await this.prisma.$queryRaw<
+        ({ id: number } & OfferExtras)[]
+      >`
+        SELECT id, joining_date, work_location FROM student_drive_applications
+      `;
+      return new Map(rows.map((r) => [r.id, r]));
+    } catch {
+      return new Map();
+    }
+  }
+
+  /**
+   * `placement_eligible`/`placement_opted_out` are real once query.md #17
+   * runs (`students` gets the columns) — read via `$queryRaw` since they
+   * predate a `prisma db pull`. Degrades to `NO_PLACEMENT_FLAGS` (both
+   * "not yet assessed") when the columns don't exist yet.
+   */
+  private async loadAllPlacementFlags(): Promise<Map<number, PlacementFlags>> {
+    try {
+      const rows = await this.prisma.$queryRaw<
+        ({ id: number } & PlacementFlags)[]
+      >`
+        SELECT id, placement_eligible, placement_opted_out FROM students
+      `;
+      return new Map(rows.map((r) => [r.id, r]));
+    } catch {
+      return new Map();
+    }
+  }
+
+  /**
+   * PATCH /drives/students/:id/placement-status — Placement Officer
+   * explicitly records eligibility/opt-out (neither is honestly computable
+   * from existing data, see query.md #17). Throws a clear, typed error
+   * instead of silently no-op'ing when the columns don't exist yet.
+   */
+  async updatePlacementStatus(
+    studentId: number,
+    dto: { placement_eligible?: boolean; placement_opted_out?: boolean },
+  ) {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: `Student ${studentId} not found`,
+        errorCode: 'NOT_FOUND',
+      });
+    }
+
+    try {
+      if (dto.placement_eligible !== undefined) {
+        await this.prisma.$executeRaw`
+          UPDATE students SET placement_eligible = ${dto.placement_eligible} WHERE id = ${studentId}
+        `;
+      }
+      if (dto.placement_opted_out !== undefined) {
+        await this.prisma.$executeRaw`
+          UPDATE students SET placement_opted_out = ${dto.placement_opted_out} WHERE id = ${studentId}
+        `;
+      }
+    } catch {
+      throw new UnprocessableEntityException({
+        message:
+          'Placement eligibility/opt-out tracking is not enabled yet — see query.md #17.',
+        errorCode: 'FEATURE_NOT_ENABLED',
+      });
+    }
+
+    const flags = await this.loadAllPlacementFlags();
+    return { id: studentId, ...(flags.get(studentId) ?? NO_PLACEMENT_FLAGS) };
   }
 
   // ───────────────────────────── Student-facing history ─────────────────────────────
@@ -1077,7 +1573,13 @@ export class DrivesService {
   async getUpcomingDrivesForFaculty() {
     const drives = await this.prisma.placement_drives.findMany({
       where: { status: 'scheduled' },
-      include: { companies: true },
+      include: {
+        companies: true,
+        // Real registered-applicant count — the same _count pattern
+        // DrivesService.findAll already uses for the admin listing, added
+        // here too instead of leaving "— registered" on the faculty view.
+        _count: { select: { student_drive_applications: true } },
+      },
       orderBy: { scheduled_date: 'asc' },
     });
 
@@ -1092,6 +1594,13 @@ export class DrivesService {
       disclosed_reveal_date: drive.is_disclosed
         ? null
         : drive.disclosed_reveal_date,
+      // Real columns on placement_drives, previously fetched but dropped
+      // when shaping this response.
+      job_role: drive.job_role,
+      venue: drive.venue,
+      status: drive.status,
+      eligibility_cgpa: drive.eligibility_cgpa === null ? null : Number(drive.eligibility_cgpa),
+      registered_count: drive._count.student_drive_applications,
     }));
   }
 
@@ -1132,6 +1641,57 @@ export class DrivesService {
       name: this.resolveStudentDisplayName(s),
       section: s.classes?.section ?? null,
       department_name: s.classes?.departments.name ?? null,
+    }));
+  }
+
+  /**
+   * GET /me/upcoming-drives/:driveId/applications (Faculty only) — real
+   * per-mentee application status/round for a specific drive, via
+   * student_drive_applications (unique on drive_id+student_id). Previously
+   * the "View student list" expander under each drive had no data source
+   * at all for this; the real columns (status, last_cleared_round) exist
+   * per application — there is no institution-wide named-round schema
+   * (no "Aptitude test"/"Technical round 1" labels anywhere in schema.prisma),
+   * only a plain numeric last_cleared_round, so this returns that real
+   * number rather than an invented round name.
+   */
+  async getDriveApplicationsForMentor(driveId: number, userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mentorClasses = await this.prisma.class_mentors.findMany({
+      where: { faculty_id: faculty.id },
+      select: { class_id: true },
+    });
+    const classIds = mentorClasses.map((m) => m.class_id);
+    if (classIds.length === 0) return [];
+
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: { drive_id: driveId, students: { class_id: { in: classIds } } },
+      select: {
+        status: true,
+        last_cleared_round: true,
+        offer_response: true,
+        offered_package: true,
+        students: {
+          select: {
+            id: true,
+            student_id_no: true,
+            soa_applications: { select: { first_name: true, last_name: true } },
+            users: { select: { email: true } },
+          },
+        },
+      },
+      orderBy: { students: { student_id_no: 'asc' } },
+    });
+
+    return applications.map((app) => ({
+      student_id: app.students.id,
+      student_id_no: app.students.student_id_no,
+      name: this.resolveStudentDisplayName(app.students),
+      status: app.status,
+      last_cleared_round: app.last_cleared_round,
+      offer_response: app.offer_response,
+      offered_package: app.offered_package === null ? null : Number(app.offered_package),
     }));
   }
 
@@ -1492,6 +2052,114 @@ export class DrivesService {
     });
   }
 
+  /**
+   * Full profile for one student — powers the Placement Drives student
+   * detail page (reachable from a drive's Student list). CGPA/backlogs
+   * stay off this shape entirely (no such column anywhere in the schema);
+   * `resume_url` is real, from `student_profiles`.
+   */
+  async getStudentProfile(studentId: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: {
+        id: true,
+        student_id_no: true,
+        register_no: true,
+        photo_url: true,
+        classes: {
+          select: {
+            current_semester: true,
+            departments: { select: { name: true, code: true } },
+          },
+        },
+        soa_applications: { select: { first_name: true, last_name: true } },
+        users: { select: { email: true } },
+        student_profiles: {
+          select: {
+            resume_url: true,
+            linkedin_url: true,
+            github_url: true,
+            leetcode_url: true,
+            hackerrank_url: true,
+            codeforces_url: true,
+          },
+        },
+      },
+    });
+    if (!student) throw new NotFoundException(`Student ${studentId} not found`);
+
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: { student_id: studentId },
+      include: { placement_drives: { include: { companies: true } } },
+      orderBy: { updated_at: 'desc' },
+    });
+
+    const progressRank = (a: (typeof applications)[number]) =>
+      a.status === 'placed' ? 100 : (a.last_cleared_round ?? 0);
+    const best = applications.length
+      ? applications.reduce((a, b) =>
+          progressRank(b) > progressRank(a) ? b : a,
+        )
+      : null;
+    const offersCount = applications.filter(
+      (a) => a.status === 'placed' || a.offer_response != null,
+    ).length;
+
+    const soa = student.soa_applications;
+    const companyLabel = (
+      drive: (typeof applications)[number]['placement_drives'],
+    ) => (drive.is_disclosed ? drive.companies.name : 'Undisclosed');
+
+    return {
+      id: student.id,
+      student_id_no: student.student_id_no,
+      register_no: student.register_no,
+      name:
+        soa?.first_name || soa?.last_name
+          ? [soa?.first_name, soa?.last_name].filter(Boolean).join(' ')
+          : student.users.email,
+      email: student.users.email,
+      department_name: student.classes?.departments.name ?? null,
+      department_code: student.classes?.departments.code ?? null,
+      year:
+        student.classes?.current_semester != null
+          ? Math.ceil(student.classes.current_semester / 2)
+          : null,
+      photo_url: student.photo_url,
+      resume_url: student.student_profiles?.resume_url ?? null,
+      linkedin_url: student.student_profiles?.linkedin_url ?? null,
+      github_url: student.student_profiles?.github_url ?? null,
+      leetcode_url: student.student_profiles?.leetcode_url ?? null,
+      hackerrank_url: student.student_profiles?.hackerrank_url ?? null,
+      codeforces_url: student.student_profiles?.codeforces_url ?? null,
+      drives_applied: applications.length,
+      offers_count: offersCount,
+      status: best?.status ?? null,
+      applications: applications.map((a) => ({
+        drive_id: a.drive_id,
+        company_name: companyLabel(a.placement_drives),
+        job_role: a.placement_drives.job_role,
+        status: a.status,
+        updated_at: a.updated_at,
+      })),
+      offers: applications
+        .filter((a) => a.status === 'placed' || a.offer_response != null)
+        .map((a) => ({
+          drive_id: a.drive_id,
+          company_name: companyLabel(a.placement_drives),
+          job_role: a.placement_drives.job_role,
+          offered_package:
+            a.offered_package != null
+              ? Number(a.offered_package)
+              : a.placement_drives.package_lpa != null
+                ? Number(a.placement_drives.package_lpa)
+                : null,
+          offer_response: a.offer_response,
+          updated_at: a.updated_at,
+        })),
+    };
+  }
+
   // ───────────────────────────── Automation ─────────────────────────────
 
   /** Auto-reveals undisclosed companies once their reveal date arrives, and posts the day-before announcement. */
@@ -1583,6 +2251,64 @@ export class DrivesService {
     });
     if (!drive) throw new NotFoundException(`Drive ${id} not found`);
     return drive;
+  }
+
+  /**
+   * `mode`/`backlogs_allowed`/`eligible_department_codes`/`round1_label`/
+   * `round2_label`/`round3_label`/`result_declaration_note` are real once
+   * query.md #14 runs (`placement_drives` gets the columns) — read/written
+   * via `$queryRaw` rather than the typed client since they predate a
+   * `prisma db pull`. Every read here degrades to `NO_DRIVE_EXTRAS`, and
+   * every write silently no-ops, when the columns don't exist yet.
+   */
+  private async loadDriveExtras(id: number): Promise<DriveExtras> {
+    try {
+      const rows = await this.prisma.$queryRaw<DriveExtras[]>`
+        SELECT mode, backlogs_allowed, eligible_department_codes, round1_label, round2_label, round3_label, result_declaration_note
+        FROM placement_drives WHERE id = ${id}
+      `;
+      return rows[0] ?? NO_DRIVE_EXTRAS;
+    } catch {
+      return NO_DRIVE_EXTRAS;
+    }
+  }
+
+  private async loadAllDriveExtras(): Promise<Map<number, DriveExtras>> {
+    try {
+      const rows = await this.prisma.$queryRaw<
+        ({ id: number } & DriveExtras)[]
+      >`
+        SELECT id, mode, backlogs_allowed, eligible_department_codes, round1_label, round2_label, round3_label, result_declaration_note
+        FROM placement_drives
+      `;
+      return new Map(rows.map((r) => [r.id, r]));
+    } catch {
+      return new Map();
+    }
+  }
+
+  private async writeDriveExtras(
+    id: number,
+    dto: Partial<DriveExtras>,
+  ): Promise<void> {
+    const hasAny = Object.values(dto).some((v) => v !== undefined);
+    if (!hasAny) return;
+
+    try {
+      await this.prisma.$executeRaw`
+        UPDATE placement_drives SET
+          mode = COALESCE(${dto.mode ?? null}, mode),
+          backlogs_allowed = COALESCE(${dto.backlogs_allowed ?? null}, backlogs_allowed),
+          eligible_department_codes = COALESCE(${dto.eligible_department_codes ?? null}, eligible_department_codes),
+          round1_label = COALESCE(${dto.round1_label ?? null}, round1_label),
+          round2_label = COALESCE(${dto.round2_label ?? null}, round2_label),
+          round3_label = COALESCE(${dto.round3_label ?? null}, round3_label),
+          result_declaration_note = COALESCE(${dto.result_declaration_note ?? null}, result_declaration_note)
+        WHERE id = ${id}
+      `;
+    } catch {
+      // columns don't exist yet — query.md #14 not run; silently degrade.
+    }
   }
 
   private async findApplicationOrThrow(driveId: number, studentId: number) {

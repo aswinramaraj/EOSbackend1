@@ -23,8 +23,21 @@ import { ListServiceRequestsQueryDto } from './dto/list-service-requests-query.d
 import { HodReviewServiceRequestDto } from './dto/hod-review-service-request.dto';
 import { FinanceReviewServiceRequestDto } from './dto/finance-review-service-request.dto';
 
-/** Mirrors PurchaseRequestsController exactly - see its own doc comment. */
-@Controller('me/service-requests')
+/**
+ * Mirrors PurchaseRequestsController exactly - see its own doc comment.
+ *
+ * Route moved off `me/service-requests` (was a real, silent collision —
+ * `secretary/service-requests`'s own controller registers the identical
+ * path and, being imported later in app.module.ts, was 100% shadowed and
+ * unreachable despite being a fully real, separate feature over its own
+ * `secretary_service_requests`/`secretary_service_request_items` tables
+ * — multi-item, single-decision, draft-first, distinct from this
+ * module's single-item HoD->Finance->Admin-convert pipeline over
+ * `service_indents`). No other frontend page calls this route (grepped
+ * the whole frontend repo), so renaming here is safe — this module's own
+ * real workflow is unaffected, it's just addressed differently now.
+ */
+@Controller('me/service-indent-requests')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ServiceRequestsController {
   constructor(private readonly serviceRequestsService: ServiceRequestsService) {}

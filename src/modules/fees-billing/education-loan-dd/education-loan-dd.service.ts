@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { CreateEducationLoanDdDto } from './dto/create-education-loan-dd.dto';
 import { UpdateEducationLoanDdDto } from './dto/update-education-loan-dd.dto';
 
@@ -15,7 +17,11 @@ import { UpdateEducationLoanDdDto } from './dto/update-education-loan-dd.dto';
 export class EducationLoanDdService {
   private readonly logger = new Logger(EducationLoanDdService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * GET /education-loan-dds
@@ -88,7 +94,11 @@ export class EducationLoanDdService {
    *  409 EDUCATION_LOAN_DD_REFERENCE_EXISTS   – dd_reference_number already used by another DD
    *  422 DD_AMOUNT_EXCEEDS_DUE_AMOUNT          – amount would exceed the demand's total_amount
    */
-  async create(demandMappingId: number, dto: CreateEducationLoanDdDto) {
+  async create(
+    demandMappingId: number,
+    dto: CreateEducationLoanDdDto,
+    performedByUserId: number,
+  ) {
     const mapping = await this.assertDemandMappingExists(demandMappingId);
 
     if (dto.received_by_user_id !== undefined) {
@@ -105,7 +115,7 @@ export class EducationLoanDdService {
     );
 
     try {
-      return await this.prisma.education_loan_dd.create({
+      const created = await this.prisma.education_loan_dd.create({
         data: {
           student_fee_demand_mapping_id: demandMappingId,
           dd_reference_number: dto.dd_reference_number,
@@ -115,6 +125,21 @@ export class EducationLoanDdService {
           received_by_user_id: dto.received_by_user_id,
         },
       });
+
+      await this.auditLog.record({
+        entity_type: 'education_loan_dd',
+        entity_id: created.id,
+        action: 'created',
+        performed_by_user_id: performedByUserId,
+        new_value: {
+          dd_reference_number: created.dd_reference_number,
+          bank_name: created.bank_name,
+          amount: created.amount.toString(),
+          status: created.status,
+        },
+      });
+
+      return created;
     } catch (err) {
       this.logger.error('DB error while creating education loan DD', err);
       throw new InternalServerErrorException({
@@ -136,7 +161,11 @@ export class EducationLoanDdService {
    *  409 EDUCATION_LOAN_DD_REFERENCE_EXISTS   – dd_reference_number already used by another DD
    *  422 DD_AMOUNT_EXCEEDS_DUE_AMOUNT          – amount would exceed the demand's total_amount
    */
-  async update(id: number, dto: UpdateEducationLoanDdDto) {
+  async update(
+    id: number,
+    dto: UpdateEducationLoanDdDto,
+    performedByUserId: number,
+  ) {
     const dd = await this.findById(id);
 
     if (!dd) {
@@ -173,7 +202,7 @@ export class EducationLoanDdService {
     }
 
     try {
-      return await this.prisma.education_loan_dd.update({
+      const updated = await this.prisma.education_loan_dd.update({
         where: { id },
         data: {
           dd_reference_number: dto.dd_reference_number,
@@ -184,6 +213,43 @@ export class EducationLoanDdService {
           received_by_user_id: dto.received_by_user_id,
         },
       });
+
+      await this.auditLog.record({
+        entity_type: 'education_loan_dd',
+        entity_id: updated.id,
+        action: 'updated',
+        performed_by_user_id: performedByUserId,
+        old_value: {
+          dd_reference_number: dd.dd_reference_number,
+          bank_name: dd.bank_name,
+          amount: dd.amount.toString(),
+          status: dd.status,
+        },
+        new_value: {
+          dd_reference_number: updated.dd_reference_number,
+          bank_name: updated.bank_name,
+          amount: updated.amount.toString(),
+          status: updated.status,
+        },
+      });
+
+      // Real, urgent, staff-facing notification — a bounced DD genuinely
+      // needs follow-up. Notifies the billing staff member who made this
+      // update (real @CurrentUser id, never fabricated); fire-and-forget
+      // so a notification failure never fails the real status update.
+      if (dto.status === 'bounced' && dd.status !== 'bounced') {
+        void this.notifications
+          .notify({
+            user_id: performedByUserId,
+            title: 'Education loan DD bounced',
+            message: `${updated.dd_reference_number} (${updated.bank_name}, ₹${updated.amount.toString()}) has bounced — needs follow-up with the bank.`,
+            related_entity_type: 'education_loan_dd',
+            related_entity_id: updated.id,
+          })
+          .catch((err) => this.logger.error('Failed to send DD-bounced notification', err));
+      }
+
+      return updated;
     } catch (err) {
       this.logger.error('DB error while updating education loan DD', err);
       throw new InternalServerErrorException({
@@ -199,7 +265,7 @@ export class EducationLoanDdService {
    * Error cases:
    *  404 EDUCATION_LOAN_DD_NOT_FOUND – no DD with the given id
    */
-  async remove(id: number) {
+  async remove(id: number, performedByUserId: number) {
     const dd = await this.findById(id);
 
     if (!dd) {
@@ -210,9 +276,23 @@ export class EducationLoanDdService {
     }
 
     try {
-      return await this.prisma.education_loan_dd.delete({
+      const deleted = await this.prisma.education_loan_dd.delete({
         where: { id },
       });
+
+      await this.auditLog.record({
+        entity_type: 'education_loan_dd',
+        entity_id: deleted.id,
+        action: 'deleted',
+        performed_by_user_id: performedByUserId,
+        old_value: {
+          dd_reference_number: deleted.dd_reference_number,
+          bank_name: deleted.bank_name,
+          amount: deleted.amount.toString(),
+        },
+      });
+
+      return deleted;
     } catch (err) {
       this.logger.error('DB error while deleting education loan DD', err);
       throw new InternalServerErrorException({

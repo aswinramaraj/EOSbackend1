@@ -12,6 +12,7 @@ import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import { CreateFeePaymentDto } from './dto/create-fee-payment.dto';
 import { UpdateFeePaymentDto } from './dto/update-fee-payment.dto';
@@ -23,6 +24,7 @@ import {
   DemandSummaryItemDto,
 } from './dto/fee-payment-student-workspace.dto';
 import { CategoryBreakdownItemDto } from './dto/fee-payment-category-breakdown.dto';
+import { IssueReceiptNumberDto } from './dto/issue-receipt-number.dto';
 
 type DueStatus = 'paid' | 'partial' | 'pending';
 
@@ -30,7 +32,10 @@ function computeDueStatus(
   totalDemand: Prisma.Decimal,
   paidAmount: Prisma.Decimal,
 ): DueStatus {
-  if (paidAmount.greaterThanOrEqualTo(totalDemand) && totalDemand.greaterThan(0)) {
+  if (
+    paidAmount.greaterThanOrEqualTo(totalDemand) &&
+    totalDemand.greaterThan(0)
+  ) {
     return 'paid';
   }
   if (paidAmount.greaterThan(0)) {
@@ -60,6 +65,7 @@ export class FeePaymentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   private getRazorpay(): Razorpay {
@@ -80,10 +86,56 @@ export class FeePaymentService {
   /**
    * GET /fee-payments
    */
+  /**
+   * GET /fee-payments — real, enriched with student/category context
+   * (name, register no., department, demand category, fee structure)
+   * for the Billing Portal's Receipts and Payment History screens.
+   * Previously returned bare `fee_payments` rows with no joins at all —
+   * purely additive enrichment, existing consumers only gain fields.
+   */
   async findAll() {
     try {
-      return await this.prisma.fee_payments.findMany({
-        orderBy: [{ student_fee_demand_mapping_id: 'asc' }, { id: 'asc' }],
+      const rows = await this.prisma.fee_payments.findMany({
+        orderBy: [{ payment_date: 'desc' }, { id: 'desc' }],
+        include: {
+          fee_structure_items: {
+            include: {
+              demand_categories: true,
+              fee_structures: true,
+            },
+          },
+          student_fee_demand_mapping: {
+            include: {
+              students: {
+                include: {
+                  soa_applications: true,
+                  courses: { include: { departments: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+      return rows.map((p) => {
+        const student = p.student_fee_demand_mapping.students;
+        const studentName = student.soa_applications
+          ? [student.soa_applications.first_name, student.soa_applications.last_name].filter(Boolean).join(' ')
+          : null;
+        return {
+          id: p.id,
+          student_fee_demand_mapping_id: p.student_fee_demand_mapping_id,
+          student_id: student.id,
+          student_name: studentName,
+          register_number: student.register_no,
+          department: student.courses.departments.name,
+          demand_category_name: p.fee_structure_items?.demand_categories?.name ?? null,
+          fee_structure_name: p.fee_structure_items?.fee_structures.name ?? null,
+          amount_paid: p.amount_paid.toString(),
+          payment_date: p.payment_date,
+          payment_mode: p.payment_mode,
+          receipt_no: p.receipt_no,
+          is_partial: p.is_partial,
+        };
       });
     } catch (err) {
       this.logger.error('DB error while fetching fee payments', err);
@@ -142,7 +194,8 @@ export class FeePaymentService {
 
       return payments.map(({ fee_structure_items, ...payment }) => ({
         ...payment,
-        demand_category_name: fee_structure_items?.demand_categories?.name ?? 'General',
+        demand_category_name:
+          fee_structure_items?.demand_categories?.name ?? 'General',
       }));
     } catch (err) {
       this.logger.error('DB error while fetching fee payments', err);
@@ -182,9 +235,8 @@ export class FeePaymentService {
     >;
 
     try {
-      mapping = await this.findMappingWithCategoryBreakdownRelations(
-        demandMappingId,
-      );
+      mapping =
+        await this.findMappingWithCategoryBreakdownRelations(demandMappingId);
     } catch (err) {
       this.logger.error(
         'DB error while fetching fee structure category breakdown',
@@ -210,13 +262,16 @@ export class FeePaymentService {
       // half of the required two-column scope, never the only one.
       const alreadyPaid = mapping.fee_payments
         .filter((payment) => payment.fee_structure_item_id === item.id)
-        .reduce((sum, payment) => sum.plus(payment.amount_paid), new Prisma.Decimal(0));
+        .reduce(
+          (sum, payment) => sum.plus(payment.amount_paid),
+          new Prisma.Decimal(0),
+        );
 
       const outstanding = computeOutstanding(item.amount, alreadyPaid);
 
       return {
         fee_structure_item_id: item.id,
-        demand_category_name: item.demand_categories?.name ?? 'General',
+        demand_category_name: item.demand_categories?.name ?? null,
         original_amount: item.amount.toString(),
         already_paid: alreadyPaid.toString(),
         outstanding_amount: outstanding.toString(),
@@ -263,10 +318,7 @@ export class FeePaymentService {
     try {
       mappings = await this.findDemandMappingsWithDashboardRelations();
     } catch (err) {
-      this.logger.error(
-        'DB error while fetching fee payments dashboard',
-        err,
-      );
+      this.logger.error('DB error while fetching fee payments dashboard', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -305,6 +357,8 @@ export class FeePaymentService {
         programme: mapping.students.courses.name,
         department: mapping.students.courses.departments.name,
         batch: mapping.students.batches.name,
+        quota: mapping.students.quotas.name,
+        class_id: mapping.students.class_id,
         fee_structure_name: mapping.fee_structures.name,
         academic_year: mapping.academic_year,
         total_demand: liveTotalAmount.toString(),
@@ -328,7 +382,9 @@ export class FeePaymentService {
   async getStudentWorkspace(
     studentId: number,
   ): Promise<FeePaymentStudentWorkspaceDto> {
-    let student: Awaited<ReturnType<typeof this.findStudentWithWorkspaceRelations>>;
+    let student: Awaited<
+      ReturnType<typeof this.findStudentWithWorkspaceRelations>
+    >;
 
     try {
       student = await this.findStudentWithWorkspaceRelations(studentId);
@@ -390,7 +446,9 @@ export class FeePaymentService {
     const totalDemand = demandMappings.reduce(
       (sum, mapping) =>
         sum.plus(
-          this.computeLiveTotalAmount(mapping.fee_structures.fee_structure_items),
+          this.computeLiveTotalAmount(
+            mapping.fee_structures.fee_structure_items,
+          ),
         ),
       new Prisma.Decimal(0),
     );
@@ -478,7 +536,10 @@ export class FeePaymentService {
       fee_summary: {
         total_demand: totalDemand.toString(),
         total_paid: totalPaid.toString(),
-        total_outstanding: computeOutstanding(totalDemand, totalPaid).toString(),
+        total_outstanding: computeOutstanding(
+          totalDemand,
+          totalPaid,
+        ).toString(),
         due_status: computeDueStatus(totalDemand, totalPaid),
       },
       demand_summary: demandSummary,
@@ -503,6 +564,7 @@ export class FeePaymentService {
             soa_applications: true,
             batches: true,
             courses: { include: { departments: true } },
+            quotas: true,
           },
         },
       },
@@ -545,7 +607,9 @@ export class FeePaymentService {
    * dashboard and workspace endpoints can never show a total that disagrees
    * with the fee structure's actual items, regardless of the snapshot's state.
    */
-  private computeLiveTotalAmount(feeStructureItems: { amount: Prisma.Decimal }[]) {
+  private computeLiveTotalAmount(
+    feeStructureItems: { amount: Prisma.Decimal }[],
+  ) {
     return feeStructureItems.reduce(
       (sum, item) => sum.plus(item.amount),
       new Prisma.Decimal(0),
@@ -596,6 +660,18 @@ export class FeePaymentService {
           collectedByUserId,
         );
         await this.notifyPaymentConfirmed(demandMappingId, payment);
+        await this.auditLog.record({
+          entity_type: 'fee_payment',
+          entity_id: payment.id,
+          action: 'created',
+          performed_by_user_id: collectedByUserId,
+          new_value: {
+            receipt_no: payment.receipt_no,
+            amount_paid: payment.amount_paid.toString(),
+            payment_mode: payment.payment_mode,
+            student_fee_demand_mapping_id: demandMappingId,
+          },
+        });
         return payment;
       } catch (err) {
         const isSerializationConflict =
@@ -612,7 +688,8 @@ export class FeePaymentService {
           err.code === 'P2002' &&
           (err.meta?.target as string[] | undefined)?.includes('receipt_no');
 
-        const isRetryableConflict = isSerializationConflict || isReceiptNumberRace;
+        const isRetryableConflict =
+          isSerializationConflict || isReceiptNumberRace;
 
         if (isRetryableConflict && attempt < MAX_SERIALIZATION_RETRIES) {
           // Two concurrent requests raced for the same demand category (or
@@ -680,7 +757,10 @@ export class FeePaymentService {
         related_entity_id: payment.id,
       });
     } catch (err) {
-      this.logger.error(`Failed to notify student of fee payment ${payment.id}`, err);
+      this.logger.error(
+        `Failed to notify student of fee payment ${payment.id}`,
+        err,
+      );
     }
   }
 
@@ -835,7 +915,12 @@ export class FeePaymentService {
     dto: CreateFeePaymentOrderDto,
   ) {
     const mapping = await this.resolveOwnDemandMapping(userId, demandMappingId);
-    return this.stageGatewayOrder(demandMappingId, mapping.fee_structure_id, dto.amount, userId);
+    return this.stageGatewayOrder(
+      demandMappingId,
+      mapping.fee_structure_id,
+      dto.amount,
+      userId,
+    );
   }
 
   /**
@@ -861,7 +946,10 @@ export class FeePaymentService {
     demandMappingId: number,
     dto: CreateFeePaymentOrderDto,
   ) {
-    const mapping = await this.resolveChildDemandMapping(studentId, demandMappingId);
+    const mapping = await this.resolveChildDemandMapping(
+      studentId,
+      demandMappingId,
+    );
     return this.stageGatewayOrder(
       demandMappingId,
       mapping.fee_structure_id,
@@ -876,7 +964,10 @@ export class FeePaymentService {
     amount: number,
     createdByUserId: number,
   ) {
-    const outstanding = await this.computeMappingOutstanding(demandMappingId, feeStructureId);
+    const outstanding = await this.computeMappingOutstanding(
+      demandMappingId,
+      feeStructureId,
+    );
 
     if (new Prisma.Decimal(amount).greaterThan(outstanding)) {
       throw new UnprocessableEntityException({
@@ -904,7 +995,10 @@ export class FeePaymentService {
         },
       });
     } catch (err) {
-      this.logger.error('DB error while staging fee payment gateway order', err);
+      this.logger.error(
+        'DB error while staging fee payment gateway order',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -989,7 +1083,11 @@ export class FeePaymentService {
       });
     }
 
-    let payment: { id: number; amount_paid: Prisma.Decimal; receipt_no: string };
+    let payment: {
+      id: number;
+      amount_paid: Prisma.Decimal;
+      receipt_no: string;
+    };
     try {
       payment = await this.createMappingLevelPayment(
         order.student_fee_demand_mapping_id,
@@ -1032,7 +1130,10 @@ export class FeePaymentService {
     };
   }
 
-  private async resolveOwnDemandMapping(userId: number, demandMappingId: number) {
+  private async resolveOwnDemandMapping(
+    userId: number,
+    demandMappingId: number,
+  ) {
     const student = await this.prisma.students.findUnique({
       where: { user_id: userId },
       select: { id: true },
@@ -1071,7 +1172,10 @@ export class FeePaymentService {
    * ParentsService.assertOwnChild before this is ever called); this only
    * re-checks that demandMappingId itself actually belongs to that student.
    */
-  private async resolveChildDemandMapping(studentId: number, demandMappingId: number) {
+  private async resolveChildDemandMapping(
+    studentId: number,
+    demandMappingId: number,
+  ) {
     const mapping = await this.prisma.student_fee_demand_mapping.findUnique({
       where: { id: demandMappingId },
       select: { student_id: true, fee_structure_id: true },
@@ -1151,7 +1255,10 @@ export class FeePaymentService {
             });
             const alreadyPaid =
               paidSoFarResult._sum.amount_paid ?? new Prisma.Decimal(0);
-            const outstanding = computeOutstanding(liveTotalAmount, alreadyPaid);
+            const outstanding = computeOutstanding(
+              liveTotalAmount,
+              alreadyPaid,
+            );
 
             if (new Prisma.Decimal(amount).greaterThan(outstanding)) {
               throw new UnprocessableEntityException({
@@ -1190,7 +1297,8 @@ export class FeePaymentService {
           err instanceof Prisma.PrismaClientKnownRequestError &&
           err.code === 'P2002' &&
           (err.meta?.target as string[] | undefined)?.includes('receipt_no');
-        const isRetryableConflict = isSerializationConflict || isReceiptNumberRace;
+        const isRetryableConflict =
+          isSerializationConflict || isReceiptNumberRace;
 
         if (isRetryableConflict && attempt < MAX_SERIALIZATION_RETRIES) {
           continue;
@@ -1245,7 +1353,10 @@ export class FeePaymentService {
       });
     }
 
-    if (dto.collected_by_user_id !== undefined && dto.collected_by_user_id !== null) {
+    if (
+      dto.collected_by_user_id !== undefined &&
+      dto.collected_by_user_id !== null
+    ) {
       await this.assertUserExists(dto.collected_by_user_id);
     }
 
@@ -1441,6 +1552,74 @@ export class FeePaymentService {
       return await this.prisma.fee_payments.findUnique({ where: { id } });
     } catch (err) {
       this.logger.error('DB error during fee payment lookup', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * POST /fee-payments/receipt-numbers
+   *
+   * Issues exactly one new, sequential receipt number (fee_receipt_numbers.id
+   * — a real DB-generated SERIAL, never computed client-side) covering every
+   * fee_payment_id in the request, together in one print action. This is
+   * deliberately separate from fee_payments.receipt_no, which is really each
+   * payment's own internal reference and was never meant to be the number
+   * printed on a receipt.
+   *
+   * Error cases:
+   *  404 FEE_PAYMENT_NOT_FOUND – one or more fee_payment_ids don't exist
+   *  500 INTERNAL_ERROR        – unexpected failure (DB, etc.)
+   */
+  async issueReceiptNumber(
+    dto: IssueReceiptNumberDto,
+    issuedByUserId: number | null,
+  ) {
+    const uniqueIds = [...new Set(dto.fee_payment_ids)];
+
+    let found: { id: number }[];
+    try {
+      found = await this.prisma.fee_payments.findMany({
+        where: { id: { in: uniqueIds } },
+        select: { id: true },
+      });
+    } catch (err) {
+      this.logger.error('DB error while validating fee payments for receipt number', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (found.length !== uniqueIds.length) {
+      throw new NotFoundException({
+        message: 'One or more fee payments were not found',
+        errorCode: 'FEE_PAYMENT_NOT_FOUND',
+      });
+    }
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const receiptNumber = await tx.fee_receipt_numbers.create({
+          data: {
+            print_date: new Date(dto.print_date),
+            issued_by_user_id: issuedByUserId ?? undefined,
+          },
+        });
+
+        await tx.fee_receipt_number_payments.createMany({
+          data: uniqueIds.map((feePaymentId) => ({
+            receipt_number_id: receiptNumber.id,
+            fee_payment_id: feePaymentId,
+          })),
+        });
+
+        return receiptNumber;
+      });
+    } catch (err) {
+      this.logger.error('DB error while issuing receipt number', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

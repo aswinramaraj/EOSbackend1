@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { EnterExamMarksDto } from './dto/enter-exam-marks.dto';
 import { UpdateExamMarkDto } from './dto/update-exam-mark.dto';
 import { ListExamMarksQueryDto } from './dto/list-exam-marks-query.dto';
@@ -79,8 +80,10 @@ function resolveStudentName(student: ExamMarkRow['students']): string {
 function toResponse(row: ExamMarkRow) {
   return {
     id: row.id,
-    marks_obtained: row.marks_obtained,
-    max_marks: row.max_marks,
+    // Decimal fields — see the roster method's comment for why these must
+    // be converted with Number() before ever reaching JSON.
+    marks_obtained: Number(row.marks_obtained),
+    max_marks: Number(row.max_marks),
     entered_at: row.entered_at,
     student: {
       id: row.students.id,
@@ -103,7 +106,10 @@ function toResponse(row: ExamMarkRow) {
 export class ExamMarksService {
   private readonly logger = new Logger(ExamMarksService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * POST /me/exams/:exam_subject_mapping_id/marks (Faculty only).
@@ -213,11 +219,73 @@ export class ExamMarksService {
       `Exam marks entered: mapping=${examSubjectMappingId} faculty=${faculty.id} count=${created.length} (skipped ${dto.entries.length - newEntries.length} already-entered)`,
     );
 
+    await this.notifyMarksPosted(
+      examSubjectMappingId,
+      faculty.id,
+      newEntries.map((e) => e.student_id),
+    );
+
     return {
       exam_subject_mapping_id: examSubjectMappingId,
       entered: created.length,
       skipped_already_entered: dto.entries.length - newEntries.length,
     };
+  }
+
+  /**
+   * Notifies every student who just got a mark entered. Never throws - a
+   * failure here must not roll back or fail marks entry, which has already
+   * committed by the time this runs (same convention as
+   * results.service.ts's notifyResultsPublished).
+   */
+  private async notifyMarksPosted(
+    examSubjectMappingId: number,
+    facultyId: number,
+    studentIds: number[],
+  ): Promise<void> {
+    if (studentIds.length === 0) return;
+    try {
+      const [mapping, faculty, students] = await Promise.all([
+        this.prisma.exam_subject_mapping.findUnique({
+          where: { id: examSubjectMappingId },
+          select: {
+            classes: { select: { section: true } },
+            subjects: { select: { name: true } },
+            exams: { select: { exam_types: { select: { name: true } } } },
+          },
+        }),
+        this.prisma.faculty.findUnique({
+          where: { id: facultyId },
+          select: { first_name: true, last_name: true },
+        }),
+        this.prisma.students.findMany({
+          where: { id: { in: studentIds } },
+          select: { user_id: true },
+        }),
+      ]);
+      if (!mapping) return;
+
+      const facultyName = faculty
+        ? `${faculty.first_name} ${faculty.last_name}`
+        : 'Your faculty';
+      const message = `${facultyName} posted the ${mapping.exams.exam_types.name} marks for ${mapping.subjects.name} · Class ${mapping.classes.section}.`;
+
+      for (const s of students) {
+        await this.notifications.notify({
+          user_id: s.user_id,
+          title: 'Exam marks posted',
+          message,
+          type: 'cia_marks_posted',
+          related_entity_type: 'exam_subject_mapping',
+          related_entity_id: examSubjectMappingId,
+        });
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to notify students of posted marks for mapping ${examSubjectMappingId}`,
+        err,
+      );
+    }
   }
 
   /** GET /me/exam-marks (Faculty only — own-entered records). */
@@ -398,7 +466,14 @@ export class ExamMarksService {
     return {
       exam_subject_mapping_id: examSubjectMappingId,
       locked: marks.length > 0 && marks.length >= roster.length,
-      max_marks: marks.length > 0 ? marks[0].max_marks : null,
+      // max_marks/marks_obtained are Prisma Decimal fields — left unconverted
+      // they serialize to JSON as strings (e.g. "100.00"), which then fails
+      // the frontend's re-POST against EnterExamMarksDto's @IsNumber/@Min
+      // checks ("max_marks must be a number... must not be less than 1")
+      // since a string never satisfies @IsNumber. Number(...) here matches
+      // the same conversion already done elsewhere in this file (e.g.
+      // enterMarks' effectiveMaxMarks, updateMark's range check).
+      max_marks: marks.length > 0 ? Number(marks[0].max_marks) : null,
       students: roster.map((student) => {
         const mark = markByStudentId.get(student.id);
         return {
@@ -406,7 +481,7 @@ export class ExamMarksService {
           roll_no: student.roll_no ?? student.student_id_no,
           name: resolveStudentName(student),
           mark_id: mark?.id ?? null,
-          marks_obtained: mark?.marks_obtained ?? null,
+          marks_obtained: mark?.marks_obtained !== undefined && mark?.marks_obtained !== null ? Number(mark.marks_obtained) : null,
         };
       }),
     };
