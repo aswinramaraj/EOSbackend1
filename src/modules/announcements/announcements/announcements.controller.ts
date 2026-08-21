@@ -27,6 +27,7 @@ import { AnnouncementsService } from './announcements.service';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 import { ListAnnouncementsQueryDto } from './dto/list-announcements-query.dto';
+import { CreateAnnouncementCommentDto } from './dto/create-announcement-comment.dto';
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -104,7 +105,7 @@ export class AnnouncementsController {
    * scope to narrow by.
    */
   @Get('lookup/all-classes')
-  @Roles(ROLES.HIGHER_EDUCATION)
+  @Roles(ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
   lookupAllClasses() {
     return this.announcementsService.lookupAllClasses();
   }
@@ -136,7 +137,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR / STORAGE_UPLOAD_FAILED
    */
   @Post('attachments')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
   uploadAttachment(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
@@ -160,7 +161,7 @@ export class AnnouncementsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
   create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     return this.announcementsService.create(dto, user);
   }
@@ -212,7 +213,7 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Put(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -230,7 +231,7 @@ export class AnnouncementsController {
    * Error responses: see PUT /api/v1/announcements/:id
    */
   @Patch(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAnnouncementDto,
@@ -249,11 +250,44 @@ export class AnnouncementsController {
    *  500 INTERNAL_ERROR
    */
   @Delete(':id')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.FACULTY, ROLES.HIGHER_EDUCATION, ROLES.MEDIA_ROOM)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.announcementsService.remove(id, user);
+  }
+
+  /**
+   * GET /api/v1/announcements/:id/comments — any authenticated user.
+   */
+  @Get(':id/comments')
+  listComments(@Param('id', ParseIntPipe) id: number) {
+    return this.announcementsService.listComments(id);
+  }
+
+  /**
+   * POST /api/v1/announcements/:id/comments — any authenticated user.
+   */
+  @Post(':id/comments')
+  addComment(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateAnnouncementCommentDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.announcementsService.addComment(id, user, dto);
+  }
+
+  /**
+   * DELETE /api/v1/announcements/:id/comments/:commentId — own comment, the
+   * post's own author, or Admin.
+   */
+  @Delete(':id/comments/:commentId')
+  removeComment(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('commentId', ParseIntPipe) commentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.announcementsService.removeComment(id, commentId, user);
   }
 }

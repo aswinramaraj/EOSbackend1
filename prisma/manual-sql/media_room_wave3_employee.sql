@@ -1,0 +1,17 @@
+-- NOT NEEDED — superseded, do not run.
+--
+-- The whole Employee section (Attendance, Leave, OD, Payslip, Appraisal,
+-- Library) ended up needing zero new tables. All six are wired to real,
+-- pre-existing schema.prisma tables via a `staff_user_id` column (added
+-- alongside each table's original faculty_id, now nullable) or, for the
+-- library, `borrower_type = 'staff'`:
+--   Attendance -> faculty_daily_attendance
+--   Leave      -> faculty_leaves / leave_types
+--   OD         -> faculty_od_requests
+--   Payslip    -> payslip_requests
+--   Appraisal  -> appraisal_requests / appraisal_entries / appraisal_criteria
+--   Library    -> book_borrow_records (see fix_book_borrow_records_staff_check.sql
+--                 for a real CHECK-constraint bug this surfaced)
+--   HR Payroll -> hr_payroll_requests (no staff_user_id needed, always generic)
+--
+-- Kept here only as a record of the abandoned approach — safe to delete.

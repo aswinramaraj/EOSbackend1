@@ -2,7 +2,10 @@ import {
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
+  IsBoolean,
+  IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -15,6 +18,7 @@ import {
   announcement_status_enum,
   announcement_category_enum,
 } from '../../../../../generated/prisma/client';
+import { SOCIAL_POST_FORMATS } from './create-announcement.dto';
 
 export class UpdateAnnouncementDto {
   @ValidateIf((dto) => dto.title !== undefined)
@@ -73,4 +77,29 @@ export class UpdateAnnouncementDto {
   @IsString()
   @MaxLength(255)
   file_name?: string;
+
+  @IsOptional()
+  @IsDateString()
+  scheduled_at?: string;
+
+  @IsOptional()
+  @IsIn(SOCIAL_POST_FORMATS)
+  format?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  link_url?: string;
+
+  @IsOptional()
+  @IsDateString()
+  expires_at?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  is_pinned?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allow_comments?: boolean;
 }

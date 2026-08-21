@@ -10,6 +10,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { Prisma } from '../../../../generated/prisma/client';
 import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { CreateMediaRequestDto } from './dto/create-media-request.dto';
 import { UpdateMediaRequestDto } from './dto/update-media-request.dto';
@@ -26,6 +27,7 @@ const MEDIA_REQUEST_SELECT = {
   coordinator_name: true,
   contact_number: true,
   media_types: true,
+  poster_needed_by: true,
   faculty: {
     select: { id: true, first_name: true, last_name: true, designation: true },
   },
@@ -37,6 +39,13 @@ const MEDIA_REQUEST_SELECT = {
       faculty: { select: { first_name: true, last_name: true } },
       non_teaching_staff: { select: { first_name: true, last_name: true } },
     },
+  },
+  // The design's "Assigned to" tag — real crew assignment, once one exists
+  // (see media-room-shoots.service.ts, which creates these rows).
+  media_shoot_assignments: {
+    select: { media_team_members: { select: { id: true, full_name: true } } },
+    orderBy: { created_at: 'desc' as const },
+    take: 1,
   },
 } as const;
 
@@ -58,6 +67,7 @@ interface MediaRequestRow {
   coordinator_name: string | null;
   contact_number: string | null;
   media_types: string[];
+  poster_needed_by: Date | null;
   // requested_by_faculty_id (schema.prisma) is nullable — every request
   // created through this service sets it (faculty-only endpoint), but the
   // column itself allows null, so the relation must be typed that way too.
@@ -69,6 +79,9 @@ interface MediaRequestRow {
   } | null;
   venues: { id: number; name: string; location: string | null } | null;
   users: MediaRequestMarkerRow;
+  media_shoot_assignments: {
+    media_team_members: { id: number; full_name: string } | null;
+  }[];
 }
 
 /**
@@ -104,11 +117,13 @@ function toResponse(request: MediaRequestRow) {
     coordinator_name: request.coordinator_name,
     contact_number: request.contact_number,
     media_types: request.media_types,
+    poster_needed_by: request.poster_needed_by,
     faculty: request.faculty,
     requested_by: {
       id: request.users.id,
       name: resolveRequesterName(request.users),
     },
+    assigned_to: request.media_shoot_assignments[0]?.media_team_members ?? null,
   };
 }
 
@@ -158,9 +173,12 @@ export class MediaRequestsService {
         coordinator_name: dto.coordinator_name,
         contact_number: dto.contact_number,
         media_types: dto.media_types ?? [],
+        poster_needed_by: dto.poster_needed_by ? new Date(dto.poster_needed_by) : undefined,
       },
       select: MEDIA_REQUEST_SELECT,
     });
+
+    await this.logStatus(request.id, 'pending');
 
     this.logger.log(
       `Media request created: id=${request.id} requested_by_user=${userId}`,
@@ -252,6 +270,8 @@ export class MediaRequestsService {
       select: MEDIA_REQUEST_SELECT,
     });
 
+    await this.logStatus(id, dto.status);
+
     this.logger.log(`Media request ${id} updated to status=${dto.status}`);
 
     await this.notifications.create({
@@ -288,6 +308,25 @@ export class MediaRequestsService {
 
     this.logger.log(`Media request deleted: id=${id}`);
     return { id, deleted: true };
+  }
+
+  /**
+   * Append-only audit trail on the hand-SQL `media_request_status_log` table
+   * (prisma/manual-sql/media_social_and_report_extensions.sql) — powers the
+   * Report page's real "Turnaround time" panel. Never blocks the actual
+   * request/update: if the table hasn't been created yet, this silently
+   * no-ops rather than failing the caller's create/update.
+   */
+  private async logStatus(mediaRequestId: number, status: string) {
+    try {
+      await this.prisma.$executeRaw(
+        Prisma.sql`INSERT INTO media_request_status_log (media_request_id, status) VALUES (${mediaRequestId}, ${status})`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not log status "${status}" for media request ${mediaRequestId}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
   }
 
   private async resolveFacultyByUserId(userId: number) {

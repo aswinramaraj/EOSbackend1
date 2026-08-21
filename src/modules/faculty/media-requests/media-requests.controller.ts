@@ -28,9 +28,9 @@ import { ListMediaRequestQueryDto } from './dto/list-media-request-query.dto';
 export class MediaRequestsController {
   constructor(private readonly mediaRequestsService: MediaRequestsService) {}
 
-  /** POST /api/v1/media-requests — Faculty / Secretary. */
+  /** POST /api/v1/media-requests — Faculty / Secretary / Media Room (internal request, no faculty profile needed — same path as Secretary). */
   @Post('media-requests')
-  @Roles(ROLES.FACULTY, ROLES.SECRETARY)
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY, ROLES.MEDIA_ROOM)
   @HttpCode(HttpStatus.CREATED)
   create(
     @Body() createMediaRequestDto: CreateMediaRequestDto,
@@ -69,9 +69,9 @@ export class MediaRequestsController {
     return this.mediaRequestsService.update(id, updateMediaRequestDto);
   }
 
-  /** DELETE /api/v1/media-requests/:id — Faculty / Secretary, own request, only while still 'pending'. */
+  /** DELETE /api/v1/media-requests/:id — Faculty / Secretary / Media Room, own request, only while still 'pending'. */
   @Delete('media-requests/:id')
-  @Roles(ROLES.FACULTY, ROLES.SECRETARY)
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY, ROLES.MEDIA_ROOM)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

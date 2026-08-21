@@ -18,6 +18,36 @@ import {
 } from '../../../../generated/prisma/client';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
+import { CreateAnnouncementCommentDto } from './dto/create-announcement-comment.dto';
+
+interface AnnouncementCommentRow {
+  id: number;
+  announcement_id: number;
+  commented_by_user_id: number;
+  comment_text: string;
+  parent_comment_id: number | null;
+  created_at: Date;
+}
+
+interface SocialPostDetailsRow {
+  announcement_id: number;
+  format: string | null;
+  link_url: string | null;
+  expires_at: Date | null;
+  is_pinned: boolean | null;
+  allow_comments: boolean | null;
+}
+
+/** A row with no explicit value defaults to visible/open, same as a plain announcement always was. */
+function toSocialShape(row: SocialPostDetailsRow | undefined) {
+  return {
+    format: row?.format ?? null,
+    link_url: row?.link_url ?? null,
+    expires_at: row?.expires_at ?? null,
+    is_pinned: row?.is_pinned ?? false,
+    allow_comments: row?.allow_comments ?? true,
+  };
+}
 
 /**
  * Resolved relationship facts for the current actor, derived once per request.
@@ -109,8 +139,9 @@ export class AnnouncementsService {
         await this.assertRolesValid(dto.role_ids);
       }
 
+      let draft: { id: number } & Record<string, unknown>;
       try {
-        return await this.prisma.$transaction(async (tx) => {
+        draft = await this.prisma.$transaction(async (tx) => {
           const announcement = await tx.announcements.create({
             data: {
               posted_by_user_id: user.sub,
@@ -123,6 +154,7 @@ export class AnnouncementsService {
               status,
               file_key: dto.file_key,
               file_name: dto.file_name,
+              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : undefined,
             },
           });
 
@@ -144,11 +176,11 @@ export class AnnouncementsService {
             });
           }
 
-          return this.toResponseShape({
+          return {
             ...announcement,
             announcement_class_mapping: (dto.class_ids ?? []).map((class_id) => ({ class_id })),
             announcement_role_mapping: (dto.role_ids ?? []).map((role_id) => ({ role_id })),
-          });
+          };
         });
       } catch (err) {
         this.logger.error('DB error while creating draft announcement', err);
@@ -157,6 +189,9 @@ export class AnnouncementsService {
           errorCode: 'INTERNAL_ERROR',
         });
       }
+
+      await this.afterAnnouncementCreated(draft.id, user, dto);
+      return this.toResponseShape(draft);
     }
 
     // 'roles' is a Principal/Admin-only broadcast to one or more specific
@@ -203,6 +238,7 @@ export class AnnouncementsService {
       await this.notifyNewAnnouncement(announcement.id, dto.title, 'roles', {
         roleIds: dto.role_ids,
       });
+      await this.afterAnnouncementCreated(announcement.id, user, dto);
 
       return this.toResponseShape({
         ...announcement,
@@ -246,6 +282,7 @@ export class AnnouncementsService {
       await this.notifyNewAnnouncement(announcement.id, dto.title, 'teachers', {
         departmentId,
       });
+      await this.afterAnnouncementCreated(announcement.id, user, dto);
 
       return this.toResponseShape({ ...announcement, announcement_class_mapping: [] });
     }
@@ -288,6 +325,7 @@ export class AnnouncementsService {
     await this.notifyNewAnnouncement(announcement.id, dto.title, dto.target_audience!, {
       classIds: dto.class_ids,
     });
+    await this.afterAnnouncementCreated(announcement.id, user, dto);
 
     return this.toResponseShape({
       ...announcement,
@@ -463,9 +501,59 @@ export class AnnouncementsService {
       });
     }
 
-    return announcements.map((announcement) =>
-      this.toResponseShape(announcement),
-    );
+    const ids = announcements.map((a) => a.id);
+    const [countByAnnouncement, unanswered, socialByAnnouncement] = await Promise.all([
+      this.fetchCommentCounts(ids),
+      this.fetchUnansweredCounts(ids),
+      this.fetchSocialDetails(ids),
+    ]);
+
+    return announcements.map((announcement) => ({
+      ...this.toResponseShape(announcement),
+      comment_count: countByAnnouncement.get(announcement.id) ?? 0,
+      unanswered_count: unanswered.get(announcement.id) ?? 0,
+      social: toSocialShape(socialByAnnouncement.get(announcement.id)),
+    }));
+  }
+
+  /**
+   * Every one of these bulk comment-stat helpers must degrade to an empty
+   * Map rather than throw — announcement_comments backs a page every role in
+   * the school hits (findAll), so a still-missing table (or any other
+   * transient DB blip on this side query) must never fail the whole list.
+   */
+  private async fetchCommentCounts(announcementIds: number[]): Promise<Map<number, number>> {
+    if (announcementIds.length === 0) return new Map();
+    try {
+      const rows = await this.prisma.$queryRaw<{ announcement_id: number; count: bigint }[]>(Prisma.sql`
+        SELECT announcement_id, COUNT(*) AS count FROM announcement_comments
+        WHERE announcement_id IN (${Prisma.join(announcementIds)}) GROUP BY announcement_id
+      `);
+      return new Map(rows.map((r) => [r.announcement_id, Number(r.count)]));
+    } catch {
+      return new Map();
+    }
+  }
+
+  /**
+   * Top-level comments (parent_comment_id IS NULL) with no reply child yet —
+   * backs the "App Explore feed" tab's real "Unanswered" count.
+   */
+  private async fetchUnansweredCounts(announcementIds: number[]): Promise<Map<number, number>> {
+    if (announcementIds.length === 0) return new Map();
+    try {
+      const rows = await this.prisma.$queryRaw<{ announcement_id: number; count: bigint }[]>(Prisma.sql`
+        SELECT c.announcement_id, COUNT(*) AS count
+        FROM announcement_comments c
+        WHERE c.parent_comment_id IS NULL
+          AND c.announcement_id IN (${Prisma.join(announcementIds)})
+          AND NOT EXISTS (SELECT 1 FROM announcement_comments r WHERE r.parent_comment_id = c.id)
+        GROUP BY c.announcement_id
+      `);
+      return new Map(rows.map((r) => [r.announcement_id, Number(r.count)]));
+    } catch {
+      return new Map();
+    }
   }
 
   /**
@@ -507,7 +595,16 @@ export class AnnouncementsService {
       });
     }
 
-    return this.toResponseShape(announcement);
+    const [unanswered, socialByAnnouncement] = await Promise.all([
+      this.fetchUnansweredCounts([announcement.id]),
+      this.fetchSocialDetails([announcement.id]),
+    ]);
+
+    return {
+      ...this.toResponseShape(announcement),
+      unanswered_count: unanswered.get(announcement.id) ?? 0,
+      social: toSocialShape(socialByAnnouncement.get(announcement.id)),
+    };
   }
 
   /**
@@ -606,8 +703,9 @@ export class AnnouncementsService {
       }
     }
 
+    let updatedResult: ReturnType<typeof this.toResponseShape>;
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      updatedResult = await this.prisma.$transaction(async (tx) => {
         if (
           dto.title !== undefined ||
           dto.content !== undefined ||
@@ -616,6 +714,7 @@ export class AnnouncementsService {
           dto.status !== undefined ||
           dto.file_key !== undefined ||
           dto.file_name !== undefined ||
+          dto.scheduled_at !== undefined ||
           resolvedDepartmentId !== undefined
         ) {
           await tx.announcements.update({
@@ -629,6 +728,7 @@ export class AnnouncementsService {
               department_id: resolvedDepartmentId,
               file_key: dto.file_key,
               file_name: dto.file_name,
+              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : undefined,
             },
           });
         }
@@ -675,6 +775,9 @@ export class AnnouncementsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    await this.upsertSocialDetails(id, dto);
+    return updatedResult;
   }
 
   /**
@@ -918,12 +1021,13 @@ export class AnnouncementsService {
         };
       }
 
-      // Higher Education Cell and Medical Centre have no class/department
-      // scope of their own — they only ever post/see role-targeted
-      // broadcasts, plus their own posts and Admin's institution-wide ones
-      // (same as HOD/Faculty).
+      // Higher Education Cell, Medical Centre and Media Room have no
+      // class/department scope of their own — they only ever post/see
+      // role-targeted broadcasts, plus their own posts and Admin's
+      // institution-wide ones (same as HOD/Faculty).
       case ROLES.HIGHER_EDUCATION:
       case ROLES.MEDICAL_CENTRE:
+      case ROLES.MEDIA_ROOM:
         return {
           OR: [
             { posted_by_user_id: context.userId },
@@ -981,7 +1085,8 @@ export class AnnouncementsService {
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
       context.role === ROLES.HIGHER_EDUCATION ||
-      context.role === ROLES.MEDICAL_CENTRE
+      context.role === ROLES.MEDICAL_CENTRE ||
+      context.role === ROLES.MEDIA_ROOM
     ) {
       return;
     }
@@ -1446,5 +1551,174 @@ export class AnnouncementsService {
       role: poster.roles.name,
       designation: poster.faculty?.designation ?? null,
     };
+  }
+
+  // ── Social post details — social_post_details (new table, not in schema.prisma) ──
+
+  private async fetchSocialDetails(announcementIds: number[]): Promise<Map<number, SocialPostDetailsRow>> {
+    if (announcementIds.length === 0) return new Map();
+    try {
+      const rows = await this.prisma.$queryRaw<SocialPostDetailsRow[]>(Prisma.sql`
+        SELECT announcement_id, format, link_url, expires_at, is_pinned, allow_comments
+        FROM social_post_details WHERE announcement_id IN (${Prisma.join(announcementIds)})
+      `);
+      return new Map(rows.map((r) => [r.announcement_id, r]));
+    } catch {
+      // Table not created yet — every post just falls back to the same
+      // toSocialShape(undefined) defaults it would get with a genuine miss.
+      return new Map();
+    }
+  }
+
+  /**
+   * Partial upsert: only the fields actually present on the dto are written,
+   * everything else keeps its current value (see the SQL file's COALESCE
+   * ON CONFLICT clause) — a plain announcement edit that never touches these
+   * fields leaves no row and no-ops here.
+   */
+  private async upsertSocialDetails(
+    announcementId: number,
+    dto: Pick<CreateAnnouncementDto, 'format' | 'link_url' | 'expires_at' | 'is_pinned' | 'allow_comments'>,
+  ) {
+    if (
+      dto.format === undefined &&
+      dto.link_url === undefined &&
+      dto.expires_at === undefined &&
+      dto.is_pinned === undefined &&
+      dto.allow_comments === undefined
+    ) {
+      return;
+    }
+    try {
+      await this.prisma.$executeRaw(Prisma.sql`
+        INSERT INTO social_post_details (announcement_id, format, link_url, expires_at, is_pinned, allow_comments, updated_at)
+        VALUES (
+          ${announcementId},
+          ${dto.format ?? null},
+          ${dto.link_url ?? null},
+          ${dto.expires_at ? new Date(dto.expires_at) : null},
+          ${dto.is_pinned ?? null},
+          ${dto.allow_comments ?? null},
+          now()
+        )
+        ON CONFLICT (announcement_id) DO UPDATE SET
+          format = COALESCE(EXCLUDED.format, social_post_details.format),
+          link_url = COALESCE(EXCLUDED.link_url, social_post_details.link_url),
+          expires_at = COALESCE(EXCLUDED.expires_at, social_post_details.expires_at),
+          is_pinned = COALESCE(EXCLUDED.is_pinned, social_post_details.is_pinned),
+          allow_comments = COALESCE(EXCLUDED.allow_comments, social_post_details.allow_comments),
+          updated_at = now()
+      `);
+    } catch (err) {
+      this.logger.warn(
+        `Could not save social post details for announcement ${announcementId} (table may not exist yet): ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  /**
+   * Runs after every successful create() branch. Never throws — a failure
+   * here must not fail the announcement's own creation, which has already
+   * committed by the time this runs (same contract as notifyNewAnnouncement).
+   */
+  private async afterAnnouncementCreated(announcementId: number, user: JwtPayload, dto: CreateAnnouncementDto) {
+    await this.upsertSocialDetails(announcementId, dto);
+    if (dto.first_comment) {
+      try {
+        await this.addComment(announcementId, user, { comment_text: dto.first_comment });
+      } catch (err) {
+        this.logger.warn(`Could not add first comment to announcement ${announcementId}: ${err}`);
+      }
+    }
+  }
+
+  // ── Comments — announcement_comments (new table, not in schema.prisma) ──
+
+  /**
+   * Same moderation rule as the real, already-working
+   * achievement_comments: own comment, the post's own author, or Admin.
+   * Backs the Social Media Publishing "App Explore feed" tab's claim that
+   * Media Room can "manage the comments students leave" — nothing did
+   * before this.
+   */
+  private async resolveCommentNames(userIds: number[]): Promise<Map<number, string>> {
+    const uniqueIds = [...new Set(userIds)];
+    if (uniqueIds.length === 0) return new Map();
+    const users = await this.prisma.users.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, email: true, faculty: { select: { first_name: true, last_name: true } } },
+    });
+    return new Map(users.map((u) => [u.id, u.faculty ? `${u.faculty.first_name} ${u.faculty.last_name}` : u.email]));
+  }
+
+  async listComments(announcementId: number) {
+    try {
+      const rows = await this.prisma.$queryRaw<AnnouncementCommentRow[]>(Prisma.sql`
+        SELECT id, announcement_id, commented_by_user_id, comment_text, parent_comment_id, created_at
+        FROM announcement_comments WHERE announcement_id = ${announcementId} ORDER BY created_at ASC
+      `);
+      const names = await this.resolveCommentNames(rows.map((r) => r.commented_by_user_id));
+      return rows.map((r) => ({ ...r, commenter_name: names.get(r.commented_by_user_id) ?? null }));
+    } catch (err) {
+      this.logger.error(`DB error listing comments for announcement ${announcementId}`, err);
+      throw new InternalServerErrorException({ message: 'Something went wrong. Please try again.', errorCode: 'INTERNAL_ERROR' });
+    }
+  }
+
+  async addComment(announcementId: number, user: JwtPayload, dto: CreateAnnouncementCommentDto) {
+    const exists = await this.prisma.announcements.findUnique({ where: { id: announcementId }, select: { id: true } });
+    if (!exists) {
+      throw new NotFoundException({ message: 'Announcement not found', errorCode: 'ANNOUNCEMENT_NOT_FOUND' });
+    }
+
+    const social = (await this.fetchSocialDetails([announcementId])).get(announcementId);
+    if (toSocialShape(social).allow_comments === false) {
+      throw new BadRequestException({ message: 'Comments are disabled for this post', errorCode: 'COMMENTS_DISABLED' });
+    }
+
+    if (dto.parent_comment_id !== undefined) {
+      const parentRows = await this.prisma.$queryRaw<AnnouncementCommentRow[]>(Prisma.sql`
+        SELECT id, announcement_id, commented_by_user_id, comment_text, parent_comment_id, created_at
+        FROM announcement_comments WHERE id = ${dto.parent_comment_id}
+      `);
+      const parent = parentRows[0];
+      if (!parent || parent.announcement_id !== announcementId) {
+        throw new NotFoundException({ message: 'Comment not found', errorCode: 'COMMENT_NOT_FOUND' });
+      }
+      if (parent.parent_comment_id !== null) {
+        throw new BadRequestException({ message: 'Can only reply to a top-level comment', errorCode: 'REPLY_DEPTH_EXCEEDED' });
+      }
+    }
+
+    try {
+      const rows = await this.prisma.$queryRaw<AnnouncementCommentRow[]>(Prisma.sql`
+        INSERT INTO announcement_comments (announcement_id, commented_by_user_id, comment_text, parent_comment_id)
+        VALUES (${announcementId}, ${user.sub}, ${dto.comment_text}, ${dto.parent_comment_id ?? null})
+        RETURNING id, announcement_id, commented_by_user_id, comment_text, parent_comment_id, created_at
+      `);
+      const names = await this.resolveCommentNames([user.sub]);
+      return { ...rows[0], commenter_name: names.get(user.sub) ?? null };
+    } catch (err) {
+      this.logger.error(`DB error adding comment to announcement ${announcementId}`, err);
+      throw new InternalServerErrorException({ message: 'Something went wrong. Please try again.', errorCode: 'INTERNAL_ERROR' });
+    }
+  }
+
+  async removeComment(announcementId: number, commentId: number, user: JwtPayload) {
+    const [comment, announcement] = await Promise.all([
+      this.prisma.$queryRaw<AnnouncementCommentRow[]>(Prisma.sql`SELECT id, announcement_id, commented_by_user_id, comment_text, parent_comment_id, created_at FROM announcement_comments WHERE id = ${commentId}`),
+      this.prisma.announcements.findUnique({ where: { id: announcementId }, select: { posted_by_user_id: true } }),
+    ]);
+    const row = comment[0];
+    if (!row || row.announcement_id !== announcementId) {
+      throw new NotFoundException({ message: 'Comment not found', errorCode: 'COMMENT_NOT_FOUND' });
+    }
+    const isOwnComment = row.commented_by_user_id === user.sub;
+    const isPoster = announcement?.posted_by_user_id === user.sub;
+    if (!isOwnComment && !isPoster && user.role !== ROLES.ADMIN) {
+      throw new ForbiddenException({ message: 'You can only delete your own comment', errorCode: 'NOT_COMMENT_OWNER' });
+    }
+    await this.prisma.$executeRaw(Prisma.sql`DELETE FROM announcement_comments WHERE id = ${commentId}`);
+    return { id: commentId };
   }
 }

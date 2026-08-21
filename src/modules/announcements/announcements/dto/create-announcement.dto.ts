@@ -2,7 +2,10 @@ import {
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
+  IsBoolean,
+  IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -15,6 +18,9 @@ import {
   announcement_status_enum,
   announcement_category_enum,
 } from '../../../../../generated/prisma/client';
+
+/** Social Media Publishing composer's "Post format" chips — informational tag only, stored on social_post_details. */
+export const SOCIAL_POST_FORMATS = ['Post', 'Photo carousel', 'Video', 'Announcement card'] as const;
 
 export class CreateAnnouncementDto {
   @IsString()
@@ -101,4 +107,52 @@ export class CreateAnnouncementDto {
   @IsString()
   @MaxLength(255)
   file_name?: string;
+
+  /**
+   * Real column, previously never read/written by this service — reactivated
+   * for the Social Media Publishing "Content calendar" tab. Only meaningful
+   * on a draft: the intended publish date, informational only. Nothing auto-
+   * publishes it — Media Room still clicks "Publish now" when ready.
+   */
+  @IsOptional()
+  @IsDateString()
+  scheduled_at?: string;
+
+  /**
+   * The rest of these back the Social Media Publishing "New post" composer's
+   * genuinely persistable extras (see social_post_details in
+   * media_social_and_report_extensions.sql). Every field is optional and
+   * meaningless to any other announcement author — they simply never send them.
+   */
+  @IsOptional()
+  @IsIn(SOCIAL_POST_FORMATS)
+  format?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  link_url?: string;
+
+  /** Informational only, like scheduled_at — nothing auto-expires the post. */
+  @IsOptional()
+  @IsDateString()
+  expires_at?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  is_pinned?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allow_comments?: boolean;
+
+  /**
+   * Posted as an actual top-level announcement_comments row authored by the
+   * poster, right after creation — the same "hashtags as the first comment"
+   * convention the design's caption helper text refers to.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  first_comment?: string;
 }

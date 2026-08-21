@@ -190,7 +190,7 @@ model appraisal_entries {
 
 model appraisal_requests {
   id                                                     Int                     @id @default(autoincrement())
-  faculty_id                                             Int
+  faculty_id                                             Int?
   academic_year                                          String                  @db.VarChar(20)
   status                                                 appraisal_status_enum   @default(submitted)
   hod_reviewed_by                                        Int?
@@ -199,11 +199,13 @@ model appraisal_requests {
   management_approved_at                                 DateTime?               @db.Timestamptz(6)
   created_at                                             DateTime                @default(now()) @db.Timestamptz(6)
   hod_remarks                                            String?
+  staff_user_id                                          Int?
   appraisal_attachments                                  appraisal_attachments[]
   appraisal_entries                                      appraisal_entries[]
-  faculty                                                faculty                 @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty                                                faculty?                @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_appraisal_requests_hod_reviewed_byTousers        users?                  @relation("appraisal_requests_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_appraisal_requests_management_approved_byTousers users?                  @relation("appraisal_requests_management_approved_byTousers", fields: [management_approved_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_appraisal_requests_staff_user_idTousers          users?                  @relation("appraisal_requests_staff_user_idTousers", fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -231,22 +233,24 @@ model assignments {
 }
 
 model attendance_records {
-  id                   Int                    @id @default(autoincrement())
-  student_id           Int
-  class_id             Int
-  subject_id           Int?
-  attendance_date      DateTime               @db.Date
-  status               attendance_status_enum
-  marked_by_faculty_id Int?
-  marked_by_user_id    Int
-  is_published         Boolean                @default(true)
-  published_at         DateTime?              @db.Timestamp(6)
-  photo_url            String?                @db.VarChar(500)
-  classes              classes                @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  faculty              faculty?               @relation(fields: [marked_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  subjects             subjects?              @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users                users                  @relation(fields: [marked_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_attendance_marked_by_user")
-  students             students               @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_attendance_student")
+  id                        Int                         @id @default(autoincrement())
+  student_id                Int
+  class_id                  Int
+  subject_id                Int?
+  attendance_date           DateTime                    @db.Date
+  status                    attendance_status_enum
+  marked_by_faculty_id      Int?
+  marked_by_user_id         Int
+  is_published              Boolean                     @default(true)
+  published_at              DateTime?                   @db.Timestamp(6)
+  photo_url                 String?                     @db.VarChar(500)
+  updated_at                DateTime?                   @db.Timestamptz(6)
+  attendance_record_changes attendance_record_changes[]
+  classes                   classes                     @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty                   faculty?                    @relation(fields: [marked_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subjects                  subjects?                   @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                     users                       @relation(fields: [marked_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_attendance_marked_by_user")
+  students                  students                    @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_attendance_student")
 
   @@unique([student_id, class_id, subject_id, attendance_date])
   @@index([class_id, attendance_date], map: "idx_attendance_class_date")
@@ -317,11 +321,13 @@ model book_borrow_records {
   fine_paid_amount                                                  Decimal?           @db.Decimal(10, 2)
   fine_paid_at                                                      DateTime?          @db.Timestamptz(6)
   replacement_indent_id                                             Int?               @unique
+  staff_user_id                                                     Int?
   books                                                             books              @relation(fields: [book_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_book_borrow_records_damage_lost_collected_by_user_idTousers users?             @relation("book_borrow_records_damage_lost_collected_by_user_idTousers", fields: [damage_lost_collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   faculty                                                           faculty?           @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_book_borrow_records_fine_collected_by_user_idTousers        users?             @relation("book_borrow_records_fine_collected_by_user_idTousers", fields: [fine_collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   purchase_indents                                                  purchase_indents?  @relation(fields: [replacement_indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_book_borrow_records_staff_user_idTousers                    users?             @relation("book_borrow_records_staff_user_idTousers", fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   students                                                          students?          @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([status], map: "idx_book_borrow_status")
@@ -479,6 +485,7 @@ model classes {
   lms_folder_classes            lms_folder_classes[]
   lms_notes                     lms_notes[]
   project_teams                 project_teams[]
+  student_escalations           student_escalations[]
   students                      students[]
   timetable_slots               timetable_slots[]
 
@@ -508,15 +515,17 @@ model coordinator_calendar_entries {
 }
 
 model courses {
-  id             Int         @id @default(autoincrement())
-  name           String      @db.VarChar(150)
-  code           String      @unique @db.VarChar(30)
-  department_id  Int
-  duration_years Int         @default(4) @db.SmallInt
-  created_at     DateTime    @default(now()) @db.Timestamptz(6)
-  classes        classes[]
-  departments    departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students       students[]
+  id                        Int         @id @default(autoincrement())
+  name                      String      @db.VarChar(150)
+  code                      String      @unique @db.VarChar(30)
+  department_id             Int
+  duration_years            Int         @default(4) @db.SmallInt
+  created_at                DateTime    @default(now()) @db.Timestamptz(6)
+  accreditation_status      String?     @db.VarChar(30)
+  accreditation_valid_until DateTime?   @db.Date
+  classes                   classes[]
+  departments               departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students                  students[]
 }
 
 model demand_categories {
@@ -546,17 +555,27 @@ model departments {
   code                                                       String                           @unique @db.VarChar(20)
   created_at                                                 DateTime                         @default(now()) @db.Timestamptz(6)
   head_of_department_faculty_id                              Int?
+  office_location                                            String?                          @db.VarChar(255)
+  contact_phone                                              String?                          @db.VarChar(20)
+  contact_email                                              String?                          @db.VarChar(255)
   announcements                                              announcements[]
   books                                                      books[]
   classes                                                    classes[]
   courses                                                    courses[]
   curriculum_mappings                                        curriculum_mappings[]
   department_achievements                                    department_achievements[]
+  department_documents                                       department_documents[]
+  department_events                                          department_events[]
+  department_labs                                            department_labs[]
+  department_meetings                                        department_meetings[]
+  department_mous                                            department_mous[]
+  department_research_funding                                department_research_funding[]
   faculty_departments_head_of_department_faculty_idTofaculty faculty?                         @relation("departments_head_of_department_faculty_idTofaculty", fields: [head_of_department_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "departments_hod_fkey")
   exam_timetable_versions                                    exam_timetable_versions[]
   faculty                                                    faculty[]
   feedback_assignments                                       feedback_assignments[]
   marks_entry_locks                                          marks_entry_locks[]
+  nba_criteria                                               nba_criteria[]
   non_teaching_staff                                         non_teaching_staff[]
   od_request_hod_approvals                                   od_request_hod_approvals[]
   project_teams                                              project_teams[]
@@ -750,6 +769,7 @@ model faculty {
   reports_to_faculty_id                                                                      Int?
   resume_url                                                                                 String?                          @db.VarChar(500)
   designation_id                                                                             Int?
+  staff_code                                                                                 String?                          @unique @db.VarChar(30)
   appraisal_requests                                                                         appraisal_requests[]
   assignments                                                                                assignments[]
   attendance_records                                                                         attendance_records[]
@@ -757,6 +777,8 @@ model faculty {
   book_borrow_records                                                                        book_borrow_records[]
   campus_outing_requests                                                                     campus_outing_requests[]
   class_mentors                                                                              class_mentors[]
+  department_events                                                                          department_events[]
+  department_labs                                                                            department_labs[]
   departments_departments_head_of_department_faculty_idTofaculty                             departments[]                    @relation("departments_head_of_department_faculty_idTofaculty")
   exam_marks                                                                                 exam_marks[]
   departments                                                                                departments                      @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -766,6 +788,8 @@ model faculty {
   users                                                                                      users                            @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   faculty_activity_log                                                                       faculty_activity_log[]
   faculty_attendance_corrections                                                             faculty_attendance_corrections[]
+  faculty_awards                                                                             faculty_awards[]
+  faculty_committee_roles                                                                    faculty_committee_roles[]
   faculty_daily_attendance                                                                   faculty_daily_attendance[]
   faculty_documents                                                                          faculty_documents[]
   faculty_holiday_mapping                                                                    faculty_holiday_mapping[]
@@ -774,6 +798,7 @@ model faculty {
   faculty_leave_balances                                                                     faculty_leave_balances[]
   faculty_leaves                                                                             faculty_leaves[]
   faculty_od_requests                                                                        faculty_od_requests[]
+  faculty_publications                                                                       faculty_publications[]
   faculty_sensitive_info                                                                     faculty_sensitive_info?
   faculty_subject_class_mapping                                                              faculty_subject_class_mapping[]
   faculty_subject_class_mapping_faculty_subject_class_mapping_substitute_faculty_idTofaculty faculty_subject_class_mapping[]  @relation("faculty_subject_class_mapping_substitute_faculty_idTofaculty")
@@ -821,7 +846,7 @@ model faculty_holiday_mapping {
 
 model faculty_leaves {
   id                                                       Int                   @id @default(autoincrement())
-  faculty_id                                               Int
+  faculty_id                                               Int?
   from_date                                                DateTime              @db.Date
   to_date                                                  DateTime              @db.Date
   reason                                                   String?               @db.VarChar(255)
@@ -842,11 +867,13 @@ model faculty_leaves {
   principal_remarks                                        String?               @db.VarChar(255)
   alternate_arrangement                                    String?               @db.VarChar(255)
   is_station_leave                                         Boolean               @default(false)
-  faculty                                                  faculty               @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  staff_user_id                                            Int?
+  faculty                                                  faculty?              @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_faculty_leaves_hod_decided_by_user_idTousers       users?                @relation("faculty_leaves_hod_decided_by_user_idTousers", fields: [hod_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_hod_decider_fkey")
   users_faculty_leaves_hr_decided_by_user_idTousers        users?                @relation("faculty_leaves_hr_decided_by_user_idTousers", fields: [hr_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_hr_decider_fkey")
   leave_types                                              leave_types?          @relation(fields: [leave_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_leave_type_fkey")
   users_faculty_leaves_principal_decided_by_user_idTousers users?                @relation("faculty_leaves_principal_decided_by_user_idTousers", fields: [principal_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_faculty_leaves_staff_user_idTousers                users?                @relation("faculty_leaves_staff_user_idTousers", fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model faculty_sensitive_info {
@@ -1353,9 +1380,14 @@ model media_requests {
   coordinator_name        String?                   @db.VarChar(150)
   contact_number          String?                   @db.VarChar(20)
   media_types             String[]
+  guest_name              String?                   @db.VarChar(150)
+  guest_designation       String?                   @db.VarChar(150)
+  poster_needed_by        DateTime?                 @db.Date
+  audience                String[]
   users                   users                     @relation(fields: [requested_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_media_requests_requested_by_user")
   faculty                 faculty?                  @relation(fields: [requested_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   venues                  venues?                   @relation(fields: [venue_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  media_shoot_assignments media_shoot_assignments[]
 
   @@index([requested_by_user_id], map: "idx_media_requests_requested_by_user")
   @@index([venue_id], map: "idx_media_requests_venue")
@@ -1484,15 +1516,17 @@ model parent_student_mapping {
 }
 
 model payslip_requests {
-  id           Int                 @id @default(autoincrement())
-  faculty_id   Int
-  month        Int                 @db.SmallInt
-  year         Int                 @db.SmallInt
-  status       payslip_status_enum @default(pending)
-  file_url     String?             @db.VarChar(500)
-  requested_at DateTime            @default(now()) @db.Timestamptz(6)
-  purpose      String?             @db.VarChar(255)
-  faculty      faculty             @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id            Int                 @id @default(autoincrement())
+  faculty_id    Int?
+  month         Int                 @db.SmallInt
+  year          Int                 @db.SmallInt
+  status        payslip_status_enum @default(pending)
+  file_url      String?             @db.VarChar(500)
+  requested_at  DateTime            @default(now()) @db.Timestamptz(6)
+  purpose       String?             @db.VarChar(255)
+  staff_user_id Int?
+  faculty       faculty?            @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users         users?              @relation(fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model personal_calendar_entries {
@@ -1618,6 +1652,8 @@ model purchase_indents {
   hod_remarks                                   String?
   hod_reviewed_by                               Int?
   hod_reviewed_at                               DateTime?                  @db.Timestamptz(6)
+  ref                                           String?                    @db.VarChar(40)
+  estimated_amount                              Decimal?                   @db.Decimal(12, 2)
   book_borrow_records                           book_borrow_records?
   departments                                   departments                @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_purchase_indents_hod_reviewed_byTousers users?                     @relation("purchase_indents_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1771,6 +1807,9 @@ model service_indents {
   hod_remarks                                  String?
   hod_reviewed_by                              Int?
   hod_reviewed_at                              DateTime?                 @db.Timestamptz(6)
+  ref                                          String?                   @db.VarChar(40)
+  category                                     String?                   @db.VarChar(50)
+  priority                                     String?                   @db.VarChar(10)
   departments                                  departments               @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_service_indents_hod_reviewed_byTousers users?                    @relation("service_indents_hod_reviewed_byTousers", fields: [hod_reviewed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                                        users                     @relation(fields: [requested_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1907,23 +1946,27 @@ model student_drive_applications {
 }
 
 model student_family_details {
-  id                   Int      @id @default(autoincrement())
-  student_id           Int      @unique
-  father_name          String?  @db.VarChar(150)
-  father_qualification String?  @db.VarChar(150)
-  father_occupation    String?  @db.VarChar(150)
-  father_annual_income Decimal? @db.Decimal(12, 2)
-  father_email         String?  @db.Citext
-  father_mobile        String?  @db.VarChar(20)
-  mother_name          String?  @db.VarChar(150)
-  mother_qualification String?  @db.VarChar(150)
-  mother_occupation    String?  @db.VarChar(150)
-  mother_annual_income Decimal? @db.Decimal(12, 2)
-  mother_email         String?  @db.Citext
-  mother_mobile        String?  @db.VarChar(20)
-  father_photo_url     String?  @db.VarChar(500)
-  mother_photo_url     String?  @db.VarChar(500)
-  students             students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                    Int      @id @default(autoincrement())
+  student_id            Int      @unique
+  father_name           String?  @db.VarChar(150)
+  father_qualification  String?  @db.VarChar(150)
+  father_occupation     String?  @db.VarChar(150)
+  father_annual_income  Decimal? @db.Decimal(12, 2)
+  father_email          String?  @db.Citext
+  father_mobile         String?  @db.VarChar(20)
+  mother_name           String?  @db.VarChar(150)
+  mother_qualification  String?  @db.VarChar(150)
+  mother_occupation     String?  @db.VarChar(150)
+  mother_annual_income  Decimal? @db.Decimal(12, 2)
+  mother_email          String?  @db.Citext
+  mother_mobile         String?  @db.VarChar(20)
+  father_photo_url      String?  @db.VarChar(500)
+  mother_photo_url      String?  @db.VarChar(500)
+  guardian_name         String?  @db.VarChar(150)
+  guardian_relationship String?  @db.VarChar(50)
+  guardian_phone        String?  @db.VarChar(20)
+  guardian_email        String?  @db.Citext
+  students              students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model student_fee_demand_mapping {
@@ -2078,6 +2121,7 @@ model students {
   photo_uploaded_at                                                 DateTime?                          @db.Timestamptz(6)
   face_enrolled_at                                                  DateTime?                          @db.Timestamptz(6)
   mentor_faculty_id                                                 Int?
+  is_class_rep                                                      Boolean                            @default(false)
   alumni_members                                                    alumni_members?
   attendance_records                                                attendance_records[]
   bonafide_requests                                                 bonafide_requests[]
@@ -2091,6 +2135,7 @@ model students {
   hostel_complaints                                                 hostel_complaints[]
   hostel_in_out_ledger                                              hostel_in_out_ledger[]
   hostel_mess_feedback                                              hostel_mess_feedback[]
+  hostel_night_attendance                                           hostel_night_attendance[]
   hostel_outings                                                    hostel_outings[]
   hostel_quit_requests                                              hostel_quit_requests[]
   main_gate_in_out_ledger                                           main_gate_in_out_ledger[]
@@ -2125,14 +2170,17 @@ model students {
   student_contacts                                                  student_contacts?
   student_drive_applications                                        student_drive_applications[]
   student_entrepreneurship                                          student_entrepreneurship?
+  student_escalations                                               student_escalations[]
   student_family_details                                            student_family_details?
   student_fee_demand_mapping                                        student_fee_demand_mapping[]
+  student_health_records                                            student_health_records?
   student_higher_education                                          student_higher_education?
   student_hostel_mapping                                            student_hostel_mapping?
   student_identity_marks                                            student_identity_marks[]
   student_leaves                                                    student_leaves[]
   student_meeting_notes                                             student_meeting_notes[]
   student_no_due_status                                             student_no_due_status[]
+  student_outpasses                                                 student_outpasses[]
   student_profiles                                                  student_profiles?
   student_projects                                                  student_projects[]
   student_scholarship_awards                                        student_scholarship_awards[]
@@ -2248,12 +2296,15 @@ model users {
   appraisal_cycles                                                                  appraisal_cycles[]
   appraisal_requests_appraisal_requests_hod_reviewed_byTousers                      appraisal_requests[]               @relation("appraisal_requests_hod_reviewed_byTousers")
   appraisal_requests_appraisal_requests_management_approved_byTousers               appraisal_requests[]               @relation("appraisal_requests_management_approved_byTousers")
+  appraisal_requests_appraisal_requests_staff_user_idTousers                        appraisal_requests[]               @relation("appraisal_requests_staff_user_idTousers")
+  attendance_record_changes                                                         attendance_record_changes[]
   attendance_records                                                                attendance_records[]
   audit_logs                                                                        audit_logs[]
   bills                                                                             bills[]
   bonafide_requests                                                                 bonafide_requests[]
   book_borrow_records_book_borrow_records_damage_lost_collected_by_user_idTousers   book_borrow_records[]              @relation("book_borrow_records_damage_lost_collected_by_user_idTousers")
   book_borrow_records_book_borrow_records_fine_collected_by_user_idTousers          book_borrow_records[]              @relation("book_borrow_records_fine_collected_by_user_idTousers")
+  book_borrow_records_book_borrow_records_staff_user_idTousers                      book_borrow_records[]              @relation("book_borrow_records_staff_user_idTousers")
   bus_fuel_logs                                                                     bus_fuel_logs[]
   bus_service_logs                                                                  bus_service_logs[]
   calendar_events                                                                   calendar_events[]
@@ -2261,6 +2312,11 @@ model users {
   class_mentors                                                                     class_mentors[]
   coe_profiles                                                                      coe_profiles?
   department_achievements                                                           department_achievements[]
+  department_documents_department_documents_uploaded_by_user_idTousers              department_documents[]             @relation("department_documents_uploaded_by_user_idTousers")
+  department_documents_department_documents_verified_by_user_idTousers              department_documents[]             @relation("department_documents_verified_by_user_idTousers")
+  department_events                                                                 department_events[]
+  department_meetings_department_meetings_chair_user_idTousers                      department_meetings[]              @relation("department_meetings_chair_user_idTousers")
+  department_meetings_department_meetings_created_by_user_idTousers                 department_meetings[]              @relation("department_meetings_created_by_user_idTousers")
   device_push_tokens                                                                device_push_tokens[]
   e_resources                                                                       e_resources[]
   edc_documents_edc_documents_reviewed_by_user_idTousers                            edc_documents[]                    @relation("edc_documents_reviewed_by_user_idTousers")
@@ -2276,13 +2332,16 @@ model users {
   faculty                                                                           faculty?
   faculty_activity_log                                                              faculty_activity_log[]
   faculty_attendance_corrections                                                    faculty_attendance_corrections[]
+  faculty_daily_attendance                                                          faculty_daily_attendance[]
   faculty_documents                                                                 faculty_documents[]
   faculty_documents_faculty_documents_verified_by_user_idTousers                    faculty_documents[]                @relation("faculty_documents_verified_by_user_idTousers")
   faculty_id_card_issuances                                                         faculty_id_card_issuances[]
   faculty_leaves_faculty_leaves_hod_decided_by_user_idTousers                       faculty_leaves[]                   @relation("faculty_leaves_hod_decided_by_user_idTousers")
   faculty_leaves_faculty_leaves_hr_decided_by_user_idTousers                        faculty_leaves[]                   @relation("faculty_leaves_hr_decided_by_user_idTousers")
   faculty_leaves_faculty_leaves_principal_decided_by_user_idTousers                 faculty_leaves[]                   @relation("faculty_leaves_principal_decided_by_user_idTousers")
+  faculty_leaves_faculty_leaves_staff_user_idTousers                                faculty_leaves[]                   @relation("faculty_leaves_staff_user_idTousers")
   faculty_od_requests                                                               faculty_od_requests[]
+  faculty_od_requests_faculty_od_requests_staff_user_idTousers                      faculty_od_requests[]              @relation("faculty_od_requests_staff_user_idTousers")
   faculty_subject_class_mapping                                                     faculty_subject_class_mapping[]
   fee_payment_gateway_orders                                                        fee_payment_gateway_orders[]
   fee_payments                                                                      fee_payments[]
@@ -2291,6 +2350,7 @@ model users {
   grn                                                                               grn[]
   hall_ticket_clearance_exceptions                                                  hall_ticket_clearance_exceptions[]
   hostel_in_out_ledger                                                              hostel_in_out_ledger[]
+  hostel_night_attendance                                                           hostel_night_attendance[]
   hostel_outings                                                                    hostel_outings[]
   hostel_quit_requests                                                              hostel_quit_requests[]
   hostel_wardens                                                                    hostel_wardens[]
@@ -2301,12 +2361,19 @@ model users {
   lms_resources                                                                     lms_resources[]
   main_gate_in_out_ledger                                                           main_gate_in_out_ledger[]
   malpractice_incidents                                                             malpractice_incidents[]
+  media_equipment                                                                   media_equipment[]
+  media_equipment_movements                                                         media_equipment_movements[]
+  media_indents                                                                     media_indents[]
   media_requests                                                                    media_requests[]
+  media_shoot_assignments                                                           media_shoot_assignments[]
+  media_team_members                                                                media_team_members[]
   medical_staff                                                                     medical_staff[]
+  nba_evidence_items                                                                nba_evidence_items[]
   non_teaching_staff                                                                non_teaching_staff[]
   notifications                                                                     notifications[]
   od_request_hod_approvals                                                          od_request_hod_approvals[]
   parent_student_mapping                                                            parent_student_mapping[]
+  payslip_requests                                                                  payslip_requests[]
   personal_calendar_entries                                                         personal_calendar_entries[]
   placement_drives                                                                  placement_drives[]
   purchase_indents_purchase_indents_hod_reviewed_byTousers                          purchase_indents[]                 @relation("purchase_indents_hod_reviewed_byTousers")
@@ -2339,12 +2406,16 @@ model users {
   sports_session_attendance                                                         sports_session_attendance[]
   startup_ideas                                                                     startup_ideas[]
   student_drive_applications                                                        student_drive_applications[]
+  student_escalations                                                               student_escalations[]
   student_leaves                                                                    student_leaves[]
   student_leaves_student_leaves_approved_by_warden_user_idTousers                   student_leaves[]                   @relation("student_leaves_approved_by_warden_user_idTousers")
   student_meeting_notes                                                             student_meeting_notes[]
   student_no_due_status                                                             student_no_due_status[]
+  student_outpasses_student_outpasses_approved_by_user_idTousers                    student_outpasses[]                @relation("student_outpasses_approved_by_user_idTousers")
+  student_outpasses_student_outpasses_created_by_user_idTousers                     student_outpasses[]                @relation("student_outpasses_created_by_user_idTousers")
   students                                                                          students?
   transport_notices                                                                 transport_notices[]
+  user_preferences                                                                  user_preferences?
   user_social_links                                                                 user_social_links[]
   roles                                                                             roles                              @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   venue_bookings_venue_bookings_booked_by_user_idTousers                            venue_bookings[]                   @relation("venue_bookings_booked_by_user_idTousers")
@@ -2395,6 +2466,7 @@ model venue_bookings {
   requirements                                       String[]
   admin_remarks                                      String?
   reviewed_at                                        DateTime?                 @db.Timestamptz(6)
+  ref                                                String?                   @db.VarChar(40)
   venues_venue_bookings_alternative_venue_idTovenues venues?                   @relation("venue_bookings_alternative_venue_idTovenues", fields: [alternative_venue_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_venue_bookings_booked_by_user_idTousers      users                     @relation("venue_bookings_booked_by_user_idTousers", fields: [booked_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_venue_bookings_reviewed_by_user_idTousers    users?                    @relation("venue_bookings_reviewed_by_user_idTousers", fields: [reviewed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -2409,6 +2481,7 @@ model venues {
   location                                                   String?                       @db.VarChar(255)
   capacity                                                   Int?
   venue_type                                                 venue_type_enum?
+  department_events                                          department_events[]
   exam_timetable                                             exam_timetable[]
   grn                                                        grn[]
   hall_plans                                                 hall_plans[]
@@ -2490,7 +2563,7 @@ model faculty_activity_log {
 
 model faculty_daily_attendance {
   id              Int                            @id @default(autoincrement())
-  faculty_id      Int
+  faculty_id      Int?
   attendance_date DateTime                       @db.Date
   punch_in        DateTime?                      @db.Time(6)
   punch_out       DateTime?                      @db.Time(6)
@@ -2498,7 +2571,9 @@ model faculty_daily_attendance {
   academic_year   String                         @db.VarChar(20)
   created_at      DateTime                       @default(now()) @db.Timestamptz(6)
   updated_at      DateTime                       @default(now()) @db.Timestamptz(6)
-  faculty         faculty                        @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  staff_user_id   Int?
+  faculty         faculty?                       @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users           users?                         @relation(fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([faculty_id, attendance_date])
   @@index([faculty_id, attendance_date], map: "idx_faculty_daily_attendance_faculty_date")
@@ -2523,40 +2598,42 @@ model faculty_documents {
 }
 
 model faculty_od_requests {
-  id                           Int                         @id @default(autoincrement())
-  faculty_id                   Int
-  from_date                    DateTime                    @db.Date
-  to_date                      DateTime                    @db.Date
-  place                        String?                     @db.VarChar(255)
-  purpose                      String?                     @db.VarChar(255)
-  hod_approval_status          approval_status_enum        @default(pending)
-  hr_approval_status           approval_status_enum        @default(pending)
-  created_at                   DateTime                    @default(now()) @db.Timestamptz(6)
-  organization_visited         String?                     @db.VarChar(255)
-  students_guided              Int?
-  sanction_order               String?                     @db.VarChar(100)
-  latitude                     Decimal?                    @db.Decimal(10, 6)
-  longitude                    Decimal?                    @db.Decimal(10, 6)
-  photo_url                    String?                     @db.VarChar(500)
-  photo_uploaded_at            DateTime?                   @db.Timestamptz(6)
-  certificate_url              String?                     @db.VarChar(500)
-  certificate_uploaded_at      DateTime?                   @db.Timestamptz(6)
-  verification_status          od_verification_status_enum @default(awaiting_documents)
-  email_sender                 String?                     @db.VarChar(255)
-  email_receiver               String?                     @db.VarChar(255)
-  email_subject                String?                     @db.VarChar(255)
-  email_sent_at                DateTime?                   @db.Timestamptz(6)
-  email_body                   String?
-  admin_remarks                String?
-  principal_approval_status    approval_status_enum?       @default(pending)
-  principal_decided_by_user_id Int?
-  principal_decided_at         DateTime?                   @db.Timestamptz(6)
-  principal_remarks            String?                     @db.VarChar(255)
-  od_type                      String?                     @db.VarChar(50)
-  periods_affected             String?                     @db.VarChar(30)
-  class_adjustment             String?                     @db.VarChar(255)
-  faculty                      faculty                     @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users                        users?                      @relation(fields: [principal_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                                             Int                         @id @default(autoincrement())
+  faculty_id                                     Int?
+  from_date                                      DateTime                    @db.Date
+  to_date                                        DateTime                    @db.Date
+  place                                          String?                     @db.VarChar(255)
+  purpose                                        String?                     @db.VarChar(255)
+  hod_approval_status                            approval_status_enum        @default(pending)
+  hr_approval_status                             approval_status_enum        @default(pending)
+  created_at                                     DateTime                    @default(now()) @db.Timestamptz(6)
+  organization_visited                           String?                     @db.VarChar(255)
+  students_guided                                Int?
+  sanction_order                                 String?                     @db.VarChar(100)
+  latitude                                       Decimal?                    @db.Decimal(10, 6)
+  longitude                                      Decimal?                    @db.Decimal(10, 6)
+  photo_url                                      String?                     @db.VarChar(500)
+  photo_uploaded_at                              DateTime?                   @db.Timestamptz(6)
+  certificate_url                                String?                     @db.VarChar(500)
+  certificate_uploaded_at                        DateTime?                   @db.Timestamptz(6)
+  verification_status                            od_verification_status_enum @default(awaiting_documents)
+  email_sender                                   String?                     @db.VarChar(255)
+  email_receiver                                 String?                     @db.VarChar(255)
+  email_subject                                  String?                     @db.VarChar(255)
+  email_sent_at                                  DateTime?                   @db.Timestamptz(6)
+  email_body                                     String?
+  admin_remarks                                  String?
+  principal_approval_status                      approval_status_enum?       @default(pending)
+  principal_decided_by_user_id                   Int?
+  principal_decided_at                           DateTime?                   @db.Timestamptz(6)
+  principal_remarks                              String?                     @db.VarChar(255)
+  od_type                                        String?                     @db.VarChar(50)
+  periods_affected                               String?                     @db.VarChar(30)
+  class_adjustment                               String?                     @db.VarChar(255)
+  staff_user_id                                  Int?
+  faculty                                        faculty?                    @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                                          users?                      @relation(fields: [principal_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_faculty_od_requests_staff_user_idTousers users?                      @relation("faculty_od_requests_staff_user_idTousers", fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([faculty_id], map: "idx_faculty_od_requests_faculty_id")
 }
@@ -2815,16 +2892,31 @@ model hostel_wardens {
 }
 
 model medical_staff {
-  id                   Int                    @id @default(autoincrement())
-  user_id              Int?
-  name                 String                 @db.VarChar(150)
-  designation          String?                @db.VarChar(100)
-  shift_time           String?                @db.VarChar(50)
-  phone                String?                @db.VarChar(20)
-  created_at           DateTime               @default(now()) @db.Timestamptz(6)
-  users                users?                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  medical_visits       medical_visits[]
-  sports_fitness_tests sports_fitness_tests[]
+  id                       Int                    @id @default(autoincrement())
+  user_id                  Int?
+  name                     String                 @db.VarChar(150)
+  designation              String?                @db.VarChar(100)
+  shift_time               String?                @db.VarChar(50)
+  phone                    String?                @db.VarChar(20)
+  created_at               DateTime               @default(now()) @db.Timestamptz(6)
+  on_duty                  Boolean                @default(true)
+  qualification            String?                @db.VarChar(150)
+  specialization           String?                @db.VarChar(150)
+  experience_years         Int?
+  previous_institution     String?                @db.VarChar(200)
+  previous_role            String?                @db.VarChar(150)
+  previous_duration        String?                @db.VarChar(50)
+  registration_no          String?                @db.VarChar(50)
+  email                    String?                @db.VarChar(150)
+  joined_date              DateTime?              @db.Date
+  working_days             String?                @db.VarChar(100)
+  emergency_duty_available Boolean                @default(false)
+  status                   String                 @default("active") @db.VarChar(20)
+  ambulance_status         ambulance_status[]
+  medical_bills            medical_bills[]
+  users                    users?                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  medical_visits           medical_visits[]
+  sports_fitness_tests     sports_fitness_tests[]
 }
 
 model medical_visits {
@@ -2839,9 +2931,12 @@ model medical_visits {
   referred_to_hospital Boolean            @default(false)
   attended_by_staff_id Int?
   created_at           DateTime           @default(now()) @db.Timestamptz(6)
+  status               String             @default("done") @db.VarChar(20)
+  queued_at            DateTime           @default(now()) @db.Timestamptz(6)
   medical_staff        medical_staff?     @relation(fields: [attended_by_staff_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   faculty              faculty?           @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   students             students?          @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sick_room_stays      sick_room_stays[]
   sports_injuries      sports_injuries[]
 
   @@index([student_id], map: "idx_medical_visits_student")
@@ -4061,6 +4156,531 @@ model campus_outing_requests {
   students                students                  @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model ambulance_status {
+  id                     Int            @id @default(autoincrement())
+  vehicle_number         String         @db.VarChar(30)
+  driver_staff_id        Int?
+  oxygen_cylinder_status String         @default("full") @db.VarChar(20)
+  status                 String         @default("on_call") @db.VarChar(20)
+  updated_at             DateTime       @default(now()) @db.Timestamptz(6)
+  medical_staff          medical_staff? @relation(fields: [driver_staff_id], references: [id], onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model ambulance_trips {
+  id           Int      @id @default(autoincrement())
+  case_summary String   @db.VarChar(200)
+  detail       String?  @db.VarChar(255)
+  outcome      String   @db.VarChar(20)
+  occurred_at  DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model attendance_record_changes {
+  id                   BigInt                  @id @default(autoincrement())
+  attendance_record_id Int
+  from_status          attendance_status_enum?
+  to_status            attendance_status_enum
+  changed_by_user_id   Int
+  changed_at           DateTime                @default(now()) @db.Timestamptz(6)
+  attendance_records   attendance_records      @relation(fields: [attendance_record_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                users                   @relation(fields: [changed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([attendance_record_id], map: "idx_attendance_record_changes_record")
+}
+
+model chat_conversations {
+  id            Int             @id @default(autoincrement())
+  user_id       Int
+  title         String          @db.VarChar(120)
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime        @default(now()) @db.Timestamptz(6)
+  chat_messages chat_messages[]
+
+  @@index([user_id, updated_at(sort: Desc)], map: "idx_chat_conversations_user")
+}
+
+model chat_messages {
+  id                 Int                @id @default(autoincrement())
+  conversation_id    Int
+  role               String             @db.VarChar(10)
+  message            String
+  intent             String?            @db.VarChar(100)
+  confidence         Decimal?           @db.Decimal(4, 3)
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  chat_conversations chat_conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([conversation_id, created_at], map: "idx_chat_messages_conversation")
+}
+
+model department_documents {
+  id                                                    Int                             @id @default(autoincrement())
+  department_id                                         Int
+  name                                                  String                          @db.VarChar(255)
+  category                                              String                          @db.VarChar(50)
+  file_url                                              String?                         @db.VarChar(500)
+  file_key                                              String?                         @db.VarChar(500)
+  size_bytes                                            BigInt?
+  status                                                department_document_status_enum @default(pending)
+  version                                               Int                             @default(1)
+  uploaded_by_user_id                                   Int
+  verified_by_user_id                                   Int?
+  verified_at                                           DateTime?                       @db.Timestamptz(6)
+  created_at                                            DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at                                            DateTime                        @default(now()) @db.Timestamptz(6)
+  departments                                           departments                     @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_department_documents_uploaded_by_user_idTousers users                           @relation("department_documents_uploaded_by_user_idTousers", fields: [uploaded_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_department_documents_verified_by_user_idTousers users?                          @relation("department_documents_verified_by_user_idTousers", fields: [verified_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([department_id], map: "idx_department_documents_department")
+}
+
+model department_events {
+  id                 Int                          @id @default(autoincrement())
+  department_id      Int
+  title              String                       @db.VarChar(255)
+  kind               String                       @db.VarChar(100)
+  event_date         String                       @db.VarChar(50)
+  venue_id           Int?
+  owner_faculty_id   Int?
+  status             department_event_status_enum @default(planning)
+  registrations      Int                          @default(0)
+  capacity           Int
+  created_by_user_id Int
+  created_at         DateTime                     @default(now()) @db.Timestamptz(6)
+  users              users                        @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  departments        departments                  @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty            faculty?                     @relation(fields: [owner_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  venues             venues?                      @relation(fields: [venue_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([department_id], map: "idx_department_events_department")
+}
+
+model department_labs {
+  id                  Int         @id @default(autoincrement())
+  department_id       Int
+  name                String      @db.VarChar(150)
+  incharge_faculty_id Int?
+  systems_count       Int?
+  status              String?     @default("operational") @db.VarChar(30)
+  created_at          DateTime    @default(now()) @db.Timestamptz(6)
+  departments         departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty             faculty?    @relation(fields: [incharge_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model department_meetings {
+  id                                                  Int                    @id @default(autoincrement())
+  department_id                                       Int
+  title                                               String                 @db.VarChar(255)
+  meeting_at                                          DateTime               @db.Timestamptz(6)
+  venue                                               String?                @db.VarChar(150)
+  chair_user_id                                       Int?
+  invitee_count                                       Int                    @default(0)
+  mom_status                                          mom_status_enum        @default(scheduled)
+  mom_text                                            String?
+  created_by_user_id                                  Int
+  created_at                                          DateTime               @default(now()) @db.Timestamptz(6)
+  users_department_meetings_chair_user_idTousers      users?                 @relation("department_meetings_chair_user_idTousers", fields: [chair_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_department_meetings_created_by_user_idTousers users                  @relation("department_meetings_created_by_user_idTousers", fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  departments                                         departments            @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  meeting_action_items                                meeting_action_items[]
+
+  @@index([department_id], map: "idx_department_meetings_department")
+}
+
+model department_mous {
+  id            Int         @id @default(autoincrement())
+  department_id Int
+  partner_name  String      @db.VarChar(255)
+  signed_date   DateTime?   @db.Date
+  valid_until   DateTime?   @db.Date
+  status        String?     @default("active") @db.VarChar(30)
+  document_url  String?     @db.VarChar(500)
+  departments   departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model department_research_funding {
+  id                Int         @id @default(autoincrement())
+  department_id     Int
+  title             String      @db.VarChar(255)
+  funding_agency    String?     @db.VarChar(255)
+  sanctioned_amount Decimal?    @db.Decimal(14, 2)
+  sanctioned_date   DateTime?   @db.Date
+  status            String?     @default("ongoing") @db.VarChar(30)
+  departments       departments @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_awards {
+  id         Int      @id @default(autoincrement())
+  faculty_id Int
+  title      String   @db.VarChar(255)
+  awarded_by String?  @db.VarChar(255)
+  year       Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  faculty    faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model faculty_committee_roles {
+  id             Int     @id @default(autoincrement())
+  faculty_id     Int
+  committee_name String  @db.VarChar(255)
+  role           String? @db.VarChar(100)
+  academic_year  String? @db.VarChar(20)
+  faculty        faculty @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model faculty_publications {
+  id             Int      @id @default(autoincrement())
+  faculty_id     Int
+  title          String   @db.VarChar(500)
+  type           String   @db.VarChar(30)
+  year           Int?
+  venue          String?  @db.VarChar(255)
+  doi            String?  @db.VarChar(100)
+  citation_count Int      @default(0)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  faculty        faculty  @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model hostel_night_attendance {
+  id                Int      @id @default(autoincrement())
+  student_id        Int
+  attendance_date   DateTime @db.Date
+  status            String   @db.VarChar(20)
+  marked_by_user_id Int?
+  marked_at         DateTime @default(now()) @db.Timestamptz(6)
+  users             users?   @relation(fields: [marked_by_user_id], references: [id], onUpdate: NoAction)
+  students          students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([student_id, attendance_date])
+  @@index([attendance_date], map: "idx_hostel_night_attendance_date")
+}
+
+model media_equipment {
+  id                        Int                         @id @default(autoincrement())
+  asset_tag                 String?                     @unique @db.VarChar(30)
+  name                      String                      @db.VarChar(150)
+  category                  String                      @db.VarChar(30)
+  serial_no                 String?                     @db.VarChar(100)
+  condition                 String                      @default("good") @db.VarChar(20)
+  status                    String                      @default("available") @db.VarChar(20)
+  checked_out_to            String?                     @db.VarChar(150)
+  purchased_on              DateTime?                   @db.Date
+  invoice_value             Decimal?                    @db.Decimal(12, 2)
+  warranty_till             DateTime?                   @db.Date
+  notes                     String?
+  created_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  created_by_user_id        Int?
+  users                     users?                      @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  media_equipment_movements media_equipment_movements[]
+}
+
+model media_equipment_movements {
+  id                 Int             @id @default(autoincrement())
+  equipment_id       Int
+  moved_at           DateTime        @default(now()) @db.Timestamptz(6)
+  note               String          @db.VarChar(255)
+  created_by_user_id Int?
+  users              users?          @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  media_equipment    media_equipment @relation(fields: [equipment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model media_indents {
+  id                   Int       @id @default(autoincrement())
+  requested_by_user_id Int
+  title                String    @db.VarChar(200)
+  indent_type          String    @default("capital_equipment") @db.VarChar(30)
+  quantity             Int       @default(1)
+  estimated_cost       Decimal?  @db.Decimal(12, 2)
+  needed_by            DateTime? @db.Date
+  budget_head          String    @default("media_branding") @db.VarChar(30)
+  justification        String?
+  status               String    @default("pending") @db.VarChar(20)
+  created_at           DateTime  @default(now()) @db.Timestamptz(6)
+  resolved_at          DateTime? @db.Timestamptz(6)
+  resolution_notes     String?
+  users                users     @relation(fields: [requested_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model media_shoot_assignments {
+  id                    Int                 @id @default(autoincrement())
+  media_request_id      Int
+  assigned_to_member_id Int?
+  crew                  String?             @db.VarChar(255)
+  gear_issued           String?             @db.VarChar(255)
+  output_type           String?             @db.VarChar(100)
+  scheduled_at          DateTime?           @db.Timestamptz(6)
+  status                String              @default("planned") @db.VarChar(20)
+  created_at            DateTime            @default(now()) @db.Timestamptz(6)
+  created_by_user_id    Int
+  media_team_members    media_team_members? @relation(fields: [assigned_to_member_id], references: [id], onUpdate: NoAction)
+  users                 users               @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  media_requests        media_requests      @relation(fields: [media_request_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model media_team_members {
+  id                      Int                       @id @default(autoincrement())
+  full_name               String                    @db.VarChar(150)
+  designation             String?                   @db.VarChar(100)
+  email                   String?                   @db.VarChar(150)
+  phone                   String?                   @db.VarChar(20)
+  skills                  String?
+  photo_url               String?
+  status                  String                    @default("active") @db.VarChar(20)
+  joined_on               DateTime?                 @db.Date
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  created_by_user_id      Int?
+  media_shoot_assignments media_shoot_assignments[]
+  users                   users?                    @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model medical_bill_items {
+  id            Int           @id @default(autoincrement())
+  bill_id       Int
+  item_type     String        @db.VarChar(20)
+  description   String        @db.VarChar(150)
+  quantity      Int           @default(1)
+  rate          Decimal       @db.Decimal(8, 2)
+  amount        Decimal       @db.Decimal(10, 2)
+  medical_bills medical_bills @relation(fields: [bill_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([bill_id], map: "idx_medical_bill_items_bill")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model medical_bills {
+  id                   Int                  @id @default(autoincrement())
+  patient_name         String               @db.VarChar(150)
+  patient_dept         String?              @db.VarChar(100)
+  condition            String?              @db.VarChar(255)
+  attended_by_staff_id Int?
+  payment_mode         String               @db.VarChar(30)
+  status               String               @default("pending") @db.VarChar(20)
+  medicine_total       Decimal              @default(0) @db.Decimal(10, 2)
+  service_total        Decimal              @default(0) @db.Decimal(10, 2)
+  total                Decimal              @default(0) @db.Decimal(10, 2)
+  created_at           DateTime             @default(now()) @db.Timestamptz(6)
+  medical_bill_items   medical_bill_items[]
+  medical_staff        medical_staff?       @relation(fields: [attended_by_staff_id], references: [id], onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model medical_camps {
+  id               Int      @id @default(autoincrement())
+  title            String   @db.VarChar(200)
+  detail           String?  @db.VarChar(255)
+  camp_date        DateTime @db.Date
+  state            String   @default("planning") @db.VarChar(20)
+  target_count     Int      @default(0)
+  registered_count Int      @default(0)
+  is_past          Boolean  @default(false)
+  outcome_summary  String?  @db.VarChar(255)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model medical_services {
+  id   Int     @id @default(autoincrement())
+  name String  @unique @db.VarChar(100)
+  rate Decimal @db.Decimal(8, 2)
+  note String? @db.VarChar(150)
+}
+
+model meeting_action_items {
+  id                  Int                 @id @default(autoincrement())
+  meeting_id          Int
+  label               String              @db.VarChar(255)
+  done                Boolean             @default(false)
+  department_meetings department_meetings @relation(fields: [meeting_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([meeting_id], map: "idx_meeting_action_items_meeting")
+}
+
+model model_performance {
+  id                      Int      @id @default(autoincrement())
+  training_date           DateTime @db.Timestamptz(6)
+  total_queries_analyzed  Int
+  accuracy_rate           Decimal  @db.Decimal(5, 2)
+  misclassification_count Int
+  avg_confidence          Decimal  @db.Decimal(4, 3)
+  low_confidence_count    Int
+  positive_feedback_pct   Decimal  @db.Decimal(5, 2)
+  new_examples_added      Int
+  retrain_triggered       Boolean  @default(false)
+  notes                   String?
+  created_at              DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([training_date], map: "idx_model_perf_date")
+}
+
+model nba_criteria {
+  id                 Int                  @id @default(autoincrement())
+  department_id      Int
+  code               String               @db.VarChar(30)
+  name               String               @db.VarChar(255)
+  max_marks          Int
+  sort_order         Int                  @default(0)
+  departments        departments          @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  nba_evidence_items nba_evidence_items[]
+
+  @@index([department_id], map: "idx_nba_criteria_department")
+}
+
+model nba_evidence_items {
+  id                 Int          @id @default(autoincrement())
+  criterion_id       Int
+  label              String       @db.VarChar(255)
+  done               Boolean      @default(false)
+  updated_by_user_id Int?
+  updated_at         DateTime?    @db.Timestamptz(6)
+  nba_criteria       nba_criteria @relation(fields: [criterion_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users              users?       @relation(fields: [updated_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([criterion_id], map: "idx_nba_evidence_items_criterion")
+}
+
+model pharmacy_dispense_log {
+  id             Int            @id @default(autoincrement())
+  stock_id       Int
+  quantity       Int
+  dispensed_at   DateTime       @default(now()) @db.Timestamptz(6)
+  pharmacy_stock pharmacy_stock @relation(fields: [stock_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model pharmacy_stock {
+  id                    Int                     @id @default(autoincrement())
+  name                  String                  @db.VarChar(150)
+  use_case              String?                 @db.VarChar(255)
+  form                  String?                 @db.VarChar(50)
+  quantity              Int                     @default(0)
+  reorder_level         Int                     @default(10)
+  expiry_date           DateTime?               @db.Date
+  rate                  Decimal                 @default(0) @db.Decimal(8, 2)
+  created_at            DateTime                @default(now()) @db.Timestamptz(6)
+  pharmacy_dispense_log pharmacy_dispense_log[]
+}
+
+model query_logs {
+  id                   Int      @id @default(autoincrement())
+  user_id              Int
+  message              String
+  intent_detected      String?  @db.VarChar(100)
+  confidence           Decimal? @db.Decimal(4, 3)
+  is_correct           Boolean?
+  correct_intent       String?  @db.VarChar(100)
+  user_feedback_rating Int?     @db.SmallInt
+  user_notes           String?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([confidence], map: "idx_query_logs_confidence")
+  @@index([created_at], map: "idx_query_logs_created")
+  @@index([intent_detected], map: "idx_query_logs_intent")
+  @@index([user_id], map: "idx_query_logs_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model sick_room_beds {
+  id              Int               @id @default(autoincrement())
+  bed_code        String            @unique @db.VarChar(10)
+  wing            String            @db.VarChar(10)
+  sick_room_stays sick_room_stays[]
+}
+
+model sick_room_stays {
+  id                 Int             @id @default(autoincrement())
+  bed_id             Int
+  visit_id           Int?
+  reason             String?         @db.VarChar(255)
+  vitals             String?         @db.VarChar(255)
+  medication_given   String?         @db.VarChar(255)
+  guardian_contacted Boolean         @default(false)
+  plan               String?         @db.VarChar(255)
+  admitted_at        DateTime        @default(now()) @db.Timestamptz(6)
+  expected_review_at DateTime?       @db.Timestamptz(6)
+  discharged_at      DateTime?       @db.Timestamptz(6)
+  sick_room_beds     sick_room_beds  @relation(fields: [bed_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  medical_visits     medical_visits? @relation(fields: [visit_id], references: [id], onUpdate: NoAction)
+
+  @@index([bed_id], map: "idx_sick_room_stays_bed")
+  @@index([bed_id], map: "idx_sick_room_stays_open", where: raw("(discharged_at IS NULL)"))
+}
+
+model student_escalations {
+  id            Int       @id @default(autoincrement())
+  student_id    Int?
+  class_id      Int?
+  title         String    @db.VarChar(255)
+  status        String    @default("open") @db.VarChar(30)
+  owner_user_id Int?
+  raised_at     DateTime  @default(now()) @db.Timestamptz(6)
+  notes         String?
+  classes       classes?  @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users         users?    @relation(fields: [owner_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students      students? @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model student_health_records {
+  id                Int      @id @default(autoincrement())
+  student_id        Int      @unique
+  blood_group       String?  @db.VarChar(5)
+  allergies         String?  @db.VarChar(255)
+  chronic_condition String?  @db.VarChar(255)
+  guardian_name     String?  @db.VarChar(150)
+  guardian_phone    String?  @db.VarChar(20)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  students          students @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model student_outpasses {
+  id                                                 Int                 @id @default(autoincrement())
+  student_id                                         Int
+  kind                                               String              @db.VarChar(50)
+  outpass_date                                       DateTime            @db.Date
+  from_time                                          DateTime            @db.Time(6)
+  to_time                                            DateTime            @db.Time(6)
+  reason                                             String
+  parent_contact                                     String?             @db.VarChar(20)
+  status                                             outpass_status_enum @default(pending)
+  approved_by_user_id                                Int?
+  approved_at                                        DateTime?           @db.Timestamptz(6)
+  created_by_user_id                                 Int
+  created_at                                         DateTime            @default(now()) @db.Timestamptz(6)
+  actual_exit_at                                     DateTime?           @db.Timestamptz(6)
+  actual_return_at                                   DateTime?           @db.Timestamptz(6)
+  users_student_outpasses_approved_by_user_idTousers users?              @relation("student_outpasses_approved_by_user_idTousers", fields: [approved_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_student_outpasses_created_by_user_idTousers  users               @relation("student_outpasses_created_by_user_idTousers", fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students                                           students            @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([student_id], map: "idx_student_outpasses_student")
+}
+
+model training_examples {
+  id          Int       @id @default(autoincrement())
+  query_text  String
+  intent_name String    @db.VarChar(100)
+  source      String    @db.VarChar(50)
+  confidence  Decimal?  @db.Decimal(4, 3)
+  usage_count Int       @default(1)
+  approved_at DateTime? @db.Timestamptz(6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([query_text, intent_name], map: "uniq_training_examples")
+  @@index([approved_at], map: "idx_training_examples_approved")
+  @@index([intent_name], map: "idx_training_examples_intent")
+}
+
+model user_preferences {
+  user_id                 Int      @id
+  daily_attendance_digest Boolean  @default(true)
+  sop_escalation_alerts   Boolean  @default(true)
+  auto_circulate_mom      Boolean  @default(false)
+  compact_tables          Boolean  @default(false)
+  updated_at              DateTime @default(now()) @db.Timestamptz(6)
+  users                   users    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
 enum hostel_wing_enum {
   boys
   girls
@@ -4142,6 +4762,7 @@ enum borrow_status_enum {
 enum borrower_type_enum {
   student
   faculty
+  staff
 }
 
 enum calendar_event_type_enum {
@@ -4227,6 +4848,8 @@ enum indent_status_enum {
   hod_approved
   rejected
   order_created
+  draft
+  withdrawn
 }
 
 enum media_request_status_enum {
@@ -4347,6 +4970,7 @@ enum venue_booking_status_enum {
   approved
   rejected
   alternative_offered
+  cancelled
 }
 
 enum wallet_outlet_type_enum {
@@ -4722,4 +5346,29 @@ enum venue_type_enum {
   auditorium
   exam_hall
   other
+}
+
+enum department_document_status_enum {
+  pending
+  verified
+  missing
+}
+
+enum department_event_status_enum {
+  planning
+  awaiting_approval
+  approved
+  completed
+}
+
+enum mom_status_enum {
+  scheduled
+  recorded
+  circulated
+}
+
+enum outpass_status_enum {
+  pending
+  approved
+  rejected
 }

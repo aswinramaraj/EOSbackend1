@@ -50,6 +50,7 @@ import { TransportModule } from './modules/transport/transport.module';
 import { HigherEducationModule } from './modules/higher-education/higher-education.module';
 import { MedicalCentreModule } from './modules/medical-centre/medical-centre.module';
 import { LmsModule } from './modules/lms/lms.module';
+import { MediaRoomModule } from './modules/media-room/media-room.module';
 
 import { ExamsModule } from './modules/exams/exams/exams.module';
 import { ExamSubjectMappingModule } from './modules/exams/exam-subject-mapping/exam-subject-mapping.module';
@@ -221,6 +222,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     TransportModule,
     HigherEducationModule,
     MedicalCentreModule,
+    MediaRoomModule,
 
     AnnouncementsModule,
 

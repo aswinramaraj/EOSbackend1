@@ -71,4 +71,9 @@ export class CreateMediaRequestDto {
   @ArrayMinSize(1)
   @IsIn(MEDIA_REQUEST_TYPES, { each: true })
   media_types?: string[];
+
+  /** Real column, previously never read/written by this service — the design's "Needed by" field. */
+  @IsOptional()
+  @IsDateString({}, { message: 'poster_needed_by must be a valid ISO date' })
+  poster_needed_by?: string;
 }
