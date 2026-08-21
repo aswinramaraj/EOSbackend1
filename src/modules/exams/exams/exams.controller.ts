@@ -33,11 +33,13 @@ export class ExamsController {
     return ApiResponse.created(result, 'Exam created successfully');
   }
   @Get()
+  @UseGuards(JwtAuthGuard)
   findAll() {
     return this.examsService.findAll();
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   findOne(@Param('id') id: string) {
     return this.examsService.findOne(+id);
   }

@@ -29,11 +29,13 @@ export class ExamTypesController {
   }
 
   @Get()
+  @UseGuards(JwtAuthGuard)
   findAll() {
     return this.examTypesService.findAll();
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   findOne(@Param('id') id: string) {
     return this.examTypesService.findOne(+id);
   }

@@ -35,12 +35,14 @@ export class ExamTimetableController {
   }
 
   @Get()
+  @UseGuards(JwtAuthGuard)
   async findAll() {
     const timetables = await this.examTimetableService.findAll();
     return ApiResponse.ok(timetables, 'Exam timetables fetched successfully.');
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   async findOne(@Param('id') id: string) {
     const timetable = await this.examTimetableService.findOne(+id);
     return ApiResponse.ok(timetable, 'Exam timetable fetched successfully.');

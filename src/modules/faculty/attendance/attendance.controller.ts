@@ -40,8 +40,18 @@ export class AttendanceController {
     return this.attendanceService.create(dto, user);
   }
 
-  /** GET /api/v1/attendance — Admin/HoD/Faculty/Secretary/Student/Parent. Student/Parent are scoped to their own records. */
-  @Get('attendance')
+  /**
+   * GET /api/v1/me/attendance-records — Admin/HoD/Faculty/Secretary/Student/
+   * Parent. Student/Parent are scoped to their own records.
+   * Moved off 'me/attendance' (2026-08-21): that path collided with
+   * MeController's student-only handler in me-profile.controller.ts, which
+   * registers first and always won, silently shadowing this broader handler
+   * for every non-Student caller (confirmed dead for Faculty via a live
+   * 403 "Required role(s): student"). 'attendance-records' matches the path
+   * EOS-web-frontend's Secretary code already migrated to expect after
+   * independently discovering the same shadowing bug.
+   */
+  @Get('attendance-records')
   @Roles(
     ROLES.ADMIN,
     ROLES.HOD,
@@ -57,7 +67,13 @@ export class AttendanceController {
     return this.attendanceService.findAll(query, user);
   }
 
-  /** GET /api/v1/attendance/:id — Admin/HoD/Faculty/Secretary/Student/Parent. Student/Parent are scoped to their own records. */
+  /**
+   * GET /api/v1/me/attendance/:id — Admin/HoD/Faculty/Secretary/Student/
+   * Parent. Student/Parent are scoped to their own records. Left at its
+   * original path: MeController (me-profile.controller.ts) only defines
+   * 'me/attendance' with no ':id' variant, so this route never collided
+   * with anything and doesn't need to move.
+   */
   @Get('attendance/:id')
   @Roles(
     ROLES.ADMIN,

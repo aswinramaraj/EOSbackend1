@@ -45,10 +45,17 @@ export class FacultyController {
   }
 
   /**
-   * GET /api/v1/faculty/profile — authenticated faculty's own profile.
-   * Declared before ':id' so 'profile' is never captured as a numeric id.
+   * GET /api/v1/me/faculty-profile — authenticated faculty's own profile.
+   * Moved off 'me/profile' (2026-08-21): that path collided with
+   * MeController's student-only handler in me-profile.controller.ts, which
+   * registers first and always won, silently shadowing this handler for
+   * every Faculty caller (confirmed dead in production — real Faculty JWTs
+   * got a 403 "Required role(s): student" from the wrong controller, and no
+   * frontend caller referenced this route). Renamed to a distinct path
+   * rather than deleted, since the underlying feature is real and unused
+   * only because of the collision, not because it's obsolete.
    */
-  @Get('profile')
+  @Get('faculty-profile')
   @Roles(ROLES.FACULTY)
   getOwnProfile(@CurrentUser() user: JwtPayload) {
     return this.facultyService.getOwnProfile(user.sub);

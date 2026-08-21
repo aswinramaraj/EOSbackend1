@@ -31,16 +31,19 @@ export class ClassesController {
   }
 
   @Get()
+  @UseGuards(JwtAuthGuard)
   findAll() {
     return this.classesService.findAll();
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   findOne(@Param('id') id: string) {
     return this.classesService.findOne(+id);
   }
 
   @Get(':id/mentor')
+  @UseGuards(JwtAuthGuard)
   findMentor(@Param('id') id: string, @Query() query: MentorQueryDto) {
     return this.classesService.findMentor(+id, query);
   }

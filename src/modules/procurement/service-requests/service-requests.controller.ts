@@ -23,8 +23,19 @@ import { ListServiceRequestsQueryDto } from './dto/list-service-requests-query.d
 import { HodReviewServiceRequestDto } from './dto/hod-review-service-request.dto';
 import { FinanceReviewServiceRequestDto } from './dto/finance-review-service-request.dto';
 
-/** Mirrors PurchaseRequestsController exactly - see its own doc comment. */
-@Controller('me/service-requests')
+/**
+ * Mirrors PurchaseRequestsController exactly - see its own doc comment.
+ *
+ * Moved off 'me/service-requests' (2026-08-21): that path collided with
+ * secretary/service-requests/service-requests.controller.ts, which imports
+ * later in app.module.ts and was being silently shadowed by this
+ * controller for every caller, even though the simpler Secretary/HoD/
+ * Finance/Admin shape (not this HoD+Finance procurement workflow shape) is
+ * the one the frontend actually expects at that path. Renamed rather than
+ * merged, since these are two genuinely distinct features that happened to
+ * share a literal path.
+ */
+@Controller('me/procurement-service-requests')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ServiceRequestsController {
   constructor(private readonly serviceRequestsService: ServiceRequestsService) {}
