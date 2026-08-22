@@ -14,17 +14,26 @@ export class AcademicCoordinatorAuditService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * GET /me/coordinator/audit?department_id=&semester=
+   * GET /me/coordinator/audit?department_id=&semester=&batch_id=
    *
    * Every milestone below is computed live from a real, already-existing
    * table — no new schema, per the earlier decision that this page needs no
    * new tables. "Reports generated" is the one exception: no report-
    * generation log exists anywhere in the schema, so it's honestly reported
    * as Not started rather than faked.
+   *
+   * batch_id is required: the same department+semester pair can match
+   * classes from more than one batch (e.g. two cohorts both sitting at
+   * semester 5 in the same term), which would silently blend two cohorts'
+   * completion numbers into one percentage without it.
    */
-  async audit(departmentId: number, semester: number) {
+  async audit(departmentId: number, semester: number, batchId: number) {
     const classes = await this.prisma.classes.findMany({
-      where: { department_id: departmentId, current_semester: semester },
+      where: {
+        department_id: departmentId,
+        current_semester: semester,
+        batch_id: batchId,
+      },
       select: { id: true },
     });
     const classIds = classes.map((c) => c.id);
@@ -157,6 +166,7 @@ export class AcademicCoordinatorAuditService {
     return {
       department_id: departmentId,
       semester,
+      batch_id: batchId,
       percent_complete: percent,
       milestones,
     };

@@ -16,7 +16,7 @@ export class AcademicCoordinatorMappingController {
 
   @Get()
   get(@Query() query: GetMappingQueryDto) {
-    return this.service.getMapping(query.department_id, query.semester);
+    return this.service.getMapping(query.department_id);
   }
 
   @Post('add')

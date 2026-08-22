@@ -11,7 +11,10 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { feedback_form_type_enum } from '../../../../../generated/prisma/enums';
+import {
+  feedback_course_type_enum,
+  feedback_form_type_enum,
+} from '../../../../../generated/prisma/enums';
 import { CreateFeedbackQuestionDto } from './create-feedback-question.dto';
 
 export class CreateFeedbackFormDto {
@@ -42,6 +45,16 @@ export class CreateFeedbackFormDto {
   @IsInt()
   @IsPositive()
   rating_scale_id?: number;
+
+  /**
+   * Optional category — also acts as a reusable question-bank key (see
+   * GET question-templates). Leave unset to target everyone with a custom
+   * question list, same as before this field existed. Silently ignored
+   * until the pending migration in academic_coordinator.query.md #1 runs.
+   */
+  @IsOptional()
+  @IsEnum(feedback_course_type_enum)
+  category?: feedback_course_type_enum;
 
   @IsArray()
   @ArrayMinSize(1, {
