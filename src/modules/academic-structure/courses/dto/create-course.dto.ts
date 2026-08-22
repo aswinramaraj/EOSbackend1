@@ -10,16 +10,20 @@ import {
 import { Transform, Type } from 'class-transformer';
 
 export class CreateCourseDto {
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
   @IsNotEmpty({ message: 'Course name, code, and department_id are required' })
-  @MaxLength(255, { message: 'Course name must not exceed 255 characters' })
+  @MaxLength(150, { message: 'Course name must not exceed 150 characters' })
   name: string;
 
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
   @IsNotEmpty({ message: 'Course name, code, and department_id are required' })
-  @MaxLength(20, { message: 'Course code must not exceed 20 characters' })
+  @MaxLength(30, { message: 'Course code must not exceed 30 characters' })
   code: string;
 
   @Type(() => Number)
@@ -31,6 +35,6 @@ export class CreateCourseDto {
   @Type(() => Number)
   @IsInt({ message: 'duration_years must be a positive number' })
   @IsPositive({ message: 'duration_years must be a positive number' })
-  @Max(10, { message: 'duration_years must not exceed 10 years' })
+  @Max(6, { message: 'duration_years must not exceed 6 years' })
   duration_years?: number;
 }

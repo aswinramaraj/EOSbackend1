@@ -9,7 +9,6 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
-import { AssignMentorDto } from './dto/assign-mentor.dto';
 import { MentorQueryDto } from './dto/mentor-query.dto';
 
 function prismaErrorCode(err: unknown): string | undefined {
@@ -80,6 +79,8 @@ export class ClassesService {
       });
     }
 
+    this.assertSemesterInRange(current_semester, course.duration_years);
+
     const existing = await this.prisma.classes.findFirst({
       where: {
         batch_id,
@@ -107,10 +108,10 @@ export class ClassesService {
           current_semester,
         },
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       this.logger.error('DB error while creating class', error);
 
-      if (error.code === 'P2002') {
+      if (prismaErrorCode(error) === 'P2002') {
         throw new ConflictException({
           message:
             'A class with this batch, department, course, and section already exists',
@@ -193,6 +194,10 @@ export class ClassesService {
       });
     }
 
+    const nextSemester =
+      updateClassDto.current_semester ?? existing.current_semester;
+    this.assertSemesterInRange(nextSemester, course.duration_years);
+
     const duplicate = await this.prisma.classes.findFirst({
       where: {
         id: {
@@ -225,10 +230,10 @@ export class ClassesService {
           current_semester: updateClassDto.current_semester,
         },
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       this.logger.error('DB error while updating class', error);
 
-      if (error.code === 'P2002') {
+      if (prismaErrorCode(error) === 'P2002') {
         throw new ConflictException({
           message:
             'A class with this batch, department, course, and section already exists',
@@ -270,16 +275,41 @@ export class ClassesService {
     });
   }
 
+  /**
+   * DELETE /classes/:id
+   *
+   * Blocked (409 CLASS_IN_USE) if any student is currently assigned to this
+   * class — reports the exact count so the UI can show it before the click.
+   */
   async remove(id: number) {
-    try {
-      return await this.prisma.classes.delete({
-        where: { id },
+    const existing = await this.prisma.classes.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Class not found',
+        errorCode: 'CLASS_NOT_FOUND',
       });
-    } catch (error: any) {
-      if (error.code === 'P2025') {
-        throw new NotFoundException({
-          message: 'Class not found',
-          errorCode: 'CLASS_NOT_FOUND',
+    }
+
+    const studentCount = await this.prisma.students.count({
+      where: { class_id: id },
+    });
+
+    if (studentCount > 0) {
+      throw new ConflictException({
+        message: `Cannot delete — ${studentCount} student(s) are in this class. Move them first.`,
+        errorCode: 'CLASS_IN_USE',
+        details: { students: studentCount },
+      });
+    }
+
+    try {
+      await this.prisma.classes.delete({ where: { id } });
+      return { message: 'Class deleted successfully' };
+    } catch (error: unknown) {
+      if (prismaErrorCode(error) === 'P2003') {
+        throw new ConflictException({
+          message: 'Class cannot be deleted while other records reference it',
+          errorCode: 'CLASS_IN_USE',
         });
       }
 
@@ -288,6 +318,53 @@ export class ClassesService {
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * GET /classes/:id/subjects — read-only view of this class's assigned
+   * subjects for the current/each semester (class_subjects), for the
+   * Academic Structure class detail panel. Does not create/modify
+   * class_subjects rows — that assignment flow lives with the HoD-facing
+   * faculty-mapping module, out of scope here.
+   */
+  async subjectsForClass(classId: number) {
+    const classRecord = await this.prisma.classes.findUnique({
+      where: { id: classId },
+    });
+    if (!classRecord) {
+      throw new NotFoundException({
+        message: 'Class not found',
+        errorCode: 'CLASS_NOT_FOUND',
+      });
+    }
+
+    return this.prisma.class_subjects.findMany({
+      where: { class_id: classId },
+      select: {
+        id: true,
+        semester: true,
+        is_elective: true,
+        subjects: {
+          select: { id: true, name: true, subject_code: true, credits: true },
+        },
+      },
+      orderBy: [{ semester: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  /** Reference's own rule: current_semester must fit within the course's actual length (duration_years * 2 semesters). */
+  private assertSemesterInRange(
+    semester: number | null | undefined,
+    durationYears: number,
+  ): void {
+    if (semester == null) return;
+    const maxSemester = durationYears * 2;
+    if (semester < 1 || semester > maxSemester) {
+      throw new ConflictException({
+        message: `current_semester must be between 1 and ${maxSemester} for this course`,
+        errorCode: 'INVALID_SEMESTER',
       });
     }
   }

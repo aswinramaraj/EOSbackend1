@@ -48,6 +48,12 @@ export class ClassesController {
     return this.classesService.findMentor(+id, query);
   }
 
+  /** GET /api/v1/classes/:id/subjects — read-only, for the class detail panel. */
+  @Get(':id/subjects')
+  findSubjects(@Param('id') id: string) {
+    return this.classesService.subjectsForClass(+id);
+  }
+
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)

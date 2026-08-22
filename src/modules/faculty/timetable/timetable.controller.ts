@@ -35,19 +35,34 @@ export class TimetableController {
   }
 
   /**
-   * GET /api/v1/timetable — Admin/HoD/Faculty/Student/Secretary. Paginated,
-   * filterable. Secretary added for the Secretary Portal's Bulk Attendance
-   * "Mark" tab class/hour picker — read-only, no write access granted here.
+   * GET /api/v1/timetable — Admin/HoD/Faculty/Student/Secretary/Academic
+   * Coordinator. Paginated, filterable. Secretary added for the Secretary
+   * Portal's Bulk Attendance "Mark" tab class/hour picker; Academic
+   * Coordinator added for read-only oversight — neither grants write access.
    */
   @Get('timetable-slots')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.STUDENT, ROLES.SECRETARY)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.STUDENT,
+    ROLES.SECRETARY,
+    ROLES.ACADEMIC_COORDINATOR,
+  )
   findAll(@Query() query: ListTimetableQueryDto) {
     return this.timetableService.findAll(query);
   }
 
-  /** GET /api/v1/timetable/:id — Admin/HoD/Faculty/Student/Secretary. */
+  /** GET /api/v1/timetable/:id — Admin/HoD/Faculty/Student/Secretary/Academic Coordinator (read-only oversight). */
   @Get('timetable-slots/:id')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY, ROLES.STUDENT, ROLES.SECRETARY)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.HOD,
+    ROLES.FACULTY,
+    ROLES.STUDENT,
+    ROLES.SECRETARY,
+    ROLES.ACADEMIC_COORDINATOR,
+  )
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.timetableService.findOne(id);
   }

@@ -44,6 +44,7 @@ export class CoursesController {
     return this.coursesService.findOne(+id);
   }
 
+  /** PATCH /api/v1/courses/:id — Admin only. */
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
@@ -51,6 +52,7 @@ export class CoursesController {
     return this.coursesService.update(+id, updateCourseDto);
   }
 
+  /** DELETE /api/v1/courses/:id — Admin only. */
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)

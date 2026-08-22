@@ -47,29 +47,19 @@ export class AttendanceController {
   }
 
   /**
-<<<<<<< HEAD
    * GET /api/v1/me/attendance-records — Admin/HoD/Faculty/Secretary/Student/
-   * Parent. Student/Parent are scoped to their own records.
-   * Moved off 'me/attendance' (2026-08-21): that path collided with
-   * MeController's student-only handler in me-profile.controller.ts, which
-   * registers first and always won, silently shadowing this broader handler
-   * for every non-Student caller (confirmed dead for Faculty via a live
-   * 403 "Required role(s): student"). 'attendance-records' matches the path
-   * EOS-web-frontend's Secretary code already migrated to expect after
-   * independently discovering the same shadowing bug.
-=======
-   * GET /api/v1/attendance-records — Admin/HoD/Faculty/Student/Parent/
-   * Secretary. Student/Parent are scoped to their own records; Secretary
-   * is institution-wide (same posture as Admin/HoD here).
+   * Parent. Student/Parent are scoped to their own records; Secretary is
+   * institution-wide (same posture as Admin/HoD here).
    *
-   * Renamed from 'attendance' (bare) — that exact path was silently
+   * Renamed from bare 'attendance' (2026-08-21): that path was silently
    * shadowed by MeProfileController's own student-only 'me/attendance'
    * route (MeProfileModule registers before AttendanceModule in
-   * app.module.ts, so Nest/Express always matched that one first). This
-   * meant EVERY role here — not just Secretary — has been unable to reach
-   * this endpoint since it was added. Renaming resolves the ambiguity
-   * without touching the unrelated student-profile module.
->>>>>>> origin/iqac
+   * app.module.ts, so Nest/Express always matched that one first),
+   * confirmed dead for Faculty via a live 403 "Required role(s): student".
+   * This meant every role here — not just Secretary — was unable to reach
+   * this endpoint. 'attendance-records' matches the path EOS-web-frontend's
+   * Secretary code already migrated to expect after independently
+   * discovering the same shadowing bug.
    */
   @Get('attendance-records')
   @Roles(
@@ -137,10 +127,7 @@ export class AttendanceController {
     @Query() query: GetStaffAttendanceDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.meStaffAttendanceService.getMyStaffAttendance(
-      user.sub,
-      query,
-    );
+    return this.meStaffAttendanceService.getMyStaffAttendance(user.sub, query);
   }
 
   /**

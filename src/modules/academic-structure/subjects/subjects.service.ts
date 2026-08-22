@@ -10,6 +10,12 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateSubjectDto } from './dto/create-subject.dto';
 import { UpdateSubjectDto } from './dto/update-subject.dto';
 
+function prismaErrorCode(err: unknown): string | undefined {
+  return typeof err === 'object' && err !== null && 'code' in err
+    ? (err as { code?: string }).code
+    : undefined;
+}
+
 @Injectable()
 export class SubjectsService {
   private readonly logger = new Logger(SubjectsService.name);
@@ -35,10 +41,15 @@ export class SubjectsService {
           subject_code: createSubjectDto.subject_code,
           department_id: createSubjectDto.department_id,
           credits: createSubjectDto.credits,
+          short_code: createSubjectDto.short_code,
+          course_type: createSubjectDto.course_type,
+          category: createSubjectDto.category,
+          hours: createSubjectDto.hours,
+          semester: createSubjectDto.semester,
         },
       });
-    } catch (err: any) {
-      if (err?.code === 'P2002') {
+    } catch (err: unknown) {
+      if (prismaErrorCode(err) === 'P2002') {
         throw new ConflictException({
           message: 'Subject code already exists',
           errorCode: 'SUBJECT_CODE_EXISTS',
@@ -56,7 +67,7 @@ export class SubjectsService {
   async findAll() {
     try {
       return await this.prisma.subjects.findMany();
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.logger.error('DB error while fetching subjects', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
@@ -66,11 +77,11 @@ export class SubjectsService {
   }
 
   async findOne(id: number) {
-    let subject: any;
+    let subject: Awaited<ReturnType<typeof this.prisma.subjects.findUnique>>;
 
     try {
       subject = await this.prisma.subjects.findUnique({ where: { id } });
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.logger.error('DB error while fetching subject', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
@@ -122,17 +133,22 @@ export class SubjectsService {
           subject_code: updateSubjectDto.subject_code,
           department_id: updateSubjectDto.department_id,
           credits: updateSubjectDto.credits,
+          short_code: updateSubjectDto.short_code,
+          course_type: updateSubjectDto.course_type,
+          category: updateSubjectDto.category,
+          hours: updateSubjectDto.hours,
+          semester: updateSubjectDto.semester,
         },
       });
-    } catch (err: any) {
-      if (err?.code === 'P2002') {
+    } catch (err: unknown) {
+      if (prismaErrorCode(err) === 'P2002') {
         throw new ConflictException({
           message: 'Subject code already exists',
           errorCode: 'SUBJECT_CODE_EXISTS',
         });
       }
 
-      if (err?.code === 'P2025') {
+      if (prismaErrorCode(err) === 'P2025') {
         throw new NotFoundException({
           message: 'Subject not found',
           errorCode: 'SUBJECT_NOT_FOUND',
@@ -150,11 +166,19 @@ export class SubjectsService {
   async remove(id: number) {
     try {
       return await this.prisma.subjects.delete({ where: { id } });
-    } catch (err: any) {
-      if (err?.code === 'P2025') {
+    } catch (err: unknown) {
+      if (prismaErrorCode(err) === 'P2025') {
         throw new NotFoundException({
           message: 'Subject not found',
           errorCode: 'SUBJECT_NOT_FOUND',
+        });
+      }
+
+      if (prismaErrorCode(err) === 'P2003') {
+        throw new ConflictException({
+          message:
+            'Cannot delete — this course is already mapped to classes or has activity recorded against it.',
+          errorCode: 'SUBJECT_IN_USE',
         });
       }
 

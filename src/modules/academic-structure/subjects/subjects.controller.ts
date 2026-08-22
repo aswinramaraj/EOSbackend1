@@ -23,7 +23,7 @@ export class SubjectsController {
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.ACADEMIC_COORDINATOR)
   async create(@Body() createSubjectDto: CreateSubjectDto) {
     const subject = await this.subjectsService.create(createSubjectDto);
     return ApiResponse.created(subject, 'Subject created successfully');
@@ -43,14 +43,14 @@ export class SubjectsController {
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.ACADEMIC_COORDINATOR)
   update(@Param('id') id: string, @Body() updateSubjectDto: UpdateSubjectDto) {
     return this.subjectsService.update(+id, updateSubjectDto);
   }
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN)
+  @Roles(ROLES.ADMIN, ROLES.ACADEMIC_COORDINATOR)
   remove(@Param('id') id: string) {
     return this.subjectsService.remove(+id);
   }
