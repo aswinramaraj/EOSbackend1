@@ -47,6 +47,8 @@ export class StudentLeavesController {
   }
 
   @Get('student-leaves/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   findOne(@Param('id') id: string) {
     return this.studentLeavesService.findOne(+id);
   }

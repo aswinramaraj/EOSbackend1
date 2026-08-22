@@ -12,6 +12,7 @@ import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import { CreateFeePaymentDto } from './dto/create-fee-payment.dto';
 import { UpdateFeePaymentDto } from './dto/update-fee-payment.dto';
@@ -23,6 +24,7 @@ import {
   DemandSummaryItemDto,
 } from './dto/fee-payment-student-workspace.dto';
 import { CategoryBreakdownItemDto } from './dto/fee-payment-category-breakdown.dto';
+import { IssueReceiptNumberDto } from './dto/issue-receipt-number.dto';
 
 type DueStatus = 'paid' | 'partial' | 'pending';
 
@@ -63,6 +65,7 @@ export class FeePaymentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   private getRazorpay(): Razorpay {
@@ -83,10 +86,56 @@ export class FeePaymentService {
   /**
    * GET /fee-payments
    */
+  /**
+   * GET /fee-payments — real, enriched with student/category context
+   * (name, register no., department, demand category, fee structure)
+   * for the Billing Portal's Receipts and Payment History screens.
+   * Previously returned bare `fee_payments` rows with no joins at all —
+   * purely additive enrichment, existing consumers only gain fields.
+   */
   async findAll() {
     try {
-      return await this.prisma.fee_payments.findMany({
-        orderBy: [{ student_fee_demand_mapping_id: 'asc' }, { id: 'asc' }],
+      const rows = await this.prisma.fee_payments.findMany({
+        orderBy: [{ payment_date: 'desc' }, { id: 'desc' }],
+        include: {
+          fee_structure_items: {
+            include: {
+              demand_categories: true,
+              fee_structures: true,
+            },
+          },
+          student_fee_demand_mapping: {
+            include: {
+              students: {
+                include: {
+                  soa_applications: true,
+                  courses: { include: { departments: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+      return rows.map((p) => {
+        const student = p.student_fee_demand_mapping.students;
+        const studentName = student.soa_applications
+          ? [student.soa_applications.first_name, student.soa_applications.last_name].filter(Boolean).join(' ')
+          : null;
+        return {
+          id: p.id,
+          student_fee_demand_mapping_id: p.student_fee_demand_mapping_id,
+          student_id: student.id,
+          student_name: studentName,
+          register_number: student.register_no,
+          department: student.courses.departments.name,
+          demand_category_name: p.fee_structure_items?.demand_categories?.name ?? null,
+          fee_structure_name: p.fee_structure_items?.fee_structures.name ?? null,
+          amount_paid: p.amount_paid.toString(),
+          payment_date: p.payment_date,
+          payment_mode: p.payment_mode,
+          receipt_no: p.receipt_no,
+          is_partial: p.is_partial,
+        };
       });
     } catch (err) {
       this.logger.error('DB error while fetching fee payments', err);
@@ -222,7 +271,7 @@ export class FeePaymentService {
 
       return {
         fee_structure_item_id: item.id,
-        demand_category_name: item.demand_categories?.name ?? 'General',
+        demand_category_name: item.demand_categories?.name ?? null,
         original_amount: item.amount.toString(),
         already_paid: alreadyPaid.toString(),
         outstanding_amount: outstanding.toString(),
@@ -308,6 +357,8 @@ export class FeePaymentService {
         programme: mapping.students.courses.name,
         department: mapping.students.courses.departments.name,
         batch: mapping.students.batches.name,
+        quota: mapping.students.quotas.name,
+        class_id: mapping.students.class_id,
         fee_structure_name: mapping.fee_structures.name,
         academic_year: mapping.academic_year,
         total_demand: liveTotalAmount.toString(),
@@ -513,6 +564,7 @@ export class FeePaymentService {
             soa_applications: true,
             batches: true,
             courses: { include: { departments: true } },
+            quotas: true,
           },
         },
       },
@@ -608,6 +660,18 @@ export class FeePaymentService {
           collectedByUserId,
         );
         await this.notifyPaymentConfirmed(demandMappingId, payment);
+        await this.auditLog.record({
+          entity_type: 'fee_payment',
+          entity_id: payment.id,
+          action: 'created',
+          performed_by_user_id: collectedByUserId,
+          new_value: {
+            receipt_no: payment.receipt_no,
+            amount_paid: payment.amount_paid.toString(),
+            payment_mode: payment.payment_mode,
+            student_fee_demand_mapping_id: demandMappingId,
+          },
+        });
         return payment;
       } catch (err) {
         const isSerializationConflict =
@@ -1488,6 +1552,74 @@ export class FeePaymentService {
       return await this.prisma.fee_payments.findUnique({ where: { id } });
     } catch (err) {
       this.logger.error('DB error during fee payment lookup', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * POST /fee-payments/receipt-numbers
+   *
+   * Issues exactly one new, sequential receipt number (fee_receipt_numbers.id
+   * — a real DB-generated SERIAL, never computed client-side) covering every
+   * fee_payment_id in the request, together in one print action. This is
+   * deliberately separate from fee_payments.receipt_no, which is really each
+   * payment's own internal reference and was never meant to be the number
+   * printed on a receipt.
+   *
+   * Error cases:
+   *  404 FEE_PAYMENT_NOT_FOUND – one or more fee_payment_ids don't exist
+   *  500 INTERNAL_ERROR        – unexpected failure (DB, etc.)
+   */
+  async issueReceiptNumber(
+    dto: IssueReceiptNumberDto,
+    issuedByUserId: number | null,
+  ) {
+    const uniqueIds = [...new Set(dto.fee_payment_ids)];
+
+    let found: { id: number }[];
+    try {
+      found = await this.prisma.fee_payments.findMany({
+        where: { id: { in: uniqueIds } },
+        select: { id: true },
+      });
+    } catch (err) {
+      this.logger.error('DB error while validating fee payments for receipt number', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (found.length !== uniqueIds.length) {
+      throw new NotFoundException({
+        message: 'One or more fee payments were not found',
+        errorCode: 'FEE_PAYMENT_NOT_FOUND',
+      });
+    }
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const receiptNumber = await tx.fee_receipt_numbers.create({
+          data: {
+            print_date: new Date(dto.print_date),
+            issued_by_user_id: issuedByUserId ?? undefined,
+          },
+        });
+
+        await tx.fee_receipt_number_payments.createMany({
+          data: uniqueIds.map((feePaymentId) => ({
+            receipt_number_id: receiptNumber.id,
+            fee_payment_id: feePaymentId,
+          })),
+        });
+
+        return receiptNumber;
+      });
+    } catch (err) {
+      this.logger.error('DB error while issuing receipt number', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

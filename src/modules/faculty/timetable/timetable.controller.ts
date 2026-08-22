@@ -34,7 +34,12 @@ export class TimetableController {
     return this.timetableService.create(dto);
   }
 
-  /** GET /api/v1/timetable — Admin/HoD/Faculty/Student/Secretary/Academic Coordinator (read-only oversight). Paginated, filterable. */
+  /**
+   * GET /api/v1/timetable — Admin/HoD/Faculty/Student/Secretary/Academic
+   * Coordinator. Paginated, filterable. Secretary added for the Secretary
+   * Portal's Bulk Attendance "Mark" tab class/hour picker; Academic
+   * Coordinator added for read-only oversight — neither grants write access.
+   */
   @Get('timetable-slots')
   @Roles(
     ROLES.ADMIN,

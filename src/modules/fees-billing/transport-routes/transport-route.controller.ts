@@ -66,18 +66,23 @@ export class TransportRouteController {
   /**
    * GET /api/v1/transport-routes
    *
+   * Billing additionally allowed (read-only) so the Fee Structures screen can
+   * browse real bus routes for transport-fee items — Billing cannot
+   * create/update/delete routes, only Admin can.
+   *
    * Error responses:
    *  401 UNAUTHORIZED   – missing/invalid access token
    *  403 FORBIDDEN      – authenticated user is not an admin
    *  500 INTERNAL_ERROR – unexpected server failure
    */
   @Get()
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
   findAll() {
     return this.transportRouteService.findAll();
   }
 
   /**
-   * GET /api/v1/transport-routes/:id
+   * GET /api/v1/transport-routes/:id — Billing additionally allowed, see findAll().
    *
    * Error responses:
    *  401 UNAUTHORIZED              – missing/invalid access token
@@ -86,6 +91,7 @@ export class TransportRouteController {
    *  500 INTERNAL_ERROR            – unexpected server failure
    */
   @Get(':id')
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.transportRouteService.findOne(id);
   }

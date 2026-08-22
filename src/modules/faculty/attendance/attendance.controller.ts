@@ -32,16 +32,46 @@ export class AttendanceController {
     private readonly meStaffAttendanceService: MeStaffAttendanceService,
   ) {}
 
-  /** POST /api/v1/attendance — Faculty / Secretary. */
+  /**
+   * POST /api/v1/attendance — Faculty, Secretary. Secretary added for the
+   * Secretary Portal's Bulk Attendance "Mark" tab — has no `faculty` table
+   * row, handled by a distinct branch in the service (see
+   * AttendanceService.create) that skips the faculty-profile lookup,
+   * mirroring the same pattern already used for media-requests.
+   */
   @Post('attendance')
   @Roles(ROLES.FACULTY, ROLES.SECRETARY)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateAttendanceDto, @CurrentUser() user: JwtPayload) {
-    return this.attendanceService.create(dto, user);
+    return this.attendanceService.create(dto, user.sub, user.role);
   }
 
-  /** GET /api/v1/attendance — Admin/HoD/Faculty/Secretary/Student/Parent. Student/Parent are scoped to their own records. */
-  @Get('attendance')
+  /**
+<<<<<<< HEAD
+   * GET /api/v1/me/attendance-records — Admin/HoD/Faculty/Secretary/Student/
+   * Parent. Student/Parent are scoped to their own records.
+   * Moved off 'me/attendance' (2026-08-21): that path collided with
+   * MeController's student-only handler in me-profile.controller.ts, which
+   * registers first and always won, silently shadowing this broader handler
+   * for every non-Student caller (confirmed dead for Faculty via a live
+   * 403 "Required role(s): student"). 'attendance-records' matches the path
+   * EOS-web-frontend's Secretary code already migrated to expect after
+   * independently discovering the same shadowing bug.
+=======
+   * GET /api/v1/attendance-records — Admin/HoD/Faculty/Student/Parent/
+   * Secretary. Student/Parent are scoped to their own records; Secretary
+   * is institution-wide (same posture as Admin/HoD here).
+   *
+   * Renamed from 'attendance' (bare) — that exact path was silently
+   * shadowed by MeProfileController's own student-only 'me/attendance'
+   * route (MeProfileModule registers before AttendanceModule in
+   * app.module.ts, so Nest/Express always matched that one first). This
+   * meant EVERY role here — not just Secretary — has been unable to reach
+   * this endpoint since it was added. Renaming resolves the ambiguity
+   * without touching the unrelated student-profile module.
+>>>>>>> origin/iqac
+   */
+  @Get('attendance-records')
   @Roles(
     ROLES.ADMIN,
     ROLES.HOD,
@@ -57,7 +87,13 @@ export class AttendanceController {
     return this.attendanceService.findAll(query, user);
   }
 
-  /** GET /api/v1/attendance/:id — Admin/HoD/Faculty/Secretary/Student/Parent. Student/Parent are scoped to their own records. */
+  /**
+   * GET /api/v1/me/attendance/:id — Admin/HoD/Faculty/Secretary/Student/
+   * Parent. Student/Parent are scoped to their own records. Left at its
+   * original path: MeController (me-profile.controller.ts) only defines
+   * 'me/attendance' with no ':id' variant, so this route never collided
+   * with anything and doesn't need to move.
+   */
   @Get('attendance/:id')
   @Roles(
     ROLES.ADMIN,

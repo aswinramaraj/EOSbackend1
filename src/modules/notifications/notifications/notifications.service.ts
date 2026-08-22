@@ -93,6 +93,56 @@ export class NotificationsService {
     });
   }
 
+  /**
+   * GET /me/notifications/panel — the bell dropdown's contents: everything
+   * unread, plus anything pinned (a pinned notification stays visible even
+   * after it's been read, and is only removed by the user manually
+   * unpinning-then-reading it or clicking it directly). Pinned rows sort
+   * first so they don't get buried once new unread ones arrive.
+   */
+  findPanelForUser(userId: number) {
+    return this.prisma.notifications.findMany({
+      where: {
+        user_id: userId,
+        OR: [{ is_read: false }, { is_pinned: true }],
+      },
+      orderBy: [{ is_pinned: 'desc' }, { created_at: 'desc' }],
+      take: 50,
+    });
+  }
+
+  async pin(id: number, userId: number) {
+    const notification = await this.prisma.notifications.findFirst({
+      where: { id, user_id: userId },
+    });
+    if (!notification) {
+      throw new NotFoundException({
+        message: 'Notification not found',
+        errorCode: 'NOTIFICATION_NOT_FOUND',
+      });
+    }
+    return this.prisma.notifications.update({
+      where: { id },
+      data: { is_pinned: true },
+    });
+  }
+
+  async unpin(id: number, userId: number) {
+    const notification = await this.prisma.notifications.findFirst({
+      where: { id, user_id: userId },
+    });
+    if (!notification) {
+      throw new NotFoundException({
+        message: 'Notification not found',
+        errorCode: 'NOTIFICATION_NOT_FOUND',
+      });
+    }
+    return this.prisma.notifications.update({
+      where: { id },
+      data: { is_pinned: false },
+    });
+  }
+
   async markRead(id: number, userId: number) {
     const notification = await this.prisma.notifications.findFirst({
       where: { id, user_id: userId },

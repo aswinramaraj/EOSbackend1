@@ -151,11 +151,21 @@ export class ComplaintsService {
    * Error cases:
    *  404 COMPLAINT_NOT_FOUND – no complaint with the given id
    */
-  async update(id: number, dto: UpdateComplaintDto) {
+  async update(
+    id: number,
+    dto: UpdateComplaintDto,
+    wardenHostelId: number | null,
+  ) {
     const complaint = await this.prisma.hostel_complaints.findUnique({
       where: { id },
     });
-    if (!complaint) {
+    // Treat "exists, but not my hostel's" the same as "doesn't exist" — same
+    // 404 the residents module uses for cross-hostel access, so a warden of
+    // another hostel can't use this to confirm the complaint exists.
+    if (
+      !complaint ||
+      (wardenHostelId != null && complaint.hostel_id !== wardenHostelId)
+    ) {
       throw new NotFoundException({
         message: 'Complaint not found',
         errorCode: 'COMPLAINT_NOT_FOUND',

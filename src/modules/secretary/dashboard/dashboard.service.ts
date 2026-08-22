@@ -6,22 +6,27 @@ function startOfToday(): Date {
   return new Date(new Date().toISOString().slice(0, 10));
 }
 
-interface FacultyDailyAttendanceRow {
-  status: string;
+// toFacultyEntry() below takes `any` deliberately — its real input type is
+// the faculty_daily_attendance query's inferred row shape, declared inline
+// where the query runs; giving it a name here would drift out of sync with
+// the query's own `select`. faculty is nullable only because faculty_id was
+// relaxed for an unrelated Secretary-facing feature (see the Secretary
+// module completion migration) — a Secretary's own attendance row has no
+// faculty row at all, so such rows are filtered out (see facultyOnLeave/
+// facultyOnDuty below) before this is ever called.
+function toFacultyEntry(row: {
   faculty: {
     id: number;
     first_name: string;
     last_name: string;
     designation: string;
-    departments: { name: string };
+    departments: { name: string } | null;
   };
-}
-
-function toFacultyEntry(row: FacultyDailyAttendanceRow) {
+}) {
   return {
     id: row.faculty.id,
     name: `${row.faculty.first_name} ${row.faculty.last_name}`,
-    department: row.faculty.departments.name,
+    department: row.faculty.departments?.name ?? null,
     designation: row.faculty.designation,
   };
 }
@@ -117,8 +122,14 @@ export class SecretaryDashboardService {
       }),
     ]);
 
-    const facultyOnLeave = facultyDailyRows.filter((r) => r.status === 'on_leave');
-    const facultyOnDuty = facultyDailyRows.filter((r) => r.status === 'on_duty');
+    // Secretary-authored rows (staff_user_id set) have no faculty at all —
+    // filtered out here since this widget is faculty-specific.
+    const facultyOnLeave = facultyDailyRows.filter(
+      (r) => r.status === 'on_leave' && r.faculty !== null,
+    ) as Array<(typeof facultyDailyRows)[number] & { faculty: NonNullable<(typeof facultyDailyRows)[number]['faculty']> }>;
+    const facultyOnDuty = facultyDailyRows.filter(
+      (r) => r.status === 'on_duty' && r.faculty !== null,
+    ) as Array<(typeof facultyDailyRows)[number] & { faculty: NonNullable<(typeof facultyDailyRows)[number]['faculty']> }>;
 
     const scheduledCount = scheduledSessionsToday.length;
     const markedCount = markedSessionsToday.length;

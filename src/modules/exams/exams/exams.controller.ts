@@ -33,21 +33,27 @@ export class ExamsController {
     return ApiResponse.created(result, 'Exam created successfully');
   }
   @Get()
+  @UseGuards(JwtAuthGuard)
   findAll() {
     return this.examsService.findAll();
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   findOne(@Param('id') id: string) {
     return this.examsService.findOne(+id);
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
   update(@Param('id') id: string, @Body() updateExamDto: UpdateExamDto) {
     return this.examsService.update(+id, updateExamDto);
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
   remove(@Param('id') id: string) {
     return this.examsService.remove(+id);
   }

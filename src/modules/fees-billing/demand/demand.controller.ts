@@ -15,12 +15,14 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { DemandService } from './demand.service';
 import { CreateDemandCategoryDto } from './dto/create-demand-category.dto';
 import { UpdateDemandCategoryDto } from './dto/update-demand-category.dto';
 
 @Controller('demand-categories')
-@Roles(ROLES.ADMIN)
+@Roles(ROLES.ADMIN, ROLES.BILLING)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class DemandController {
   constructor(private readonly demandService: DemandService) {}
@@ -37,8 +39,8 @@ export class DemandController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  create(@Body() dto: CreateDemandCategoryDto) {
-    return this.demandService.create(dto);
+  create(@Body() dto: CreateDemandCategoryDto, @CurrentUser() user: JwtPayload) {
+    return this.demandService.create(dto, user.sub);
   }
 
   /**
@@ -52,6 +54,17 @@ export class DemandController {
   @Get()
   findAll() {
     return this.demandService.findAll();
+  }
+
+  /**
+   * GET /api/v1/demand-categories/summary — real raised/collected/
+   * students-count per category, institution-wide. Registered before
+   * ':id' so the literal path segment "summary" is never swallowed by
+   * the numeric :id route.
+   */
+  @Get('summary')
+  summary() {
+    return this.demandService.summary();
   }
 
   /**
@@ -83,8 +96,9 @@ export class DemandController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateDemandCategoryDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.demandService.update(id, dto);
+    return this.demandService.update(id, dto, user.sub);
   }
 
   /**
@@ -98,7 +112,7 @@ export class DemandController {
    *  500 INTERNAL_ERROR            – unexpected server failure
    */
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.demandService.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.demandService.remove(id, user.sub);
   }
 }

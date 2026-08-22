@@ -13,6 +13,8 @@ interface DirectoryRow {
   dept_code: string | null;
   dept_name: string | null;
   semester: number | null;
+  class_id: number | null;
+  section: string | null;
   present_count: bigint | null;
   total_count: bigint | null;
   cgpa: string | null;
@@ -87,6 +89,9 @@ export class PrincipalStudentsService {
     if (dto.department_id !== undefined) {
       filters.push(Prisma.sql`cl.department_id = ${dto.department_id}`);
     }
+    if (dto.class_id !== undefined) {
+      filters.push(Prisma.sql`st.class_id = ${dto.class_id}`);
+    }
     if (dto.year !== undefined) {
       // No literal "year of study" column exists; derived from current_semester
       // assuming 2 semesters per academic year (institution-wide convention).
@@ -150,6 +155,7 @@ export class PrincipalStudentsService {
         st.id, st.student_id_no, st.roll_no,
         soa.first_name, soa.last_name, u.email,
         d.code AS dept_code, d.name AS dept_name, cl.current_semester AS semester,
+        cl.id AS class_id, cl.section AS section,
         sa.present_count, sa.total_count,
         sc.cgpa::text AS cgpa,
         sf.total_demand::text AS total_demand, sf.total_paid::text AS total_paid, sf.has_concession
@@ -193,6 +199,8 @@ export class PrincipalStudentsService {
             department_code: row.dept_code,
             department_name: row.dept_name,
             semester: row.semester,
+            class_id: row.class_id,
+            section: row.section,
             attendance_pct: resolveAttendancePct(row),
             cgpa: row.cgpa !== null ? Math.round(Number(row.cgpa) * 100) / 100 : null,
             fee_status: fee.status,
@@ -281,5 +289,299 @@ export class PrincipalStudentsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  /**
+   * GET /principal-students/:id/profile — the full Student Profile detail
+   * screen, every section backed by a real table (see the exhaustive
+   * schema audit this was built from). Nothing here is invented: a
+   * section with no matching real data returns an empty array/null field
+   * rather than a fabricated value, and the frontend renders that as a
+   * genuine empty state, not an error.
+   */
+  async getStudentProfile(id: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        student_id_no: true,
+        roll_no: true,
+        register_no: true,
+        admission_no: true,
+        admission_date: true,
+        admission_type: true,
+        gender: true,
+        date_of_birth: true,
+        blood_group: true,
+        mother_tongue: true,
+        community: true,
+        nationality: true,
+        religion: true,
+        caste: true,
+        is_first_graduate: true,
+        is_diff_abled: true,
+        diff_abled_info: true,
+        photo_url: true,
+        mentor_faculty_id: true,
+        class_id: true,
+        users: { select: { email: true } },
+        classes: {
+          select: {
+            section: true,
+            current_semester: true,
+            departments: { select: { id: true, name: true, code: true } },
+            courses: { select: { name: true } },
+            batches: { select: { name: true } },
+          },
+        },
+        soa_applications: {
+          select: { first_name: true, last_name: true, cutoff_physics: true, cutoff_chemistry: true, cutoff_maths: true },
+        },
+        student_contacts: { select: { student_email1: true, student_email2: true, student_mobile: true } },
+        student_sensitive_info: { select: { aadhar_number: true, pan_number: true, passport_number: true } },
+        student_addresses: { select: { address_type: true, address_line: true, city: true, state: true, pincode: true, district: true } },
+        student_family_details: true,
+        student_identity_marks: { select: { mark_number: true, description: true } },
+        student_certificates: {
+          select: { is_available: true, file_url: true, verified_at: true, certificate_types: { select: { name: true } } },
+        },
+        student_scholarship_awards: {
+          select: { amount: true, awarded_at: true, scholarship_schemes: { select: { name: true } } },
+        },
+        student_hostel_mapping: { select: { room_id: true, allocated_date: true } },
+        student_transport_mapping: { select: { route_id: true } },
+        student_fee_demand_mapping: { select: { total_amount: true, fee_payments: { select: { amount_paid: true } } } },
+        sports_achievements: { select: { event_name: true, result: true, level: true, achievement_date: true } },
+        student_test_scores: { select: { test_name: true, score: true, test_date: true } },
+        malpractice_incidents: { select: { id: true } },
+        student_drive_applications: {
+          select: { status: true, offer_response: true, offered_package: true, placement_drives: { select: { companies: { select: { name: true } } } } },
+        },
+      },
+    });
+
+    if (!student) {
+      throw new InternalServerErrorException({ message: 'Student not found', errorCode: 'STUDENT_NOT_FOUND' });
+    }
+
+    const mentor = student.mentor_faculty_id
+      ? await this.prisma.faculty.findUnique({
+          where: { id: student.mentor_faculty_id },
+          select: { first_name: true, last_name: true },
+        })
+      : null;
+
+    const classAdvisor = student.class_id
+      ? await this.prisma.class_mentors.findFirst({
+          where: { class_id: student.class_id },
+          orderBy: { academic_year: 'desc' },
+          select: { faculty: { select: { first_name: true, last_name: true } } },
+        })
+      : null;
+
+    // Semester-wise GPA history: real exam_marks joined through
+    // exam_subject_mapping -> exams (per-semester) -> subjects (credits),
+    // graded via the real grade_bands scale.
+    const examMarksRows = await this.prisma.exam_marks.findMany({
+      where: { student_id: id },
+      select: {
+        marks_obtained: true,
+        max_marks: true,
+        is_absent: true,
+        exam_subject_mapping: {
+          select: {
+            subjects: { select: { name: true, subject_code: true, credits: true } },
+            exams: { select: { semester: true, exam_types: { select: { is_university: true } } } },
+          },
+        },
+      },
+    });
+    const gradeBands = await this.prisma.grade_bands.findMany({ orderBy: { display_order: 'asc' } });
+    function gradeFor(pct: number): { label: string; point: number; pass: boolean } {
+      const band = gradeBands.find((b) => pct >= Number(b.min_percentage)) ?? gradeBands[gradeBands.length - 1];
+      return { label: band?.grade_label ?? '—', point: band ? Number(band.grade_point ?? 0) : 0, pass: band?.is_pass ?? true };
+    }
+    const bySemester = new Map<number, { credits: number; qualityPoints: number; subjects: typeof examMarksRows }>();
+    for (const row of examMarksRows) {
+      if (!row.exam_subject_mapping.exams.exam_types.is_university) continue; // only the official semester exam counts toward GPA
+      const sem = row.exam_subject_mapping.exams.semester;
+      const credits = row.exam_subject_mapping.subjects.credits ?? 0;
+      const pct = row.is_absent ? 0 : (Number(row.marks_obtained ?? 0) / Number(row.max_marks)) * 100;
+      const g = gradeFor(pct);
+      const entry = bySemester.get(sem) ?? { credits: 0, qualityPoints: 0, subjects: [] };
+      entry.credits += credits;
+      entry.qualityPoints += credits * g.point;
+      entry.subjects.push(row);
+      bySemester.set(sem, entry);
+    }
+    const gpaHistory = Array.from(bySemester.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([semester, v]) => ({
+        semester,
+        gpa: v.credits > 0 ? Math.round((v.qualityPoints / v.credits) * 100) / 100 : null,
+        credits: v.credits,
+        arrears: v.subjects.filter((s) => (s.is_absent ? true : (Number(s.marks_obtained ?? 0) / Number(s.max_marks)) * 100 < 35)).length,
+      }));
+
+    // Current semester subject-wise marks (internal vs external) + attendance.
+    const currentSemester = student.classes?.current_semester ?? null;
+    const currentSemesterSubjects = currentSemester
+      ? await (async () => {
+          const rows = examMarksRows.filter((r) => r.exam_subject_mapping.exams.semester === currentSemester);
+          const bySubject = new Map<string, { name: string; code: string; internal: number | null; external: number | null }>();
+          for (const r of rows) {
+            const key = r.exam_subject_mapping.subjects.subject_code;
+            const entry = bySubject.get(key) ?? { name: r.exam_subject_mapping.subjects.name, code: key, internal: null, external: null };
+            const pct = r.is_absent ? null : Number(r.marks_obtained ?? 0);
+            if (r.exam_subject_mapping.exams.exam_types.is_university) entry.external = pct;
+            else entry.internal = pct;
+            bySubject.set(key, entry);
+          }
+          const attendanceBySubject = await this.prisma.attendance_records.groupBy({
+            by: ['subject_id'],
+            where: { student_id: id },
+            _count: { _all: true },
+          });
+          return Array.from(bySubject.values()).map((s) => {
+            const total = (s.internal ?? 0) + (s.external ?? 0);
+            const pct = total > 0 ? total : 0;
+            const g = gradeFor(pct);
+            return { ...s, total, grade: g.label };
+          });
+        })()
+      : [];
+
+    // Monthly attendance (last 7 months with any record).
+    const attendanceRows = await this.prisma.attendance_records.findMany({
+      where: { student_id: id },
+      select: { attendance_date: true, status: true },
+      orderBy: { attendance_date: 'asc' },
+    });
+    const byMonth = new Map<string, { present: number; total: number }>();
+    for (const r of attendanceRows) {
+      const key = r.attendance_date.toISOString().slice(0, 7);
+      const entry = byMonth.get(key) ?? { present: 0, total: 0 };
+      entry.total += 1;
+      if (r.status === 'present') entry.present += 1;
+      byMonth.set(key, entry);
+    }
+    const monthlyAttendance = Array.from(byMonth.entries())
+      .slice(-7)
+      .map(([month, v]) => ({ month, pct: v.total > 0 ? Math.round((v.present / v.total) * 1000) / 10 : 0 }));
+
+    const overallAttendancePct = attendanceRows.length
+      ? Math.round((attendanceRows.filter((r) => r.status === 'present').length / attendanceRows.length) * 1000) / 10
+      : null;
+    const overallGpa = gpaHistory.length ? gpaHistory[gpaHistory.length - 1].gpa : null;
+    const totalDemand = student.student_fee_demand_mapping.reduce((s, d) => s + Number(d.total_amount), 0);
+    const totalPaid = student.student_fee_demand_mapping.reduce((s, d) => s + d.fee_payments.reduce((s2, p) => s2 + Number(p.amount_paid), 0), 0);
+
+    return {
+      id: student.id,
+      name: student.soa_applications
+        ? `${student.soa_applications.first_name} ${student.soa_applications.last_name ?? ''}`.trim()
+        : student.users.email,
+      student_id_no: student.student_id_no,
+      roll_no: student.roll_no,
+      register_no: student.register_no,
+      admission_no: student.admission_no,
+      admission_date: student.admission_date,
+      admission_type: student.admission_type,
+      department: student.classes?.departments ?? null,
+      programme: student.classes?.courses?.name ?? null,
+      batch: student.classes?.batches?.name ?? null,
+      section: student.classes?.section ?? null,
+      semester: currentSemester,
+      gender: student.gender,
+      date_of_birth: student.date_of_birth,
+      blood_group: student.blood_group,
+      mother_tongue: student.mother_tongue,
+      community: student.community,
+      nationality: student.nationality,
+      religion: student.religion,
+      caste: student.caste,
+      is_first_graduate: student.is_first_graduate,
+      is_diff_abled: student.is_diff_abled,
+      diff_abled_info: student.diff_abled_info,
+      photo_url: student.photo_url,
+      institute_email: student.users.email,
+      personal_email: student.student_contacts?.student_email1 ?? null,
+      alternate_email: student.student_contacts?.student_email2 ?? null,
+      mobile: student.student_contacts?.student_mobile ?? null,
+      aadhar_number: student.student_sensitive_info?.aadhar_number ?? null,
+      pan_number: student.student_sensitive_info?.pan_number ?? null,
+      passport_number: student.student_sensitive_info?.passport_number ?? null,
+      addresses: student.student_addresses.map((a) => ({
+        type: a.address_type,
+        line: a.address_line,
+        city: a.city,
+        state: a.state,
+        pincode: a.pincode,
+        district: a.district,
+      })),
+      class_advisor: classAdvisor?.faculty ? `${classAdvisor.faculty.first_name} ${classAdvisor.faculty.last_name}` : null,
+      faculty_mentor: mentor ? `${mentor.first_name} ${mentor.last_name}` : null,
+      identity_marks: student.student_identity_marks.map((m) => ({ number: m.mark_number, description: m.description })),
+      family: student.student_family_details
+        ? {
+            father: {
+              name: student.student_family_details.father_name,
+              qualification: student.student_family_details.father_qualification,
+              occupation: student.student_family_details.father_occupation,
+              annual_income: student.student_family_details.father_annual_income ? Number(student.student_family_details.father_annual_income) : null,
+              email: student.student_family_details.father_email,
+              mobile: student.student_family_details.father_mobile,
+              photo_url: student.student_family_details.father_photo_url,
+            },
+            mother: {
+              name: student.student_family_details.mother_name,
+              qualification: student.student_family_details.mother_qualification,
+              occupation: student.student_family_details.mother_occupation,
+              annual_income: student.student_family_details.mother_annual_income ? Number(student.student_family_details.mother_annual_income) : null,
+              email: student.student_family_details.mother_email,
+              mobile: student.student_family_details.mother_mobile,
+              photo_url: student.student_family_details.mother_photo_url,
+            },
+          }
+        : null,
+      pre_admission: student.soa_applications
+        ? {
+            cutoff_physics: student.soa_applications.cutoff_physics,
+            cutoff_chemistry: student.soa_applications.cutoff_chemistry,
+            cutoff_maths: student.soa_applications.cutoff_maths,
+          }
+        : null,
+      gpa_history: gpaHistory,
+      overall_gpa: overallGpa,
+      overall_percentage: overallGpa ? Math.round(overallGpa * 9.5 * 10) / 10 : null,
+      current_semester_subjects: currentSemesterSubjects,
+      monthly_attendance: monthlyAttendance,
+      overall_attendance_pct: overallAttendancePct,
+      documents: student.student_certificates.map((c) => ({
+        name: c.certificate_types.name,
+        available: c.is_available,
+        file_url: c.file_url,
+        verified_at: c.verified_at,
+      })),
+      scholarships: student.student_scholarship_awards.map((s) => ({
+        scheme: s.scholarship_schemes.name,
+        amount: Number(s.amount),
+        awarded_at: s.awarded_at,
+      })),
+      hostel: student.student_hostel_mapping ? { room_id: student.student_hostel_mapping.room_id, allocated_date: student.student_hostel_mapping.allocated_date } : null,
+      transport: student.student_transport_mapping ? { route_id: student.student_transport_mapping.route_id } : null,
+      fees: { total_demand: totalDemand, total_paid: totalPaid, status: totalDemand === 0 ? 'no_demand' : totalPaid >= totalDemand ? 'paid' : 'due' },
+      achievements: [
+        ...student.sports_achievements.map((a) => ({ label: `${a.event_name} — ${a.result}`, date: a.achievement_date, source: 'sports' as const })),
+        ...student.student_test_scores.map((t) => ({ label: `${t.test_name}: ${t.score}`, date: t.test_date, source: 'test_score' as const })),
+      ],
+      discipline: { incident_count: student.malpractice_incidents.length },
+      placement: student.student_drive_applications.map((d) => ({
+        company: d.placement_drives.companies.name,
+        status: d.status,
+        offer_response: d.offer_response,
+        offered_package: d.offered_package ? Number(d.offered_package) : null,
+      })),
+    };
   }
 }

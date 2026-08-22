@@ -25,18 +25,23 @@ export class TransportStageController {
   /**
    * GET /api/v1/transport-stages
    *
+   * Billing additionally allowed (read-only) so the Fee Structures screen can
+   * show real stop-wise fares for transport-fee items — Billing cannot
+   * create/update/delete stages, only Admin can.
+   *
    * Error responses:
    *  401 UNAUTHORIZED   – missing/invalid access token
    *  403 FORBIDDEN      – authenticated user is not an admin
    *  500 INTERNAL_ERROR – unexpected server failure
    */
   @Get()
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
   findAll() {
     return this.transportStageService.findAll();
   }
 
   /**
-   * GET /api/v1/transport-stages/:id
+   * GET /api/v1/transport-stages/:id — Billing additionally allowed, see findAll().
    *
    * Error responses:
    *  401 UNAUTHORIZED              – missing/invalid access token
@@ -45,6 +50,7 @@ export class TransportStageController {
    *  500 INTERNAL_ERROR            – unexpected server failure
    */
   @Get(':id')
+  @Roles(ROLES.ADMIN, ROLES.BILLING)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.transportStageService.findOne(id);
   }

@@ -34,6 +34,7 @@ describe('ComplaintsService', () => {
         user_id: 501,
         student_id_no: '23EC056',
         soa_applications: { first_name: 'Arjun', last_name: 'Kumar' },
+        users: { email: 'arjun.kumar@example.com' },
         student_hostel_mapping: { hostel_rooms: { room_number: 'A101' } },
       },
       hostels: { id: 1, name: 'Block A', code: 'A' },
@@ -75,7 +76,7 @@ describe('ComplaintsService', () => {
       prisma.hostel_complaints.findUnique.mockResolvedValue({ id: 1, status: 'open' });
       prisma.hostel_complaints.update.mockResolvedValue(complaintRow({ status: 'resolved' }));
 
-      await service.update(1, { status: 'resolved' } as any);
+      await service.update(1, { status: 'resolved' } as any, null);
 
       expect(notifications.notify).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -91,7 +92,7 @@ describe('ComplaintsService', () => {
       prisma.hostel_complaints.findUnique.mockResolvedValue({ id: 1, status: 'open' });
       prisma.hostel_complaints.update.mockResolvedValue(complaintRow({ status: 'open', priority: 'high' }));
 
-      await service.update(1, { priority: 'high' } as any);
+      await service.update(1, { priority: 'high' } as any, null);
 
       expect(notifications.notify).not.toHaveBeenCalled();
     });
@@ -99,10 +100,38 @@ describe('ComplaintsService', () => {
     it('404s when the complaint does not exist, and never notifies', async () => {
       prisma.hostel_complaints.findUnique.mockResolvedValue(null);
 
-      await expect(service.update(999, { status: 'resolved' } as any)).rejects.toMatchObject({
+      await expect(service.update(999, { status: 'resolved' } as any, null)).rejects.toMatchObject({
         response: { errorCode: 'COMPLAINT_NOT_FOUND' },
       });
       expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it('404s (not 200) when the complaint belongs to a different hostel than the caller is scoped to', async () => {
+      prisma.hostel_complaints.findUnique.mockResolvedValue({ id: 1, status: 'open', hostel_id: 2 });
+
+      await expect(service.update(1, { status: 'resolved' } as any, 1)).rejects.toMatchObject({
+        response: { errorCode: 'COMPLAINT_NOT_FOUND' },
+      });
+      expect(prisma.hostel_complaints.update).not.toHaveBeenCalled();
+      expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it('allows the update when the complaint belongs to the caller\'s own hostel', async () => {
+      prisma.hostel_complaints.findUnique.mockResolvedValue({ id: 1, status: 'open', hostel_id: 1 });
+      prisma.hostel_complaints.update.mockResolvedValue(complaintRow({ status: 'resolved' }));
+
+      await service.update(1, { status: 'resolved' } as any, 1);
+
+      expect(prisma.hostel_complaints.update).toHaveBeenCalled();
+    });
+
+    it('allows the update with no hostel scope (e.g. admin)', async () => {
+      prisma.hostel_complaints.findUnique.mockResolvedValue({ id: 1, status: 'open', hostel_id: 2 });
+      prisma.hostel_complaints.update.mockResolvedValue(complaintRow({ status: 'resolved' }));
+
+      await service.update(1, { status: 'resolved' } as any, null);
+
+      expect(prisma.hostel_complaints.update).toHaveBeenCalled();
     });
 
     it('does not fail the update if notifying the student throws', async () => {
@@ -110,7 +139,7 @@ describe('ComplaintsService', () => {
       prisma.hostel_complaints.update.mockResolvedValue(complaintRow({ status: 'resolved' }));
       notifications.notify.mockRejectedValue(new Error('connection lost'));
 
-      const result = await service.update(1, { status: 'resolved' } as any);
+      const result = await service.update(1, { status: 'resolved' } as any, null);
 
       expect(result).toMatchObject({ id: 1, status: 'resolved' });
     });

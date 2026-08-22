@@ -37,18 +37,31 @@ export class FacultyController {
     return this.facultyService.create(dto, user.sub);
   }
 
-  /** GET /api/v1/faculty — Admin/HoD/HR Payroll. Paginated list, filterable by department_id/status. */
+  /**
+   * GET /api/v1/faculty — Admin/HoD/HR Payroll/Secretary. Paginated list,
+   * filterable by department_id/status. Secretary added for the Secretary
+   * Portal's Reports "faculty summary" table — same institution-wide
+   * posture as /announcements and /principal-* (no secretary→department
+   * table exists, so this reads unscoped like Admin does).
+   */
   @Get('faculty')
-  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
   findAll(@Query() query: ListFacultyQueryDto) {
     return this.facultyService.findAll(query);
   }
 
   /**
-   * GET /api/v1/faculty/profile — authenticated faculty's own profile.
-   * Declared before ':id' so 'profile' is never captured as a numeric id.
+   * GET /api/v1/me/faculty-profile — authenticated faculty's own profile.
+   * Moved off 'me/profile' (2026-08-21): that path collided with
+   * MeController's student-only handler in me-profile.controller.ts, which
+   * registers first and always won, silently shadowing this handler for
+   * every Faculty caller (confirmed dead in production — real Faculty JWTs
+   * got a 403 "Required role(s): student" from the wrong controller, and no
+   * frontend caller referenced this route). Renamed to a distinct path
+   * rather than deleted, since the underlying feature is real and unused
+   * only because of the collision, not because it's obsolete.
    */
-  @Get('profile')
+  @Get('faculty-profile')
   @Roles(ROLES.FACULTY)
   getOwnProfile(@CurrentUser() user: JwtPayload) {
     return this.facultyService.getOwnProfile(user.sub);
@@ -56,11 +69,18 @@ export class FacultyController {
 
   /** PATCH /api/v1/faculty/profile — faculty self-service update of editable fields only. */
 
-  /** GET /api/v1/faculty/:id — Admin/HoD/HR Payroll. Excludes sensitive HR information. */
+  /**
+   * GET /api/v1/faculty/:id — Admin/HoD/HR Payroll. Sensitive HR
+   * information (Aadhaar/PAN/bank details) is included only for
+   * Admin/HR Payroll callers — see findOneForAdmin()'s own doc comment.
+   */
   @Get('faculty/:id')
   @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.facultyService.findOneForAdmin(id);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.facultyService.findOneForAdmin(id, user.role);
   }
 
   /** PATCH /api/v1/faculty/:id — Admin/HR Payroll. Distinct from the faculty's own /profile update. */

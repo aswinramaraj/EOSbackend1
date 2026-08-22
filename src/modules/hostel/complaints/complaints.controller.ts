@@ -52,10 +52,12 @@ export class ComplaintsController {
   }
 
   @Patch(':id')
-  update(
+  async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateComplaintDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.complaintsService.update(id, dto);
+    const wardenHostelId = await resolveWardenHostelId(this.prisma, user.sub);
+    return this.complaintsService.update(id, dto, wardenHostelId);
   }
 }

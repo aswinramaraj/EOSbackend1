@@ -16,12 +16,14 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { QuotaService } from './quota.service';
 import { CreateQuotaDto } from './dto/create-quota.dto';
 import { UpdateQuotaDto } from './dto/update-quota.dto';
 
 @Controller('quotas')
-@Roles(ROLES.ADMIN)
+@Roles(ROLES.ADMIN, ROLES.BILLING)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class QuotaController {
   constructor(private readonly quotaService: QuotaService) {}
@@ -38,8 +40,8 @@ export class QuotaController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  create(@Body() dto: CreateQuotaDto) {
-    return this.quotaService.create(dto);
+  create(@Body() dto: CreateQuotaDto, @CurrentUser() user: JwtPayload) {
+    return this.quotaService.create(dto, user.sub);
   }
 
   /**
@@ -81,9 +83,31 @@ export class QuotaController {
    *  500 INTERNAL_ERROR   – unexpected server failure
    */
   @Put(':id')
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateQuotaDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.quotaService.update(id, dto, user.sub);
+  }
+
+  /**
+   * PATCH /api/v1/quotas/:id
+   *
+   * Same behaviour as PUT — kept as a separate handler because NestJS route
+   * metadata cannot be shared by stacking two HTTP-method decorators on one
+   * method (a real bug found and fixed: PATCH was previously 404ing since
+   * @Patch's metadata silently overwrote @Put's on the same method).
+   *
+   * Error responses: see PUT /api/v1/quotas/:id
+   */
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateQuotaDto) {
-    return this.quotaService.update(id, dto);
+  patch(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateQuotaDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.quotaService.update(id, dto, user.sub);
   }
 
   /**
@@ -97,7 +121,7 @@ export class QuotaController {
    *  500 INTERNAL_ERROR   – unexpected server failure
    */
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.quotaService.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.quotaService.remove(id, user.sub);
   }
 }

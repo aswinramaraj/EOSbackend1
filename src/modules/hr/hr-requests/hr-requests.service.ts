@@ -385,7 +385,7 @@ export class HrRequestsService {
   }
 
   async removeEntry(kind: 'leave' | 'od', id: number) {
-    let facultyId: number;
+    let facultyId: number | null;
     let fromDate: Date;
     let toDate: Date;
 
@@ -411,6 +411,14 @@ export class HrRequestsService {
       fromDate = existing.from_date;
       toDate = existing.to_date;
       await this.prisma.faculty_od_requests.delete({ where: { id } });
+    }
+
+    // A Secretary-authored (staff_user_id) row has no faculty_id at all —
+    // this HR module only ever creates faculty-linked entries itself, so a
+    // null here means the id belongs to a row this module didn't create;
+    // nothing to sync back in faculty_daily_attendance for it.
+    if (facultyId === null) {
+      return { id, kind, deleted: true };
     }
 
     // Undoes exactly what createEntry's sync does, and only that — a row is

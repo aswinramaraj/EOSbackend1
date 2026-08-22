@@ -338,8 +338,24 @@ export class FacultyService {
     }
   }
 
-  /** GET /faculty/:id — Admin/HoD view. Excludes faculty_sensitive_info entirely. */
-  async findOneForAdmin(id: number) {
+  /**
+   * GET /faculty/:id — Admin/HoD/HR Payroll view.
+   *
+   * faculty_sensitive_info (Aadhaar/PAN/bank details) is only ever included
+   * in the *response* for ADMIN/HR_PAYROLL callers — the same two roles
+   * allowed to write it via updateByAdmin() below — even though it's always
+   * selected here (selecting it unconditionally keeps this one Prisma call
+   * statically typed instead of a role-dependent select shape; the actual
+   * access control is enforced below, before anything is returned). HOD
+   * shares this endpoint for the rest of the profile but has no legitimate
+   * need to see a colleague's bank/Aadhaar details, so callerRole being
+   * anything else leaves `sensitive_info` off the response entirely — not
+   * masked, not present at all.
+   */
+  async findOneForAdmin(id: number, callerRole: string) {
+    const canSeeSensitiveInfo =
+      callerRole === ROLES.ADMIN || callerRole === ROLES.HR_PAYROLL;
+
     const faculty = await this.prisma.faculty.findUnique({
       where: { id },
       select: {
@@ -354,6 +370,15 @@ export class FacultyService {
           select: { id: true, name: true, code: true },
         },
         users: { select: { id: true, email: true, phone: true, status: true } },
+        faculty_sensitive_info: {
+          select: {
+            aadhar_number: true,
+            pan_number: true,
+            bank_account_number: true,
+            bank_ifsc: true,
+            bank_name: true,
+          },
+        },
         ...EXTENDED_SELECT_FIELDS,
       },
     });
@@ -374,6 +399,9 @@ export class FacultyService {
       email: faculty.users.email,
       phone: faculty.users.phone,
       ...pickExtendedFields(faculty),
+      sensitive_info: canSeeSensitiveInfo
+        ? (faculty.faculty_sensitive_info ?? undefined)
+        : undefined,
     };
   }
 

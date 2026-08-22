@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateQuotaDto } from './dto/create-quota.dto';
 import { UpdateQuotaDto } from './dto/update-quota.dto';
 
@@ -13,7 +14,10 @@ import { UpdateQuotaDto } from './dto/update-quota.dto';
 export class QuotaService {
   private readonly logger = new Logger(QuotaService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   /**
    * POST /quotas
@@ -22,7 +26,7 @@ export class QuotaService {
    *  409 QUOTA_EXISTS   – a quota with the same name already exists
    *  500 INTERNAL_ERROR – unexpected failure (DB, etc.)
    */
-  async create(dto: CreateQuotaDto) {
+  async create(dto: CreateQuotaDto, performedByUserId: number) {
     const existing = await this.findByName(dto.name);
 
     if (existing) {
@@ -33,9 +37,19 @@ export class QuotaService {
     }
 
     try {
-      return await this.prisma.quotas.create({
+      const created = await this.prisma.quotas.create({
         data: { name: dto.name },
       });
+
+      await this.auditLog.record({
+        entity_type: 'quota',
+        entity_id: created.id,
+        action: 'created',
+        performed_by_user_id: performedByUserId,
+        new_value: { name: created.name },
+      });
+
+      return created;
     } catch (err) {
       this.logger.error('DB error while creating quota', err);
       throw new InternalServerErrorException({
@@ -88,7 +102,7 @@ export class QuotaService {
    *  404 QUOTA_NOT_FOUND – no quota with the given id
    *  409 QUOTA_EXISTS    – another quota already uses this name
    */
-  async update(id: number, dto: UpdateQuotaDto) {
+  async update(id: number, dto: UpdateQuotaDto, performedByUserId: number) {
     const quota = await this.findById(id);
 
     if (!quota) {
@@ -110,10 +124,21 @@ export class QuotaService {
     }
 
     try {
-      return await this.prisma.quotas.update({
+      const updated = await this.prisma.quotas.update({
         where: { id },
         data: { name: dto.name },
       });
+
+      await this.auditLog.record({
+        entity_type: 'quota',
+        entity_id: updated.id,
+        action: 'updated',
+        performed_by_user_id: performedByUserId,
+        old_value: { name: quota.name },
+        new_value: { name: updated.name },
+      });
+
+      return updated;
     } catch (err) {
       this.logger.error('DB error while updating quota', err);
       throw new InternalServerErrorException({
@@ -130,7 +155,7 @@ export class QuotaService {
    *  404 QUOTA_NOT_FOUND – no quota with the given id
    *  409 QUOTA_IN_USE    – quota is referenced by fee_structures or students
    */
-  async remove(id: number) {
+  async remove(id: number, performedByUserId: number) {
     const quota = await this.findById(id);
 
     if (!quota) {
@@ -163,9 +188,19 @@ export class QuotaService {
     }
 
     try {
-      return await this.prisma.quotas.delete({
+      const deleted = await this.prisma.quotas.delete({
         where: { id },
       });
+
+      await this.auditLog.record({
+        entity_type: 'quota',
+        entity_id: deleted.id,
+        action: 'deleted',
+        performed_by_user_id: performedByUserId,
+        old_value: { name: deleted.name },
+      });
+
+      return deleted;
     } catch (err) {
       this.logger.error('DB error while deleting quota', err);
       throw new InternalServerErrorException({

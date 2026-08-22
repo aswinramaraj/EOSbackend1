@@ -22,6 +22,10 @@ function prismaErrorCode(err: unknown): string | undefined {
     : undefined;
 }
 
+// is_published/published_at are NOT declared in schema.prisma (deliberately
+// not touching that file) — they're read/written via raw SQL below
+// (rawGetPublishState / rawSetPublishState) and merged into the response
+// after the normal typed Prisma query, instead of being part of this select.
 const ATTENDANCE_SELECT = {
   id: true,
   attendance_date: true,
@@ -103,11 +107,15 @@ function resolveMarkerName(marker: AttendanceMarkerRow): string {
   return marker.email;
 }
 
-function toResponse(record: AttendanceRow) {
+/** publishState is fetched separately via raw SQL (see rawGetPublishState)
+ * since is_published/published_at aren't declared in schema.prisma. */
+function toResponse(record: AttendanceRow, publishState?: { is_published: boolean; published_at: Date | null }) {
   return {
     id: record.id,
     date: record.attendance_date,
     status: record.status,
+    is_published: publishState?.is_published ?? true,
+    published_at: publishState?.published_at ?? null,
     class: {
       id: record.classes.id,
       section: record.classes.section,
@@ -135,6 +143,57 @@ export class AttendanceService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // ---------------------------------------------------------------------
+  // Raw-SQL publish-state helpers.
+  //
+  // attendance_records.is_published / published_at are real DB columns but
+  // are deliberately NOT declared in schema.prisma (schema.prisma is not to
+  // be touched) — these two columns must be added to the database directly
+  // by running the SQL below once, then every read/write of them goes
+  // through $queryRaw/$executeRaw instead of the generated Prisma Client.
+  //
+  // Run this once against the real DB before using Save/Publish:
+  //
+  //   ALTER TABLE attendance_records
+  //     ADD COLUMN IF NOT EXISTS is_published boolean NOT NULL DEFAULT true,
+  //     ADD COLUMN IF NOT EXISTS published_at timestamp NULL;
+  //
+  // (DEFAULT true so every historical row already marked under the old
+  // always-final behavior stays visible; new rows are explicitly set to
+  // false by rawInsertDraftStatus below.)
+  // ---------------------------------------------------------------------
+
+  private async rawGetPublishState(
+    classId: number,
+    subjectId: number,
+    attendanceDate: Date,
+  ): Promise<{ is_published: boolean; published_at: Date | null }[]> {
+    return this.prisma.$queryRaw<
+      { is_published: boolean; published_at: Date | null }[]
+    >`SELECT is_published, published_at FROM attendance_records
+       WHERE class_id = ${classId} AND subject_id = ${subjectId} AND attendance_date = ${attendanceDate}`;
+  }
+
+  private async rawGetPublishStateByIds(
+    ids: number[],
+  ): Promise<Map<number, { is_published: boolean; published_at: Date | null }>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.prisma.$queryRaw<
+      { id: number; is_published: boolean; published_at: Date | null }[]
+    >`SELECT id, is_published, published_at FROM attendance_records WHERE id = ANY(${ids})`;
+    return new Map(rows.map((r) => [r.id, { is_published: r.is_published, published_at: r.published_at }]));
+  }
+
+  private async rawSetIsPublished(ids: number[], value: boolean, publishedAt: Date | null) {
+    if (ids.length === 0) return;
+    await this.prisma.$executeRaw`UPDATE attendance_records SET is_published = ${value}, published_at = ${publishedAt} WHERE id = ANY(${ids})`;
+  }
+
+  private async rawSetIsPublishedFalse(ids: number[]) {
+    if (ids.length === 0) return;
+    await this.prisma.$executeRaw`UPDATE attendance_records SET is_published = false, published_at = NULL WHERE id = ANY(${ids})`;
+  }
+
   /**
    * POST /attendance (Faculty / Secretary).
    *
@@ -144,12 +203,16 @@ export class AttendanceService {
    * set from the caller's own id; `marked_by_faculty_id` is only populated
    * when the caller actually has a faculty profile (Secretary doesn't).
    */
-  async create(dto: CreateAttendanceDto, currentUser: JwtPayload) {
-    const userId = currentUser.sub;
+  async create(dto: CreateAttendanceDto, userId: number, userRole?: string) {
+    // Secretary added for the Secretary Portal's Bulk Attendance "Mark" tab
+    // — has no `faculty` table row, so is handled here exactly like
+    // MediaRequestsService's Secretary branch: skip the faculty-profile
+    // lookup and leave marked_by_faculty_id null (the column is already
+    // nullable — see this file's own comment on `faculty` in AttendanceRow).
     const faculty =
-      currentUser.role === ROLES.FACULTY
-        ? await this.resolveFacultyByUserId(userId)
-        : null;
+      userRole === ROLES.SECRETARY
+        ? null
+        : await this.resolveFacultyByUserId(userId);
 
     const klass = await this.prisma.classes.findUnique({
       where: { id: dto.class_id },
@@ -245,7 +308,7 @@ export class AttendanceService {
                 subject_id: dto.subject_id,
                 attendance_date: attendanceDate,
                 status: r.status,
-                marked_by_faculty_id: faculty?.id,
+                marked_by_faculty_id: faculty?.id ?? null,
                 marked_by_user_id: userId,
               },
               select: { id: true, student_id: true, status: true },
@@ -386,40 +449,67 @@ export class AttendanceService {
       });
     }
 
-    const existing = await this.prisma.attendance_records.findFirst({
+    const existing = await this.prisma.attendance_records.findMany({
       where: {
         class_id: classId,
         subject_id: dto.subject_id,
         attendance_date: attendanceDate,
       },
+      select: { id: true },
     });
-    if (existing) {
+    const publishState = await this.rawGetPublishState(classId, dto.subject_id, attendanceDate);
+    // Once published, attendance is final — matches Subject Records marks
+    // locking after publish. Before publish it's a draft: re-marking the
+    // same class/subject/date just replaces the draft rows so Save can be
+    // clicked repeatedly while editing.
+    if (publishState.some((r) => r.is_published)) {
       throw new ConflictException({
         message:
-          'Attendance has already been marked for this class, subject, and date',
-        errorCode: 'ATTENDANCE_ALREADY_MARKED',
+          'Attendance has already been published for this class, subject, and date',
+        errorCode: 'ATTENDANCE_ALREADY_PUBLISHED',
       });
     }
 
     let created: Array<{ id: number }>;
     try {
-      created = await this.prisma.$transaction(
-        dto.records.map((r) =>
-          this.prisma.attendance_records.create({
-            data: {
-              student_id: r.student_id,
+      created = await this.prisma.$transaction(async (tx) => {
+        if (existing.length > 0) {
+          await tx.attendance_records.deleteMany({
+            where: {
               class_id: classId,
               subject_id: dto.subject_id,
               attendance_date: attendanceDate,
-              status: r.status,
-              marked_by_faculty_id: faculty.id,
-              marked_by_user_id: userId,
-              photo_url: dto.photo_url,
             },
-            select: { id: true },
-          }),
-        ),
-      );
+          });
+        }
+        const rows = await Promise.all(
+          dto.records.map((r) =>
+            tx.attendance_records.create({
+              data: {
+                student_id: r.student_id,
+                class_id: classId,
+                subject_id: dto.subject_id,
+                attendance_date: attendanceDate,
+                status: r.status,
+                marked_by_faculty_id: faculty.id,
+                marked_by_user_id: userId,
+              },
+              select: { id: true },
+            }),
+          ),
+        );
+        // is_published is a real DB column not declared in schema.prisma
+        // (not to be touched) — set it via raw SQL in the same transaction
+        // as the inserts above. NOTE: photo_url does not actually exist on
+        // this table in the live DB (confirmed via \d attendance_records) —
+        // dto.photo_url is accepted by the DTO but has nowhere to be
+        // persisted; silently dropped rather than crashing every save.
+        const ids = rows.map((r) => r.id);
+        if (ids.length > 0) {
+          await tx.$executeRaw`UPDATE attendance_records SET is_published = false, published_at = NULL WHERE id = ANY(${ids})`;
+        }
+        return rows;
+      });
     } catch (err: unknown) {
       if (prismaErrorCode(err) === 'P2002') {
         throw new ConflictException({
@@ -433,13 +523,113 @@ export class AttendanceService {
     }
 
     this.logger.log(
-      `Class attendance marked: class=${classId} subject=${dto.subject_id} date=${dto.attendance_date} marked=${created.length}`,
+      `Class attendance saved as draft: class=${classId} subject=${dto.subject_id} date=${dto.attendance_date} marked=${created.length}`,
     );
 
     return {
       class_id: classId,
       attendance_date: dto.attendance_date,
       marked: created.length,
+      is_published: false,
+    };
+  }
+
+  /**
+   * POST /me/classes/:class_id/attendance/publish — Faculty only. Flips the
+   * draft rows saved by markForClass to is_published=true, the exact moment
+   * this attendance becomes visible to students/parents/advisors via
+   * GET /attendance (see applyRoleScoping's is_published gate below).
+   */
+  async publishForClass(
+    classId: number,
+    subjectId: number,
+    attendanceDateIso: string,
+    userId: number,
+  ) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+    const attendanceDate = new Date(attendanceDateIso);
+
+    const mapping = await this.prisma.faculty_subject_class_mapping.findFirst(
+      {
+        where: { faculty_id: faculty.id, subject_id: subjectId, class_id: classId },
+      },
+    );
+    if (!mapping) {
+      throw new ForbiddenException({
+        message: 'You are not assigned to teach this subject for this class',
+        errorCode: 'NOT_MAPPED_TO_TEACH',
+      });
+    }
+
+    const allRows = await this.prisma.attendance_records.findMany({
+      where: { class_id: classId, subject_id: subjectId, attendance_date: attendanceDate },
+      select: { id: true },
+    });
+    const publishState = await this.rawGetPublishStateByIds(allRows.map((r) => r.id));
+    const draftIds = allRows.map((r) => r.id).filter((id) => !publishState.get(id)?.is_published);
+    if (draftIds.length === 0) {
+      throw new NotFoundException({
+        message:
+          'No draft attendance found for this class, subject, and date — save it first',
+        errorCode: 'ATTENDANCE_DRAFT_NOT_FOUND',
+      });
+    }
+
+    const publishedAt = new Date();
+    await this.rawSetIsPublished(draftIds, true, publishedAt);
+    const draft = draftIds;
+
+    this.logger.log(
+      `Class attendance published: class=${classId} subject=${subjectId} date=${attendanceDateIso} count=${draft.length}`,
+    );
+
+    return {
+      class_id: classId,
+      subject_id: subjectId,
+      attendance_date: attendanceDateIso,
+      published: draft.length,
+      published_at: publishedAt.toISOString(),
+    };
+  }
+
+  /**
+   * GET /me/classes/:class_id/attendance/draft?subject_id=&date= — Faculty
+   * only. Lets the marking screen re-hydrate an unpublished draft so Save
+   * can be clicked, the page refreshed, and the same draft continued before
+   * Publish — without this, a draft saved once could never be re-opened.
+   */
+  async getDraftForClass(
+    classId: number,
+    subjectId: number,
+    dateIso: string,
+    userId: number,
+  ) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+    const mapping = await this.prisma.faculty_subject_class_mapping.findFirst(
+      {
+        where: { faculty_id: faculty.id, subject_id: subjectId, class_id: classId },
+      },
+    );
+    if (!mapping) {
+      throw new ForbiddenException({
+        message: 'You are not assigned to teach this subject for this class',
+        errorCode: 'NOT_MAPPED_TO_TEACH',
+      });
+    }
+
+    const attendanceDate = new Date(dateIso);
+    const rows = await this.prisma.attendance_records.findMany({
+      where: { class_id: classId, subject_id: subjectId, attendance_date: attendanceDate },
+      select: { student_id: true, status: true },
+    });
+    const publishState = await this.rawGetPublishState(classId, subjectId, attendanceDate);
+
+    return {
+      class_id: classId,
+      subject_id: subjectId,
+      attendance_date: dateIso,
+      is_published: publishState.length > 0 && publishState.every((r) => r.is_published),
+      records: rows.map((r) => ({ student_id: r.student_id, status: r.status })),
     };
   }
 
@@ -459,6 +649,14 @@ export class AttendanceService {
       };
     }
 
+    // is_published isn't a schema.prisma field — for STUDENT/PARENT, resolve
+    // the set of published ids via raw SQL first and constrain the typed
+    // query to just those, instead of filtering in the where clause itself.
+    if (currentUser.role === ROLES.STUDENT || currentUser.role === ROLES.PARENT) {
+      const publishedIds = await this.prisma.$queryRaw<{ id: number }[]>`SELECT id FROM attendance_records WHERE is_published = true`;
+      where.id = { in: publishedIds.map((r) => r.id) };
+    }
+
     await this.applyRoleScoping(where, currentUser, query.student_id);
 
     const [rows, total] = await this.prisma.$transaction([
@@ -472,7 +670,8 @@ export class AttendanceService {
       this.prisma.attendance_records.count({ where }),
     ]);
 
-    return paginate(rows.map(toResponse), total, query);
+    const publishState = await this.rawGetPublishStateByIds(rows.map((r) => r.id));
+    return paginate(rows.map((r) => toResponse(r, publishState.get(r.id))), total, query);
   }
 
   /** GET /attendance/:id (Admin/HoD/Faculty/Student/Parent) — role-scoped. */
@@ -488,7 +687,16 @@ export class AttendanceService {
 
     await this.assertCanViewStudent(record.students.id, currentUser);
 
-    return toResponse(record);
+    const [publishState] = await this.rawGetPublishStateByIds([id]).then((m) => [m.get(id)]);
+
+    if (
+      (currentUser.role === ROLES.STUDENT || currentUser.role === ROLES.PARENT) &&
+      !publishState?.is_published
+    ) {
+      throw new NotFoundException('Attendance record not found');
+    }
+
+    return toResponse(record, publishState);
   }
 
   /**
@@ -585,6 +793,12 @@ export class AttendanceService {
     user: JwtPayload,
     requestedStudentId?: number,
   ) {
+    // Drafts (is_published=false, saved via POST /me/classes/:id/attendance
+    // before Publish) are only visible to staff (admin/hod/faculty) who can
+    // see their own in-progress marking; students/parents only ever see
+    // published attendance — the raw-SQL `where.id` publish-gate is applied
+    // in findAll() above (is_published is a raw column, not a schema.prisma
+    // field, so it can't be filtered directly in this Prisma where clause).
     if (user.role === ROLES.STUDENT) {
       const student = await this.prisma.students.findUnique({
         where: { user_id: user.sub },

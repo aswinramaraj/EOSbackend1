@@ -203,6 +203,20 @@ export class SoaApplicationsController {
   }
 
   /**
+   * GET /api/v1/soa-applications/admitted-cutoff-summary
+   * Average cutoff across every admitted student, for the admin dashboard.
+   * Declared ahead of GET /:id below — a literal path must be registered
+   * before the param route or Nest would try to parse this path segment as
+   * an :id instead.
+   */
+  @Get('admitted-cutoff-summary')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  getAdmittedCutoffSummary() {
+    return this.soaApplicationsService.getAdmittedCutoffSummary();
+  }
+
+  /**
    * GET /api/v1/soa-applications/:id
    *
    * Error responses:

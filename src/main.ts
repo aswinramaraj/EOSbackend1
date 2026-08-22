@@ -10,6 +10,14 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 import { globalValidationPipe } from './common/pipes/validation.pipe';
 
 async function bootstrap() {
+  // Refuse to start rather than silently signing/verifying tokens with a
+  // hardcoded, source-visible secret — see JwtStrategy and AuthService.login.
+  if (!process.env.JWT_SECRET) {
+    throw new Error(
+      'JWT_SECRET environment variable must be set. Refusing to start with an insecure default secret.',
+    );
+  }
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const logger = new Logger('Bootstrap');
 

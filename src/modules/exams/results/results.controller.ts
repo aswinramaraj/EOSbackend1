@@ -31,12 +31,16 @@ export class ResultsController {
   }
 
   @Get('results')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
   async findAll() {
     const results = await this.resultsService.findAll();
     return ApiResponse.ok(results, 'Results fetched successfully.');
   }
 
   @Get('results/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
   async findOne(@Param('id') id: string) {
     const result = await this.resultsService.findOne(+id);
     return ApiResponse.ok(result, 'Result fetched successfully.');

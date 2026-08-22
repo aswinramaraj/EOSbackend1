@@ -35,11 +35,13 @@ export class ExamSubjectMappingController {
   }
 
   @Get()
+  @UseGuards(JwtAuthGuard)
   findAll() {
     return this.examSubjectMappingService.findAll();
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   findOne(@Param('id') id: string) {
     return this.examSubjectMappingService.findOne(+id);
   }

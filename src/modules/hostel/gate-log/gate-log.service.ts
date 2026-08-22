@@ -180,11 +180,29 @@ export class GateLogService {
    *  400 OUTING_MISMATCH   – outing_id given but belongs to a different student
    *  404 OUTING_NOT_FOUND  – outing_id given but does not exist
    */
-  async create(dto: CreateGateLogDto, recordedByUserId: number) {
+  async create(
+    dto: CreateGateLogDto,
+    recordedByUserId: number,
+    wardenHostelId: number | null,
+  ) {
     const student = await this.prisma.students.findUnique({
       where: { id: dto.student_id },
+      select: {
+        id: true,
+        student_hostel_mapping: {
+          select: { hostel_rooms: { select: { hostel_id: true } } },
+        },
+      },
     });
-    if (!student) {
+    // Treat "exists, but not in my hostel" the same as "doesn't exist" —
+    // same 404 the residents module uses for cross-hostel access, so a
+    // warden can't use this to confirm a student belongs elsewhere.
+    if (
+      !student ||
+      (wardenHostelId != null &&
+        student.student_hostel_mapping?.hostel_rooms.hostel_id !==
+          wardenHostelId)
+    ) {
       throw new NotFoundException({
         message: 'Student not found',
         errorCode: 'STUDENT_NOT_FOUND',

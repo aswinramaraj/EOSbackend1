@@ -6,7 +6,9 @@ export default () => ({
   },
 
   jwt: {
-    secret: process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION',
+    // JWT_SECRET presence is enforced at bootstrap (see main.ts) — no
+    // fallback here, since a fallback is exactly the vulnerability.
+    secret: process.env.JWT_SECRET!,
     expiresIn: process.env.JWT_EXPIRES_IN || '8h',
   },
 
