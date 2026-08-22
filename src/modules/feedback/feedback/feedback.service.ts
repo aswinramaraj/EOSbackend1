@@ -20,6 +20,7 @@ import { CreateFeedbackQuestionDto } from './dto/create-feedback-question.dto';
 import { UpdateFeedbackQuestionDto } from './dto/update-feedback-question.dto';
 import { ListFeedbackFormsQueryDto } from './dto/list-feedback-forms-query.dto';
 import { SubmitFeedbackResponsesDto } from './dto/submit-feedback-responses.dto';
+import { GetQuestionTemplatesQueryDto } from './dto/get-question-templates-query.dto';
 
 /** Maps a 1-5 rating_value to its fixed label — derived server-side so the two can never disagree. */
 const RATING_LABELS: Record<number, feedback_rating_label_enum> = {
@@ -63,7 +64,7 @@ export class FeedbackService {
       }
     }
 
-    return this.prisma.feedback_forms.create({
+    const form = await this.prisma.feedback_forms.create({
       data: {
         title: dto.title,
         class_id: dto.class_id,
@@ -81,6 +82,16 @@ export class FeedbackService {
       },
       include: { feedback_questions: { orderBy: { sequence_no: 'asc' } } },
     });
+
+    // category/is_published live on a pending migration (see
+    // academic_coordinator.query.md #1) — new forms start as drafts. Merge
+    // in only if the columns actually exist; otherwise the form was still
+    // created fine, just without this metadata (today's behavior).
+    const draftState = await this.setFormCategoryAndDraft(
+      form.id,
+      dto.category,
+    );
+    return { ...form, ...(draftState ?? {}) };
   }
 
   async listForms(dto: ListFeedbackFormsQueryDto) {
@@ -103,7 +114,16 @@ export class FeedbackService {
       this.prisma.feedback_forms.count({ where }),
     ]);
 
-    return paginate(data, total, dto);
+    const stateById = await this.fetchCategoryAndPublishState(
+      data.map((f) => f.id),
+    );
+    const enriched = data.map((f) => ({
+      ...f,
+      category: stateById.get(f.id)?.category ?? null,
+      is_published: stateById.get(f.id)?.is_published ?? true,
+    }));
+
+    return paginate(enriched, total, dto);
   }
 
   async getForm(id: number) {
@@ -116,7 +136,47 @@ export class FeedbackService {
       },
     });
     if (!form) throw new NotFoundException(`Feedback form ${id} not found`);
-    return form;
+
+    const state = (await this.fetchCategoryAndPublishState([id])).get(id);
+    return {
+      ...form,
+      category: state?.category ?? null,
+      is_published: state?.is_published ?? true,
+    };
+  }
+
+  /** Coordinator explicitly makes a draft form live — students can only see/answer published forms. */
+  async publishForm(user: JwtPayload, id: number) {
+    const form = await this.findFormOrThrow(id);
+    this.assertOwnerOrAdmin(user, form);
+
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE feedback_forms SET is_published = true WHERE id = $1`,
+        id,
+      );
+    } catch (err) {
+      if (!this.isMissingColumnError(err)) throw err;
+      throw new BadRequestException(
+        'Publishing is not set up yet — run the pending migration in academic_coordinator.query.md #1 first.',
+      );
+    }
+    return { id, is_published: true };
+  }
+
+  /** Reusable per-category question bank (feedback_question_templates — already live, unrelated to the dead feedback_assignments tables). */
+  async listQuestionTemplates(query: GetQuestionTemplatesQueryDto) {
+    const rows = await this.prisma.feedback_question_templates.findMany({
+      where: { course_type: query.category },
+      orderBy: { display_order: 'asc' },
+      select: {
+        id: true,
+        question_text: true,
+        is_optional: true,
+        display_order: true,
+      },
+    });
+    return rows;
   }
 
   async updateForm(user: JwtPayload, id: number, dto: UpdateFeedbackFormDto) {
@@ -126,7 +186,7 @@ export class FeedbackService {
     if (dto.class_id) await this.assertClassExists(dto.class_id);
     if (dto.batch_id) await this.assertBatchExists(dto.batch_id);
 
-    return this.prisma.feedback_forms.update({
+    const updated = await this.prisma.feedback_forms.update({
       where: { id },
       data: {
         title: dto.title,
@@ -134,6 +194,17 @@ export class FeedbackService {
         batch_id: dto.batch_id,
       },
     });
+
+    if (dto.category !== undefined) {
+      await this.setFormCategory(id, dto.category);
+    }
+
+    const state = (await this.fetchCategoryAndPublishState([id])).get(id);
+    return {
+      ...updated,
+      category: state?.category ?? null,
+      is_published: state?.is_published ?? true,
+    };
   }
 
   async deleteForm(user: JwtPayload, id: number) {
@@ -412,12 +483,16 @@ export class FeedbackService {
 
   async listFormsForStudent(user: JwtPayload) {
     const student = await this.getStudentOrThrow(user.sub);
+    const publishedIds = await this.getPublishedFormIdFilter();
 
     const forms = await this.prisma.feedback_forms.findMany({
-      where: this.buildFormsTargetingStudentWhere(
-        student.class_id,
-        student.batch_id,
-      ),
+      where: {
+        ...this.buildFormsTargetingStudentWhere(
+          student.class_id,
+          student.batch_id,
+        ),
+        ...(publishedIds ? { id: { in: publishedIds } } : {}),
+      },
       include: { _count: { select: { feedback_questions: true } } },
       orderBy: { created_at: 'desc' },
     });
@@ -471,6 +546,9 @@ export class FeedbackService {
       },
     });
     if (!form) throw new NotFoundException(`Feedback form ${formId} not found`);
+    if (!(await this.isFormPublished(formId))) {
+      throw new NotFoundException(`Feedback form ${formId} not found`);
+    }
 
     if (!this.formTargetsStudent(form, student)) {
       throw new ForbiddenException(
@@ -573,6 +651,9 @@ export class FeedbackService {
       },
     });
     if (!form) throw new NotFoundException(`Feedback form ${formId} not found`);
+    if (!(await this.isFormPublished(formId))) {
+      throw new NotFoundException(`Feedback form ${formId} not found`);
+    }
 
     if (!this.formTargetsStudent(form, student)) {
       throw new ForbiddenException(
@@ -787,6 +868,102 @@ export class FeedbackService {
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
+
+  /**
+   * feedback_forms.category / is_published — proposed additively in
+   * academic_coordinator.query.md #1, not yet run in every environment.
+   * Every helper below degrades to "feature not active yet" instead of
+   * erroring, by checking the raw Postgres error MESSAGE for 42703
+   * (undefined_column) rather than `.code`/`.meta.code` — Prisma's
+   * raw-query wrapper only puts the real SQLSTATE in the message text
+   * (same lesson learned fixing the CO-PO module's 42P01 check).
+   */
+  private isMissingColumnError(err: unknown): boolean {
+    return err instanceof Error && err.message.includes('42703');
+  }
+
+  private async setFormCategoryAndDraft(
+    formId: number,
+    category: string | undefined,
+  ): Promise<{ category: string | null; is_published: boolean } | null> {
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE feedback_forms SET category = $1::feedback_course_type_enum, is_published = false WHERE id = $2`,
+        category ?? null,
+        formId,
+      );
+      return { category: category ?? null, is_published: false };
+    } catch (err) {
+      if (!this.isMissingColumnError(err)) throw err;
+      return null;
+    }
+  }
+
+  /** Unlike setFormCategoryAndDraft (create-time only), this never touches is_published. */
+  private async setFormCategory(
+    formId: number,
+    category: string | undefined,
+  ): Promise<{ category: string | null } | null> {
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE feedback_forms SET category = $1::feedback_course_type_enum WHERE id = $2`,
+        category ?? null,
+        formId,
+      );
+      return { category: category ?? null };
+    } catch (err) {
+      if (!this.isMissingColumnError(err)) throw err;
+      return null;
+    }
+  }
+
+  private async fetchCategoryAndPublishState(
+    formIds: number[],
+  ): Promise<Map<number, { category: string | null; is_published: boolean }>> {
+    if (formIds.length === 0) return new Map();
+    try {
+      const rows = await this.prisma.$queryRawUnsafe<
+        { id: number; category: string | null; is_published: boolean }[]
+      >(
+        `SELECT id, category, is_published FROM feedback_forms WHERE id = ANY($1::int[])`,
+        formIds,
+      );
+      return new Map(
+        rows.map((r) => [
+          r.id,
+          { category: r.category, is_published: r.is_published },
+        ]),
+      );
+    } catch (err) {
+      if (!this.isMissingColumnError(err)) throw err;
+      return new Map();
+    }
+  }
+
+  /** null = column doesn't exist yet, meaning "don't filter" (today's behavior). */
+  private async getPublishedFormIdFilter(): Promise<number[] | null> {
+    try {
+      const rows = await this.prisma.$queryRawUnsafe<{ id: number }[]>(
+        `SELECT id FROM feedback_forms WHERE is_published = true`,
+      );
+      return rows.map((r) => r.id);
+    } catch (err) {
+      if (!this.isMissingColumnError(err)) throw err;
+      return null;
+    }
+  }
+
+  private async isFormPublished(formId: number): Promise<boolean> {
+    try {
+      const rows = await this.prisma.$queryRawUnsafe<
+        { is_published: boolean }[]
+      >(`SELECT is_published FROM feedback_forms WHERE id = $1`, formId);
+      return rows[0]?.is_published ?? true;
+    } catch (err) {
+      if (!this.isMissingColumnError(err)) throw err;
+      return true;
+    }
+  }
 
   private async findFormOrThrow(id: number) {
     const form = await this.prisma.feedback_forms.findUnique({ where: { id } });

@@ -11,4 +11,8 @@ export class GetAuditQueryDto {
   @Min(1)
   @Max(8)
   semester!: number;
+
+  @Type(() => Number)
+  @IsInt()
+  batch_id!: number;
 }

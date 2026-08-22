@@ -16,6 +16,7 @@ import { UpdateFeedbackFormDto } from './dto/update-feedback-form.dto';
 import { CreateFeedbackQuestionDto } from './dto/create-feedback-question.dto';
 import { UpdateFeedbackQuestionDto } from './dto/update-feedback-question.dto';
 import { ListFeedbackFormsQueryDto } from './dto/list-feedback-forms-query.dto';
+import { GetQuestionTemplatesQueryDto } from './dto/get-question-templates-query.dto';
 import { JwtAuthGuard } from '../../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../auth/guards/roles.guard';
 import { Roles } from '../../../auth/decorators/roles.decorator';
@@ -43,6 +44,12 @@ export class FeedbackController {
     return this.feedbackService.listForms(query);
   }
 
+  /** Must stay above @Get(':id') — same path shape, "question-templates" would otherwise be parsed as an :id. */
+  @Get('question-templates')
+  questionTemplates(@Query() query: GetQuestionTemplatesQueryDto) {
+    return this.feedbackService.listQuestionTemplates(query);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.feedbackService.getForm(id);
@@ -51,6 +58,14 @@ export class FeedbackController {
   @Get(':id/results')
   results(@Param('id', ParseIntPipe) id: number) {
     return this.feedbackService.getResults(id);
+  }
+
+  @Patch(':id/publish')
+  publish(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.feedbackService.publishForm(user, id);
   }
 
   @Patch(':id')

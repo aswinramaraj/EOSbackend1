@@ -139,7 +139,12 @@ export class AcademicCoordinatorFacultyService {
             select: { subject_code: true, name: true, course_type: true },
           },
           classes: {
-            select: { section: true, departments: { select: { code: true } } },
+            select: {
+              batch_id: true,
+              department_id: true,
+              section: true,
+              departments: { select: { code: true } },
+            },
           },
         },
       }),
@@ -179,6 +184,8 @@ export class AcademicCoordinatorFacultyService {
         mapping_id: m.id,
         subject_code: m.subjects.subject_code,
         subject_name: m.subjects.name,
+        batch_id: m.classes.batch_id,
+        department_id: m.classes.department_id,
         class_label: `${m.classes.departments.code} ${m.classes.section}`,
         faculty_name: [
           m.faculty.prefix,

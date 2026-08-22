@@ -1,4 +1,5 @@
 import {
+  IsEnum,
   IsInt,
   IsOptional,
   IsPositive,
@@ -6,6 +7,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { feedback_course_type_enum } from '../../../../../generated/prisma/enums';
 
 export class UpdateFeedbackFormDto {
   @IsOptional()
@@ -23,4 +25,8 @@ export class UpdateFeedbackFormDto {
   @IsInt()
   @IsPositive()
   batch_id?: number;
+
+  @IsOptional()
+  @IsEnum(feedback_course_type_enum)
+  category?: feedback_course_type_enum;
 }

@@ -15,6 +15,10 @@ export class AcademicCoordinatorAuditController {
 
   @Get()
   audit(@Query() query: GetAuditQueryDto) {
-    return this.service.audit(query.department_id, query.semester);
+    return this.service.audit(
+      query.department_id,
+      query.semester,
+      query.batch_id,
+    );
   }
 }

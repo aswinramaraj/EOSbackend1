@@ -185,11 +185,9 @@ import { NotificationsModule } from './modules/notifications/notifications/notif
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { AcademicCoordinatorFacultyModule } from './modules/academic-coordinator/faculty/academic-coordinator-faculty.module';
 import { AcademicCoordinatorAttendanceModule } from './modules/academic-coordinator/attendance/academic-coordinator-attendance.module';
-import { AcademicCoordinatorInternalMarksModule } from './modules/academic-coordinator/internal-marks/academic-coordinator-internal-marks.module';
 import { AcademicCoordinatorCourseProgressModule } from './modules/academic-coordinator/course-progress/academic-coordinator-course-progress.module';
 import { AcademicCoordinatorResultsModule } from './modules/academic-coordinator/results/academic-coordinator-results.module';
 import { AcademicCoordinatorAuditModule } from './modules/academic-coordinator/audit/academic-coordinator-audit.module';
-import { AcademicCoordinatorCopoModule } from './modules/academic-coordinator/copo/academic-coordinator-copo.module';
 import { AcademicCoordinatorMappingModule } from './modules/academic-coordinator/mapping/academic-coordinator-mapping.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
 import { IqacReportsModule } from './modules/iqac/reports/iqac-reports.module';
@@ -398,11 +396,9 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     FeedbackModule,
     AcademicCoordinatorFacultyModule,
     AcademicCoordinatorAttendanceModule,
-    AcademicCoordinatorInternalMarksModule,
     AcademicCoordinatorCourseProgressModule,
     AcademicCoordinatorResultsModule,
     AcademicCoordinatorAuditModule,
-    AcademicCoordinatorCopoModule,
     AcademicCoordinatorMappingModule,
     HallTicketClearanceModule,
     IqacReportsModule,

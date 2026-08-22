@@ -25,7 +25,13 @@ export class AcademicCoordinatorCourseProgressService {
         },
         subjects: { select: { subject_code: true, name: true } },
         classes: {
-          select: { section: true, departments: { select: { code: true } } },
+          select: {
+            id: true,
+            batch_id: true,
+            department_id: true,
+            section: true,
+            departments: { select: { code: true } },
+          },
         },
         lesson_plan_sessions: {
           select: {
@@ -49,6 +55,9 @@ export class AcademicCoordinatorCourseProgressService {
         id: p.id,
         subject_code: p.subjects.subject_code,
         subject_name: p.subjects.name,
+        class_id: p.classes.id,
+        batch_id: p.classes.batch_id,
+        department_id: p.classes.department_id,
         class_label: `${p.classes.departments.code} ${p.classes.section}`,
         faculty_name: [
           p.faculty.prefix,
