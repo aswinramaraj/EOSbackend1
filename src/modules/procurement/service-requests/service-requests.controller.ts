@@ -26,51 +26,54 @@ import { FinanceReviewServiceRequestDto } from './dto/finance-review-service-req
 /**
  * Mirrors PurchaseRequestsController exactly - see its own doc comment.
  *
-<<<<<<< HEAD
  * Moved off 'me/service-requests' (2026-08-21): that path collided with
  * secretary/service-requests/service-requests.controller.ts, which imports
- * later in app.module.ts and was being silently shadowed by this
- * controller for every caller, even though the simpler Secretary/HoD/
- * Finance/Admin shape (not this HoD+Finance procurement workflow shape) is
- * the one the frontend actually expects at that path. Renamed rather than
- * merged, since these are two genuinely distinct features that happened to
- * share a literal path.
+ * later in app.module.ts and was being silently shadowed by this controller
+ * for every caller, even though the simpler Secretary/HoD/Finance/Admin
+ * shape — a fully real, separate feature over its own
+ * `secretary_service_requests`/`secretary_service_request_items` tables
+ * (multi-item, single-decision, draft-first) — is the one the frontend
+ * actually expects at that path, not this module's single-item
+ * HoD->Finance->Admin-convert pipeline over `service_indents`. Renamed
+ * rather than merged, since these are two genuinely distinct features that
+ * happened to share a literal path; no frontend page calls this route
+ * directly (grepped the whole frontend repo), so the rename is safe. Named
+ * `procurement-service-requests` rather than `service-indent-requests` to
+ * avoid reading as a near-duplicate of the separate, already-registered
+ * `@Controller('service-indents')` route in this same procurement domain.
  */
 @Controller('me/procurement-service-requests')
-=======
- * Route moved off `me/service-requests` (was a real, silent collision —
- * `secretary/service-requests`'s own controller registers the identical
- * path and, being imported later in app.module.ts, was 100% shadowed and
- * unreachable despite being a fully real, separate feature over its own
- * `secretary_service_requests`/`secretary_service_request_items` tables
- * — multi-item, single-decision, draft-first, distinct from this
- * module's single-item HoD->Finance->Admin-convert pipeline over
- * `service_indents`). No other frontend page calls this route (grepped
- * the whole frontend repo), so renaming here is safe — this module's own
- * real workflow is unaffected, it's just addressed differently now.
- */
-@Controller('me/service-indent-requests')
->>>>>>> origin/iqac
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ServiceRequestsController {
-  constructor(private readonly serviceRequestsService: ServiceRequestsService) {}
+  constructor(
+    private readonly serviceRequestsService: ServiceRequestsService,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles(ROLES.SECRETARY)
-  create(@Body() dto: CreateServiceRequestDto, @CurrentUser() user: JwtPayload) {
+  create(
+    @Body() dto: CreateServiceRequestDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.serviceRequestsService.create(dto, user.sub);
   }
 
   @Get()
   @Roles(ROLES.SECRETARY, ROLES.HOD, ROLES.FINANCE, ROLES.ADMIN)
-  findAll(@Query() query: ListServiceRequestsQueryDto, @CurrentUser() user: JwtPayload) {
+  findAll(
+    @Query() query: ListServiceRequestsQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.serviceRequestsService.findAll(query, user);
   }
 
   @Get(':id')
   @Roles(ROLES.SECRETARY, ROLES.HOD, ROLES.FINANCE, ROLES.ADMIN)
-  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.serviceRequestsService.findOne(id, user);
   }
 
@@ -96,7 +99,10 @@ export class ServiceRequestsController {
 
   @Patch(':id/convert')
   @Roles(ROLES.ADMIN)
-  convert(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+  convert(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.serviceRequestsService.convert(id, user.sub);
   }
 }
