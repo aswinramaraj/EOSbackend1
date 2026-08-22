@@ -9,6 +9,7 @@
 // Constants
 export * from './constants/roles.constant';
 export * from './constants/storage-buckets.constant';
+export * from './constants/workload.constant';
 
 // DTOs
 export * from './dto/api-response.dto';

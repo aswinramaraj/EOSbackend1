@@ -19,8 +19,19 @@ import { StorageProvider, StorageUploadResult } from '../storage-provider';
  */
 @Injectable()
 export class CloudinaryStorageProvider extends StorageProvider {
-  constructor() {
-    super();
+  private configured = false;
+
+  /**
+   * Deliberately not validated in the constructor: Nest instantiates every
+   * provider in a module at boot regardless of whether its routes are ever
+   * hit, so throwing here would crash the entire app over one unconfigured,
+   * narrowly-scoped feature. Validating lazily means the app boots fine and
+   * only an actual attendance-evidence-photo upload fails until Cloudinary
+   * env vars are set.
+   */
+  private ensureConfigured(): void {
+    if (this.configured) return;
+
     const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
@@ -32,9 +43,11 @@ export class CloudinaryStorageProvider extends StorageProvider {
     }
 
     cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
+    this.configured = true;
   }
 
   async upload(bucket: string, path: string, buffer: Buffer, contentType: string): Promise<StorageUploadResult> {
+    this.ensureConfigured();
     // `path` already includes an extension (e.g. "…/session-42.jpg"); Cloudinary's
     // public_id should not repeat it — resource_type stores the file format
     // separately, and duplicating it would produce "session-42.jpg.jpg" URLs.
@@ -61,10 +74,12 @@ export class CloudinaryStorageProvider extends StorageProvider {
 
   /** Cloudinary URLs on a public cloud are already permanent — there is no separate "sign" step to do. */
   async getSignedUrl(_bucket: string, path: string, _expiresInSeconds: number): Promise<string> {
+    this.ensureConfigured();
     return cloudinary.url(path, { secure: true });
   }
 
   async delete(_bucket: string, path: string): Promise<void> {
+    this.ensureConfigured();
     await cloudinary.uploader.destroy(path).catch((error: unknown) => {
       throw new InternalServerErrorException(
         `Cloudinary delete failed: ${error instanceof Error ? error.message : String(error)}`,

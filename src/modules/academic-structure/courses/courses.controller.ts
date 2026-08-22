@@ -42,12 +42,18 @@ export class CoursesController {
     return this.coursesService.findOne(+id);
   }
 
+  /** PATCH /api/v1/courses/:id — Admin only. */
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
   update(@Param('id') id: string, @Body() updateCourseDto: UpdateCourseDto) {
     return this.coursesService.update(+id, updateCourseDto);
   }
 
+  /** DELETE /api/v1/courses/:id — Admin only. */
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
   remove(@Param('id') id: string) {
     return this.coursesService.remove(+id);
   }

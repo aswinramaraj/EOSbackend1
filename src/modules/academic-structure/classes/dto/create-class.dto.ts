@@ -4,10 +4,10 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Matches,
   MaxLength,
-  MinLength,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateClassDto {
   @Type(() => Number)
@@ -25,10 +25,19 @@ export class CreateClassDto {
   @IsPositive({ message: 'course_id must be a positive integer' })
   course_id: number;
 
+  // Not restricted to A-D — that was a UI convention, not a real constraint;
+  // the db column is just varchar(10). Uppercased so "a" and "A" collide
+  // against the real @@unique([batch_id, course_id, section]) instead of
+  // silently coexisting as "different" sections.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
   @IsString()
   @IsNotEmpty({ message: 'Section is required' })
-  @MinLength(1, { message: 'Section must be at least 1 character' })
-  @MaxLength(5, { message: 'Section must not exceed 5 characters' })
+  @MaxLength(10, { message: 'Section must not exceed 10 characters' })
+  @Matches(/^[A-Z0-9]+$/, {
+    message: 'Section may only contain letters and numbers',
+  })
   section: string;
 
   @IsOptional()

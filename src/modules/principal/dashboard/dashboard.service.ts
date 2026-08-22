@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { WORKLOAD_THRESHOLD_HOURS } from 'src/common/constants/workload.constant';
 
 function startOfToday(): Date {
   return new Date(new Date().toISOString().slice(0, 10));
@@ -536,7 +537,6 @@ export class PrincipalDashboardService {
 
   /** Faculty with a scheduled weekly teaching load above WORKLOAD_THRESHOLD_HOURS, from real timetable_slots durations. */
   private async facultyWorkloadFlags() {
-    const WORKLOAD_THRESHOLD_HOURS = 20;
     const slots = await this.prisma.timetable_slots.findMany({
       select: {
         faculty_id: true,
