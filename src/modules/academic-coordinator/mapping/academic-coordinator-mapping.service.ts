@@ -3,7 +3,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 
 const MAX_SEMESTER = 8;
 
-interface MappedSubjectRow {
+export interface MappedSubjectRow {
   id: number;
   subject_code: string;
   short_code: string | null;
@@ -15,7 +15,7 @@ interface MappedSubjectRow {
   mapped_classes: number;
 }
 
-interface SemesterBucket {
+export interface SemesterBucket {
   semester: number;
   total_classes: number;
   mapped: MappedSubjectRow[];

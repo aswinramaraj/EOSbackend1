@@ -4,7 +4,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 export type AuditMilestoneStatus =
   'Completed' | 'Pending' | 'Overdue' | 'Not started';
 
-interface Milestone {
+export interface Milestone {
   label: string;
   status: AuditMilestoneStatus;
 }
