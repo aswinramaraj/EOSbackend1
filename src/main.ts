@@ -80,8 +80,11 @@ async function bootstrap() {
   // ── Start ────────────────────────────────────────────────────────────────────
   const port = parseInt(process.env.PORT || '3001', 10);
   await app.listen(port);
-  logger.log(`🚀 EOS Backend running on http://localhost:${port}/api/v1`);
-  logger.log(`📘 Swagger docs available at http://localhost:${port}/api/docs`);
+  // RENDER_EXTERNAL_URL is auto-injected by Render on every web service —
+  // falls back to localhost for local dev, where it's unset.
+  const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${port}`;
+  logger.log(`🚀 EOS Backend running on ${baseUrl}/api/v1`);
+  logger.log(`📘 Swagger docs available at ${baseUrl}/api/docs`);
 }
 
 bootstrap();
