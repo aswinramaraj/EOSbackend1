@@ -7,5 +7,6 @@ import { PayslipRequestsController } from './payslip-requests.controller';
   imports: [PrismaModule],
   controllers: [PayslipRequestsController],
   providers: [PayslipRequestsService],
+  exports: [PayslipRequestsService],
 })
 export class PayslipRequestsModule {}

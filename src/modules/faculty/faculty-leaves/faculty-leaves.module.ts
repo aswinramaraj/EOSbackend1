@@ -8,5 +8,6 @@ import { FacultyLeavesController } from './faculty-leaves.controller';
   imports: [PrismaModule, NotificationsModule],
   controllers: [FacultyLeavesController],
   providers: [FacultyLeavesService],
+  exports: [FacultyLeavesService],
 })
 export class FacultyLeavesModule {}

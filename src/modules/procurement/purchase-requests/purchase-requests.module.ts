@@ -7,5 +7,6 @@ import { PurchaseRequestsController } from './purchase-requests.controller';
   imports: [PrismaModule],
   controllers: [PurchaseRequestsController],
   providers: [PurchaseRequestsService],
+  exports: [PurchaseRequestsService],
 })
 export class PurchaseRequestsModule {}

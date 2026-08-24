@@ -7,5 +7,6 @@ import { FacultyAttendanceController } from './faculty-attendance.controller';
   imports: [PrismaModule],
   controllers: [FacultyAttendanceController],
   providers: [FacultyAttendanceService],
+  exports: [FacultyAttendanceService],
 })
 export class FacultyAttendanceModule {}

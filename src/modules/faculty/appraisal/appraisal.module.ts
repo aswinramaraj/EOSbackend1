@@ -9,5 +9,6 @@ import { AppraisalController } from './appraisal.controller';
   imports: [PrismaModule, StorageModule, NotificationsModule],
   controllers: [AppraisalController],
   providers: [AppraisalService],
+  exports: [AppraisalService],
 })
 export class AppraisalModule {}

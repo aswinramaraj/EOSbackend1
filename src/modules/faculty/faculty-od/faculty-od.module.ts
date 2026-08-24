@@ -9,5 +9,6 @@ import { FacultyOdController } from './faculty-od.controller';
   imports: [PrismaModule, StorageModule, NotificationsModule],
   controllers: [FacultyOdController],
   providers: [FacultyOdService],
+  exports: [FacultyOdService],
 })
 export class FacultyOdModule {}

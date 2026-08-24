@@ -103,6 +103,34 @@ export class AuthService {
   }
 
   /**
+   * GET /auth/roles
+   * Every role the caller can switch into. The schema has no multi-role
+   * concept — `users.role_id` is a single required FK, no `user_roles`
+   * join table exists anywhere — so this is always exactly one row (the
+   * caller's own role). Returned as an array (not a single object) to
+   * match the frontend's `MyRole[]` contract and keep this endpoint a
+   * straightforward drop-in if multi-role support is ever added later.
+   */
+  async getRoles(userId: number) {
+    const user = await (this.prisma as any).users.findUnique({
+      where: { id: userId },
+      select: {
+        role_id: true,
+        roles: { select: { id: true, name: true, description: true } },
+      },
+    });
+    if (!user) return [];
+    return [
+      {
+        id: user.roles.id,
+        name: user.roles.name,
+        description: user.roles.description,
+        isPrimary: true,
+      },
+    ];
+  }
+
+  /**
    * GET /auth/me
    * Returns the authenticated user's basic profile, plus a resolved `name`
    * (see resolveDisplayName) for anywhere the app wants to greet the user
@@ -163,7 +191,9 @@ export class AuthService {
   private resolveDisplayName(user: {
     email: string;
     faculty: { first_name: string; last_name: string } | null;
-    students: { soa_applications: { first_name: string; last_name: string | null } | null } | null;
+    students: {
+      soa_applications: { first_name: string; last_name: string | null } | null;
+    } | null;
     hostel_wardens: { name: string }[];
   }): string {
     if (user.faculty) {
