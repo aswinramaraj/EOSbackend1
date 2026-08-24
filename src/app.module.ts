@@ -57,6 +57,7 @@ import { PrincipalMedicalModule } from './modules/principal-medical/principal-me
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
 import { SportsAdminModule } from './modules/sports-admin/sports-admin.module';
 import { FinanceModule } from './modules/finance/finance.module';
+import { MediaRoomModule } from './modules/media-room/media-room.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { TransportModule } from './modules/transport/transport.module';
 import { HigherEducationModule } from './modules/higher-education/higher-education.module';
@@ -214,6 +215,7 @@ import { NightAttendanceModule } from './modules/hostel/night-attendance/night-a
 import { HrDepartmentsModule } from './modules/hr/hr-departments/hr-departments.module';
 import { HrRequestsModule } from './modules/hr/hr-requests/hr-requests.module';
 import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module';
+import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
 
 @Module({
   imports: [
@@ -261,6 +263,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     PrincipalSportsModule,
     SportsAdminModule,
     FinanceModule,
+    MediaRoomModule,
     StudentEntrepreneurshipModule,
     StartupIdeasModule,
     IncubationsModule,
@@ -425,6 +428,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
 
     HrDepartmentsModule,
     HrRequestsModule,
+    HrReportsModule,
     HrDashboardModule,
   ],
 

@@ -290,16 +290,76 @@ export class GateLogService {
   }
 
   /** GET /hostel/gate-log?student_id=&entry_type=&hostel_id=&page=&page_size= */
+  /**
+   * Case-insensitive match across every identifier a warden might type. The
+   * display name lives on the admission record rather than on `students`, so
+   * names are matched through that relation; a two-word query is also tried as
+   * first-name plus last-name so "arun prakash" finds the same person that
+   * "arun" does.
+   */
+  private studentTextFilter(q: string): Prisma.studentsWhereInput {
+    const contains = { contains: q, mode: 'insensitive' as const };
+    const or: Prisma.studentsWhereInput[] = [
+      { roll_no: contains },
+      { register_no: contains },
+      { student_id_no: contains },
+      {
+        soa_applications: {
+          OR: [{ first_name: contains }, { last_name: contains }],
+        },
+      },
+      {
+        student_hostel_mapping: {
+          hostel_rooms: { room_number: contains },
+        },
+      },
+    ];
+
+    const parts = q.split(/\s+/).filter(Boolean);
+    if (parts.length === 2) {
+      or.push({
+        soa_applications: {
+          AND: [
+            { first_name: { contains: parts[0], mode: 'insensitive' } },
+            { last_name: { contains: parts[1], mode: 'insensitive' } },
+          ],
+        },
+      });
+    }
+
+    return { OR: or };
+  }
+
   async findAll(dto: SearchGateLogDto) {
-    const { student_id, entry_type, hostel_id, page = 1, page_size = 20 } = dto;
+    const {
+      student_id,
+      entry_type,
+      hostel_id,
+      q,
+      page = 1,
+      page_size = 20,
+    } = dto;
 
     const where: Prisma.hostel_in_out_ledgerWhereInput = {};
     if (student_id) where.student_id = student_id;
     if (entry_type) where.entry_type = entry_type;
+
+    // Hostel scoping and the text filter both narrow the same relation, so they
+    // are collected and ANDed rather than assigned in turn — assigning twice
+    // would drop the warden's hostel restriction whenever a search was typed.
+    const studentFilters: Prisma.studentsWhereInput[] = [];
     if (hostel_id) {
-      where.students = {
+      studentFilters.push({
         student_hostel_mapping: { hostel_rooms: { hostel_id } },
-      };
+      });
+    }
+    if (q) {
+      studentFilters.push(this.studentTextFilter(q));
+    }
+    if (studentFilters.length === 1) {
+      where.students = studentFilters[0];
+    } else if (studentFilters.length > 1) {
+      where.students = { AND: studentFilters };
     }
 
     try {

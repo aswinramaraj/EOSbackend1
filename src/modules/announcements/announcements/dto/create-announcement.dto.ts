@@ -1,7 +1,10 @@
+import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
+  IsBoolean,
+  IsDateString,
   IsEnum,
   IsInt,
   IsNotEmpty,
@@ -129,4 +132,47 @@ export class CreateAnnouncementDto {
   @IsOptional()
   @IsEnum(announcement_category_enum)
   category?: announcement_category_enum;
+
+  /**
+   * When a post should go out, for the publishing tab's "schedule for later".
+   *
+   * `announcements.scheduled_at` is a real column that nothing was writing —
+   * and because the DTO did not declare it, the global validation pipe
+   * (forbidNonWhitelisted) rejected the field outright with
+   * "property scheduled_at should not exist", so scheduling a post 400'd.
+   */
+  @IsOptional()
+  @IsDateString({}, { message: 'scheduled_at must be an ISO date-time' })
+  scheduled_at?: string;
+
+  // ── social post details ───────────────────────────────────────────────────
+  // Stored in `social_post_details` (keyed 1:1 on announcement_id), which the
+  // Media Room's publishing screen writes. The table already existed but
+  // nothing wrote to it, so these fields were silently dropped on every post.
+
+  /** Free text on purpose — the publishing tab's own format list, not an enum. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  format?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  link_url?: string;
+
+  /** When the post should stop being shown. */
+  @IsOptional()
+  @IsDateString({}, { message: 'expires_at must be an ISO date-time' })
+  expires_at?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  is_pinned?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  allow_comments?: boolean;
 }

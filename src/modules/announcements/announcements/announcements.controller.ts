@@ -109,7 +109,15 @@ export class AnnouncementsController {
    * every department) with no department/batch scope to narrow by.
    */
   @Get('lookup/all-classes')
-  @Roles(ROLES.HIGHER_EDUCATION, ROLES.BILLING, ROLES.FINANCE)
+  // MEDIA_ROOM publishes institution-wide social posts, so it needs the same
+  // every-class lookup these roles use. Without it the publishing screen 403s
+  // before it can even assemble the audience for a post.
+  @Roles(
+    ROLES.HIGHER_EDUCATION,
+    ROLES.BILLING,
+    ROLES.FINANCE,
+    ROLES.MEDIA_ROOM,
+  )
   lookupAllClasses() {
     return this.announcementsService.lookupAllClasses();
   }
@@ -152,6 +160,10 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.FINANCE,
+    // The Media Room publishes the institution's social posts, which are
+    // announcements underneath. Edit/delete stay own-only regardless — the
+    // service's assertOwnership applies to every role here.
+    ROLES.MEDIA_ROOM,
   )
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }),
@@ -189,6 +201,10 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.FINANCE,
+    // The Media Room publishes the institution's social posts, which are
+    // announcements underneath. Edit/delete stay own-only regardless — the
+    // service's assertOwnership applies to every role here.
+    ROLES.MEDIA_ROOM,
   )
   async create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     const result = await this.announcementsService.create(dto, user);
@@ -300,6 +316,10 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.FINANCE,
+    // The Media Room publishes the institution's social posts, which are
+    // announcements underneath. Edit/delete stay own-only regardless — the
+    // service's assertOwnership applies to every role here.
+    ROLES.MEDIA_ROOM,
   )
   async update(
     @Param('id', ParseIntPipe) id: number,
@@ -337,6 +357,10 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.FINANCE,
+    // The Media Room publishes the institution's social posts, which are
+    // announcements underneath. Edit/delete stay own-only regardless — the
+    // service's assertOwnership applies to every role here.
+    ROLES.MEDIA_ROOM,
   )
   async patch(
     @Param('id', ParseIntPipe) id: number,
@@ -375,6 +399,10 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.FINANCE,
+    // The Media Room publishes the institution's social posts, which are
+    // announcements underneath. Edit/delete stay own-only regardless — the
+    // service's assertOwnership applies to every role here.
+    ROLES.MEDIA_ROOM,
   )
   async remove(
     @Param('id', ParseIntPipe) id: number,

@@ -66,3 +66,5 @@ FACULTY_MODULE_UPDATE.MD
 
 sql.md
 queries.md
+# local .env snapshots - never commit
+.env.bak*
