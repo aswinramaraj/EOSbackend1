@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
+import { TransientDbRetryInterceptor } from './common/interceptors/transient-db-retry.interceptor';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 
@@ -55,6 +56,7 @@ import { PrincipalLibraryModule } from './modules/principal-library/principal-li
 import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
 import { SportsAdminModule } from './modules/sports-admin/sports-admin.module';
+import { FinanceModule } from './modules/finance/finance.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { TransportModule } from './modules/transport/transport.module';
 import { HigherEducationModule } from './modules/higher-education/higher-education.module';
@@ -258,6 +260,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     PrincipalMedicalModule,
     PrincipalSportsModule,
     SportsAdminModule,
+    FinanceModule,
     StudentEntrepreneurshipModule,
     StartupIdeasModule,
     IncubationsModule,
@@ -427,6 +430,13 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
 
   controllers: [AppController],
 
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Retries reads that failed only because the database was briefly
+    // unreachable (the Supabase pooler drops/refuses connections for a few
+    // seconds at a time). Writes are never retried — see the interceptor.
+    { provide: APP_INTERCEPTOR, useClass: TransientDbRetryInterceptor },
+  ],
 })
 export class AppModule {}

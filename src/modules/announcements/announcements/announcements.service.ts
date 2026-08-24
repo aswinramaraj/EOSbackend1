@@ -467,7 +467,8 @@ export class AnnouncementsService {
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
       context.role === ROLES.SECRETARY ||
-      context.role === ROLES.BILLING
+      context.role === ROLES.BILLING ||
+      context.role === ROLES.FINANCE
     ) {
       if (requestedDepartmentId === undefined) {
         return null;
@@ -898,6 +899,12 @@ export class AnnouncementsService {
       case ROLES.BILLING:
         return { role: ROLES.BILLING, userId: user.sub, roleId: user.roleId };
 
+      // Finance is institution-wide as well: the schema has no
+      // finance->department linkage either, and Finance posts notices to the
+      // whole institution (budget cut-offs, claim deadlines).
+      case ROLES.FINANCE:
+        return { role: ROLES.FINANCE, userId: user.sub, roleId: user.roleId };
+
       case ROLES.HOD: {
         const faculty = await this.getFacultyByUserId(user.sub);
 
@@ -1037,6 +1044,7 @@ export class AnnouncementsService {
 
       // Institution-wide, same as Secretary — see resolveUserContext.
       case ROLES.BILLING:
+      case ROLES.FINANCE:
         return {};
 
       // EDC coordinator has no recipient list to resolve (no "founders"
@@ -1222,7 +1230,8 @@ export class AnnouncementsService {
       context.role === ROLES.HIGHER_EDUCATION ||
       context.role === ROLES.MEDICAL_CENTRE ||
       context.role === ROLES.SECRETARY ||
-      context.role === ROLES.BILLING
+      context.role === ROLES.BILLING ||
+      context.role === ROLES.FINANCE
     ) {
       return;
     }
@@ -1241,7 +1250,8 @@ export class AnnouncementsService {
       context.role !== ROLES.PRINCIPAL &&
       // Billing's real "All HoDs" audience option (fee-due escalation
       // notices to department heads) needs role targeting too.
-      context.role !== ROLES.BILLING
+      context.role !== ROLES.BILLING &&
+      context.role !== ROLES.FINANCE
     ) {
       throw new ForbiddenException({
         message: 'You are not permitted to target announcements by role',
