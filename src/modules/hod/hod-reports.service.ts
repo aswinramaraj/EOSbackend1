@@ -46,7 +46,7 @@ interface SubjectFacultyRow {
   first_name: string;
   last_name: string;
 }
-interface HodSubjectResult {
+export interface HodSubjectResult {
   subject_id: number;
   name: string;
   code: string;

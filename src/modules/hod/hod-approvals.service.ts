@@ -11,7 +11,7 @@ import { FacultyOdRequestsService } from '../faculty/faculty-od-requests/faculty
 
 type Tab = 'pending' | 'approved' | 'rejected' | 'all';
 
-interface Row {
+export interface Row {
   id: number;
   kind: 'student' | 'faculty';
   name: string;
