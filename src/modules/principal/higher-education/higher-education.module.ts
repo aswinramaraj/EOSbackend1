@@ -7,5 +7,6 @@ import { PrincipalHigherEducationService } from './higher-education.service';
   imports: [PrismaModule],
   controllers: [PrincipalHigherEducationController],
   providers: [PrincipalHigherEducationService],
+  exports: [PrincipalHigherEducationService],
 })
 export class PrincipalHigherEducationModule {}

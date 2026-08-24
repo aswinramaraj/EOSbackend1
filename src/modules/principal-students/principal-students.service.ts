@@ -343,6 +343,11 @@ export class PrincipalStudentsService {
         student_family_details: true,
         student_identity_marks: { select: { mark_number: true, description: true } },
         student_certificates: {
+          // certificate_type_id is now nullable — student_certificates also holds
+          // IQAC's real skill-certification rows (platform/track/score, no
+          // certificate_type_id). This profile's "documents" list stays scoped
+          // to actual administrative document types.
+          where: { certificate_type_id: { not: null } },
           select: { is_available: true, file_url: true, verified_at: true, certificate_types: { select: { name: true } } },
         },
         student_scholarship_awards: {
@@ -558,7 +563,7 @@ export class PrincipalStudentsService {
       monthly_attendance: monthlyAttendance,
       overall_attendance_pct: overallAttendancePct,
       documents: student.student_certificates.map((c) => ({
-        name: c.certificate_types.name,
+        name: c.certificate_types!.name,
         available: c.is_available,
         file_url: c.file_url,
         verified_at: c.verified_at,

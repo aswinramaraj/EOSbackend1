@@ -73,6 +73,10 @@ function toAchievementResponse(achievement: AchievementWithRelations) {
     certificate_url: achievement.certificate_url,
     team_id: achievement.team_id,
     athlete_student_id: achievement.athlete_student_id,
+    // Department of the individual athlete, when this achievement has one —
+    // team results have no single owning department and leave these null.
+    department_id: achievement.students?.courses?.departments?.id ?? null,
+    department_code: achievement.students?.courses?.departments?.code ?? null,
   };
 }
 

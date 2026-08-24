@@ -7,5 +7,6 @@ import { PrincipalExamsService } from './exams.service';
   imports: [PrismaModule],
   controllers: [PrincipalExamsController],
   providers: [PrincipalExamsService],
+  exports: [PrincipalExamsService],
 })
 export class PrincipalExamsModule {}

@@ -254,6 +254,60 @@ export class ClassesService {
    * scope to that one year. `class_mentors` has @@unique([class_id,
    * academic_year]), so at most one row comes back per requested year.
    */
+  /**
+   * POST /classes/:id/mentor — real class_mentors insert (AssignMentorDto
+   * existed with no implementation calling it until now). One mentor per
+   * class per academic_year (@@unique([class_id, academic_year])) — a
+   * second call for the same class/year replaces the existing assignment
+   * rather than erroring, since re-assigning a class advisor is a normal,
+   * expected action, not a mistake to reject.
+   */
+  async assignMentor(
+    classId: number,
+    dto: AssignMentorDto,
+    assignedByUserId: number,
+  ) {
+    const classRecord = await this.prisma.classes.findUnique({
+      where: { id: classId },
+    });
+    if (!classRecord) {
+      throw new NotFoundException({
+        message: 'Class not found',
+        errorCode: 'CLASS_NOT_FOUND',
+      });
+    }
+
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { id: dto.faculty_id },
+    });
+    if (!faculty) {
+      throw new NotFoundException({
+        message: 'Faculty not found',
+        errorCode: 'FACULTY_NOT_FOUND',
+      });
+    }
+
+    return this.prisma.class_mentors.upsert({
+      where: {
+        class_id_academic_year: {
+          class_id: classId,
+          academic_year: dto.academic_year,
+        },
+      },
+      create: {
+        class_id: classId,
+        faculty_id: dto.faculty_id,
+        academic_year: dto.academic_year,
+        assigned_by_user_id: assignedByUserId,
+      },
+      update: {
+        faculty_id: dto.faculty_id,
+        assigned_by_user_id: assignedByUserId,
+      },
+      select: MENTOR_SELECT,
+    });
+  }
+
   async findMentor(classId: number, query: MentorQueryDto) {
     const classRecord = await this.prisma.classes.findUnique({
       where: { id: classId },

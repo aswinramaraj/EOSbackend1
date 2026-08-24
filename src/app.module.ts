@@ -192,6 +192,18 @@ import { AcademicCoordinatorAuditModule } from './modules/academic-coordinator/a
 import { AcademicCoordinatorMappingModule } from './modules/academic-coordinator/mapping/academic-coordinator-mapping.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
 import { IqacReportsModule } from './modules/iqac/reports/iqac-reports.module';
+import { IqacStudentsModule } from './modules/iqac/students/iqac-students.module';
+import { IqacFacultyModule } from './modules/iqac/faculty/iqac-faculty.module';
+import { IqacDepartmentsModule } from './modules/iqac/departments/iqac-departments.module';
+import { IqacHigherEducationModule } from './modules/iqac/higher-education/iqac-higher-education.module';
+import { IqacEdcModule } from './modules/iqac/edc/iqac-edc.module';
+import { IqacAcademicQualityModule } from './modules/iqac/academic-quality/iqac-academic-quality.module';
+import { IqacStudentDevelopmentModule } from './modules/iqac/student-development/iqac-student-development.module';
+import { IqacFacultyDevelopmentModule } from './modules/iqac/faculty-development/iqac-faculty-development.module';
+import { IqacCalendarModule } from './modules/iqac/calendar/iqac-calendar.module';
+import { IqacAccreditationModule } from './modules/iqac/accreditation/iqac-accreditation.module';
+import { IqacDashboardModule } from './modules/iqac/dashboard/iqac-dashboard.module';
+import { IqacApprovalsModule } from './modules/iqac/approvals/iqac-approvals.module';
 
 import { AlumniModule } from './modules/alumni/alumni.module';
 import { AchievementsModule } from './modules/achievements/achievements.module';
@@ -404,6 +416,18 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     AcademicCoordinatorMappingModule,
     HallTicketClearanceModule,
     IqacReportsModule,
+    IqacStudentsModule,
+    IqacFacultyModule,
+    IqacDepartmentsModule,
+    IqacHigherEducationModule,
+    IqacEdcModule,
+    IqacAcademicQualityModule,
+    IqacStudentDevelopmentModule,
+    IqacFacultyDevelopmentModule,
+    IqacCalendarModule,
+    IqacAccreditationModule,
+    IqacDashboardModule,
+    IqacApprovalsModule,
 
     AlumniModule,
     AchievementsModule,
