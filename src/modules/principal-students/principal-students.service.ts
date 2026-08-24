@@ -558,7 +558,7 @@ export class PrincipalStudentsService {
       monthly_attendance: monthlyAttendance,
       overall_attendance_pct: overallAttendancePct,
       documents: student.student_certificates.map((c) => ({
-        name: c.certificate_types.name,
+        name: c.certificate_types?.name ?? null,
         available: c.is_available,
         file_url: c.file_url,
         verified_at: c.verified_at,

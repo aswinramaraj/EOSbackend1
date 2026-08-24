@@ -933,7 +933,7 @@ export class StudentsService {
       rows.map(async (r) => ({
         id: r.id,
         certificate_type_id: r.certificate_type_id,
-        certificate_name: r.certificate_types.name,
+        certificate_name: r.certificate_types?.name ?? null,
         is_available: r.is_available,
         file_url: r.file_url
           ? await this.storage.getSignedDownloadUrl(

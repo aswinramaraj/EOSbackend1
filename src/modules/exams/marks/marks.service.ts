@@ -121,7 +121,10 @@ export class MarksService {
   async findAll(query: ListExamMarksQueryDto) {
     try {
       return await this.prisma.exam_marks.findMany({
-        where: query.student_id ? { student_id: query.student_id } : undefined,
+        where: {
+          student_id: query.student_id,
+          exam_subject_mapping_id: query.exam_subject_mapping_id,
+        },
         include: {
           exam_subject_mapping: {
             select: {

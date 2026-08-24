@@ -572,7 +572,7 @@ export class HodStudentProfileService {
           : null,
         certificates: student.student_certificates.map((c) => ({
           id: c.id,
-          name: c.certificate_types.name,
+          name: c.certificate_types?.name ?? null,
           verified: c.is_available,
         })),
         semester_wise_gpa: semesterWiseGpa,

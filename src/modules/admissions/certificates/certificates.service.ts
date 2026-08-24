@@ -168,7 +168,7 @@ export class CertificatesService {
     is_available: boolean;
     file_url: string | null;
     verified_at: Date | null;
-    certificate_types: { name: string };
+    certificate_types: { name: string } | null;
   }) {
     return {
       ...row,
