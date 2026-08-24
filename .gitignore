@@ -66,3 +66,16 @@ FACULTY_MODULE_UPDATE.MD
 
 sql.md
 queries.md
+# local .env snapshots - never commit
+.env.bak*
+
+# Local artifacts - never commit. backups/ held a full pg_dump of the
+# production database, which must never reach a remote.
+backups/
+*.dump
+*.sql.gz
+err.txt
+prisma/schema.prisma.bak*
+prisma/schema.prisma.before-*
+prisma/schema.prisma.my-pull-*
+seed_*.sql

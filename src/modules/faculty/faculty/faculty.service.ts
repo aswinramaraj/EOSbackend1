@@ -231,6 +231,21 @@ export class FacultyService {
                 email: { contains: query.search, mode: 'insensitive' as const },
               },
             },
+            // staff_code is the faculty roll number, which is how HR actually
+            // refers to people on paper. It was missing here, so searching by
+            // roll number returned nothing.
+            {
+              staff_code: {
+                contains: query.search,
+                mode: 'insensitive' as const,
+              },
+            },
+            {
+              designation: {
+                contains: query.search,
+                mode: 'insensitive' as const,
+              },
+            },
           ]
         : undefined,
     };
@@ -248,6 +263,7 @@ export class FacultyService {
             first_name: true,
             last_name: true,
             designation: true,
+            staff_code: true,
             date_of_joining: true,
             status: true,
             profile_url: true,
@@ -268,6 +284,7 @@ export class FacultyService {
       first_name: faculty.first_name,
       last_name: faculty.last_name,
       designation: faculty.designation,
+      staff_code: faculty.staff_code,
       department: faculty.departments,
       date_of_joining: faculty.date_of_joining,
       status: faculty.status,

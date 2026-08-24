@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, InternalServerErrorException, Logger, 
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import type { CreateWalkinDto } from './dto/create-walkin.dto';
+import type { OpdSearchQueryDto } from './dto/medical-crud.dto';
 
 type QueueStatus = 'waiting' | 'consult' | 'done';
 const NEXT_STATUS: Record<QueueStatus, QueueStatus> = { waiting: 'consult', consult: 'done', done: 'waiting' };
@@ -32,6 +33,100 @@ export class MedicalCentreOpdService {
   private readonly logger = new Logger(MedicalCentreOpdService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * GET /me/medical-centre-opd-queue/search?q=&kind=
+   *
+   * One search across students and staff. Whoever walks up to the counter
+   * could be either, so the operator should not have to pick a register first
+   * — both are matched and each result says which it is.
+   *
+   * Case-insensitive throughout (ILIKE), across name, roll number, register
+   * number, student id and staff code, because the operator types whichever
+   * identifier the patient can produce.
+   */
+  async searchPatients(query: OpdSearchQueryDto) {
+    const like = `%${query.q}%`;
+    const kind = query.kind ?? 'all';
+
+    try {
+      const students =
+        kind === 'faculty'
+          ? []
+          : await this.prisma.$queryRaw<
+              {
+                id: number;
+                name: string | null;
+                roll_no: string | null;
+                register_no: string | null;
+                dept: string | null;
+              }[]
+            >(Prisma.sql`
+              SELECT s.id,
+                     TRIM(CONCAT(sa.first_name, ' ', COALESCE(sa.last_name, ''))) AS name,
+                     s.roll_no, s.register_no, d.code AS dept
+              FROM students s
+              LEFT JOIN soa_applications sa ON sa.id = s.soa_application_id
+              LEFT JOIN classes c           ON c.id = s.class_id
+              LEFT JOIN departments d       ON d.id = c.department_id
+              WHERE s.roll_no ILIKE ${like}
+                 OR s.register_no ILIKE ${like}
+                 OR s.student_id_no ILIKE ${like}
+                 OR sa.first_name ILIKE ${like}
+                 OR sa.last_name ILIKE ${like}
+              ORDER BY sa.first_name NULLS LAST, s.id
+              LIMIT 20
+            `);
+
+      const faculty =
+        kind === 'student'
+          ? []
+          : await this.prisma.$queryRaw<
+              {
+                id: number;
+                name: string | null;
+                staff_code: string | null;
+                dept: string | null;
+              }[]
+            >(Prisma.sql`
+              SELECT f.id,
+                     TRIM(CONCAT(f.first_name, ' ', f.last_name)) AS name,
+                     f.staff_code, d.code AS dept
+              FROM faculty f
+              LEFT JOIN departments d ON d.id = f.department_id
+              WHERE f.first_name ILIKE ${like}
+                 OR f.last_name ILIKE ${like}
+                 OR f.staff_code ILIKE ${like}
+              ORDER BY f.first_name, f.id
+              LIMIT 20
+            `);
+
+      return [
+        ...students.map((r) => ({
+          kind: 'student' as const,
+          student_id: r.id,
+          faculty_id: null,
+          name: (r.name ?? '').trim() || 'Unknown student',
+          identifier: r.roll_no ?? r.register_no,
+          department: r.dept,
+        })),
+        ...faculty.map((r) => ({
+          kind: 'faculty' as const,
+          student_id: null,
+          faculty_id: r.id,
+          name: (r.name ?? '').trim() || 'Unknown staff',
+          identifier: r.staff_code,
+          department: r.dept,
+        })),
+      ];
+    } catch (err) {
+      this.logger.error('DB error searching OPD patients', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
 
   async getQueue(date?: string) {
     try {
