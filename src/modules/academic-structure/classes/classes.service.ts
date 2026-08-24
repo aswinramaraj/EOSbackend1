@@ -10,6 +10,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
 import { MentorQueryDto } from './dto/mentor-query.dto';
+import { AssignMentorDto } from './dto/assign-mentor.dto';
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
