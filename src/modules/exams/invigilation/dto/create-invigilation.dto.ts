@@ -1,6 +1,6 @@
-import { IsDateString, IsEnum, IsInt, IsPositive } from 'class-validator';
+import { IsDateString, IsEnum, IsIn, IsInt, IsOptional, IsPositive } from 'class-validator';
 import { Type } from 'class-transformer';
-import { exam_session_enum } from 'generated/prisma/client';
+import { exam_session_enum, invigilation_role_enum } from 'generated/prisma/client';
 
 export class CreateInvigilationDto {
   @IsInt()
@@ -25,4 +25,16 @@ export class CreateInvigilationDto {
     message: `session must be one of: ${Object.values(exam_session_enum).join(', ')}`,
   })
   session!: exam_session_enum;
+
+  // Optional — the model has always had chief/relief (default relief); no
+  // caller passed it before, so this only widens what's possible.
+  @IsOptional()
+  @IsEnum(invigilation_role_enum, {
+    message: `role must be one of: ${Object.values(invigilation_role_enum).join(', ')}`,
+  })
+  role?: invigilation_role_enum;
+
+  @IsOptional()
+  @IsIn(['regular', 'relief_pool', 'squad'])
+  duty_type?: 'regular' | 'relief_pool' | 'squad';
 }

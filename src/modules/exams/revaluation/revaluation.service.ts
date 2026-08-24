@@ -12,7 +12,10 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateRevaluationDto } from './dto/create-revaluation.dto';
 import { UpdateRevaluationDto } from './dto/update-revaluation.dto';
 
-const VALID_STATUSES = ['requested', 'under_review', 'revised', 'no_change'];
+const VALID_STATUSES = ['requested', 'under_review', 'revised', 'no_change', 'approved', 'rejected'];
+
+const STUDENT_INCLUDE = { soa_applications: { select: { first_name: true, last_name: true } } } as const;
+const FACULTY_SELECT = { id: true, first_name: true, last_name: true } as const;
 
 @Injectable()
 export class RevaluationService {
@@ -80,6 +83,7 @@ export class RevaluationService {
     try {
       return await this.prisma.revaluation_requests.findMany({
         where: status ? { status: status as any } : undefined,
+        orderBy: { requested_at: 'desc' },
         include: {
           exam_marks: {
             include: {
@@ -91,7 +95,8 @@ export class RevaluationService {
               },
             },
           },
-          students: true,
+          students: { include: STUDENT_INCLUDE },
+          faculty: { select: FACULTY_SELECT },
         },
       });
     } catch (err: any) {
@@ -120,7 +125,8 @@ export class RevaluationService {
               },
             },
           },
-          students: true,
+          students: { include: STUDENT_INCLUDE },
+          faculty: { select: FACULTY_SELECT },
         },
       });
     } catch (err: any) {
@@ -154,14 +160,37 @@ export class RevaluationService {
       });
     }
 
-    if (existing.status !== 'requested') {
+    const { status, revised_marks, evaluator_faculty_id } = updateRevaluationDto;
+
+    // Was previously hard-locked to "only while status === requested", so
+    // approved/rejected (real enum values) could never actually be reached —
+    // this is the missing final step, not a schema change. requested can go
+    // straight to any state (COE can reject outright, or fast-track a
+    // straightforward one); once under_review/revised/no_change, only the
+    // final approve/reject remains; approved/rejected is terminal.
+    const ALLOWED_NEXT: Record<string, string[]> = {
+      requested: ['under_review', 'revised', 'no_change', 'approved', 'rejected'],
+      under_review: ['revised', 'no_change', 'approved', 'rejected'],
+      revised: ['approved', 'rejected'],
+      no_change: ['approved', 'rejected'],
+    };
+
+    if (status !== undefined) {
+      const allowed = ALLOWED_NEXT[existing.status];
+      if (!allowed || !allowed.includes(status)) {
+        throw new ConflictException({
+          message: allowed
+            ? `Cannot move from "${existing.status}" to "${status}". Allowed: ${allowed.join(', ')}.`
+            : 'This revaluation request has already been processed.',
+          errorCode: 'REVALUATION_INVALID_TRANSITION',
+        });
+      }
+    } else if (existing.status === 'approved' || existing.status === 'rejected') {
       throw new ConflictException({
         message: 'This revaluation request has already been processed.',
         errorCode: 'REVALUATION_ALREADY_PROCESSED',
       });
     }
-
-    const { status, revised_marks } = updateRevaluationDto;
 
     if (revised_marks !== undefined) {
       if (revised_marks < 0) {
@@ -179,15 +208,40 @@ export class RevaluationService {
       }
     }
 
+    if (evaluator_faculty_id !== undefined) {
+      const faculty = await this.prisma.faculty.findUnique({ where: { id: evaluator_faculty_id } });
+      if (!faculty) {
+        throw new NotFoundException({
+          message: 'Faculty not found.',
+          errorCode: 'FACULTY_NOT_FOUND',
+        });
+      }
+    }
+
     try {
-      return await this.prisma.revaluation_requests.update({
+      const updated = await this.prisma.revaluation_requests.update({
         where: { id },
         data: {
           status,
           revised_marks,
-          resolved_at: new Date(),
+          evaluator_faculty_id,
+          resolved_at: status === 'approved' || status === 'rejected' ? new Date() : undefined,
         },
       });
+
+      // The whole point of a revaluation/retotaling is a corrected official
+      // mark — approving one without writing it back to exam_marks would
+      // leave Results Management, Pass Board and the grade matrix all
+      // showing the pre-revaluation score.
+      const finalMarks = updated.revised_marks ?? existing.revised_marks;
+      if (status === 'approved' && finalMarks != null) {
+        await this.prisma.exam_marks.update({
+          where: { id: existing.exam_marks_id },
+          data: { marks_obtained: finalMarks, is_moderated: true },
+        });
+      }
+
+      return updated;
     } catch (err: any) {
       if (err?.code === 'P2025') {
         throw new NotFoundException({

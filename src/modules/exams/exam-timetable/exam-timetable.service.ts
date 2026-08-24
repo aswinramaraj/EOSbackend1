@@ -10,6 +10,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateExamTimetableDto } from './dto/create-exam-timetable.dto';
 import { UpdateExamTimetableDto } from './dto/update-exam-timetable.dto';
+import { exam_session_enum } from 'generated/prisma/client';
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -33,6 +34,37 @@ export class ExamTimetableService {
       throw new BadRequestException({
         message: 'start_time must be earlier than end_time.',
         errorCode: 'INVALID_TIME_RANGE',
+      });
+    }
+  }
+
+  /**
+   * A class sitting two papers in the same session (same exam_date + FN/AN)
+   * is a real scheduling impossibility, not just a display warning — so
+   * this blocks the write instead of only flagging it client-side.
+   */
+  private async assertNoSessionConflict(
+    versionId: number,
+    classId: number,
+    examDate: Date,
+    session: exam_session_enum,
+    excludeMappingId: number,
+  ) {
+    const conflict = await this.prisma.exam_timetable.findFirst({
+      where: {
+        version_id: versionId,
+        exam_date: examDate,
+        session,
+        exam_subject_mapping_id: { not: excludeMappingId },
+        exam_subject_mapping: { class_id: classId },
+      },
+      include: { exam_subject_mapping: { include: { subjects: true } } },
+    });
+
+    if (conflict) {
+      throw new ConflictException({
+        message: `Scheduling conflict: this class already has ${conflict.exam_subject_mapping.subjects.subject_code} · ${conflict.exam_subject_mapping.subjects.name} in the ${session} session on ${examDate.toISOString().slice(0, 10)}.`,
+        errorCode: 'EXAM_TIMETABLE_SESSION_CONFLICT',
       });
     }
   }
@@ -109,6 +141,15 @@ export class ExamTimetableService {
     const endTime = this.toTimeDate(end_time);
     this.assertValidTimeRange(startTime, endTime);
 
+    const examDate = new Date(exam_date);
+    await this.assertNoSessionConflict(
+      version.id,
+      mapping.class_id,
+      examDate,
+      session,
+      exam_subject_mapping_id,
+    );
+
     try {
       // Transactional so the timetable row and its mapping's publish flag
       // either both land or neither does — see the compound-unique catch
@@ -118,7 +159,7 @@ export class ExamTimetableService {
         const timetable = await tx.exam_timetable.create({
           data: {
             exam_subject_mapping_id,
-            exam_date: new Date(exam_date),
+            exam_date: examDate,
             start_time: startTime,
             end_time: endTime,
             session,
@@ -222,6 +263,8 @@ export class ExamTimetableService {
       updateExamTimetableDto.exam_subject_mapping_id ??
       existing.exam_subject_mapping_id;
 
+    let classId: number;
+
     if (
       updateExamTimetableDto.exam_subject_mapping_id !== undefined &&
       updateExamTimetableDto.exam_subject_mapping_id !==
@@ -238,6 +281,8 @@ export class ExamTimetableService {
         });
       }
 
+      classId = mapping.class_id;
+
       const duplicate = await this.prisma.exam_timetable.findUnique({
         where: {
           version_id_exam_subject_mapping_id: {
@@ -253,6 +298,11 @@ export class ExamTimetableService {
           errorCode: 'EXAM_TIMETABLE_EXISTS',
         });
       }
+    } else {
+      const mapping = await this.prisma.exam_subject_mapping.findUnique({
+        where: { id: exam_subject_mapping_id },
+      });
+      classId = mapping!.class_id;
     }
 
     const startTime = updateExamTimetableDto.start_time
@@ -263,6 +313,19 @@ export class ExamTimetableService {
       : existing.end_time;
 
     this.assertValidTimeRange(startTime, endTime);
+
+    const examDate = updateExamTimetableDto.exam_date
+      ? new Date(updateExamTimetableDto.exam_date)
+      : existing.exam_date;
+    const session = updateExamTimetableDto.session ?? existing.session;
+
+    await this.assertNoSessionConflict(
+      existing.version_id,
+      classId,
+      examDate,
+      session,
+      exam_subject_mapping_id,
+    );
 
     try {
       return await this.prisma.$transaction(async (tx) => {
