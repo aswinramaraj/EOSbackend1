@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PrincipalDashboardService } from '../dashboard/dashboard.service';
 import { ListPrincipalFacultyQueryDto } from './dto/list-principal-faculty-query.dto';
@@ -166,7 +166,9 @@ export class PrincipalFacultyService {
   async list(query: ListPrincipalFacultyQueryDto) {
     const where: NonNullable<
       Parameters<typeof this.prisma.faculty.findMany>[0]
-    >['where'] = { status: 'active' };
+    >['where'] = {};
+    if (!query.status || query.status === 'active') where.status = 'active';
+    else if (query.status === 'inactive') where.status = 'inactive';
     if (query.department_id) where.department_id = query.department_id;
     if (query.q) {
       const q = query.q;
@@ -190,16 +192,20 @@ export class PrincipalFacultyService {
         qualification: true,
         date_of_joining: true,
         previous_experience_years: true,
+        status: true,
+        staff_code: true,
         departments: { select: { id: true, name: true, code: true } },
         users: { select: { email: true, phone: true } },
       },
     });
 
     const ids = rows.map((r) => r.id);
-    const [classesByFaculty, attendanceByFaculty] = await Promise.all([
-      this.classesTaughtByFaculty(ids),
-      this.attendanceByFaculty(ids),
-    ]);
+    const [classesByFaculty, attendanceByFaculty, publicationsByFaculty] =
+      await Promise.all([
+        this.classesTaughtByFaculty(ids),
+        this.attendanceByFaculty(ids),
+        this.publicationsByFaculty(ids),
+      ]);
 
     const faculty = rows.map((row) => ({
       id: row.id,
@@ -207,14 +213,20 @@ export class PrincipalFacultyService {
         .filter(Boolean)
         .join(' '),
       designation: row.designation,
+      staff_code: row.staff_code,
       department: row.departments,
       qualification: row.qualification,
+      // "Ph.D"/"Ph.D." are the only real values that indicate a doctorate —
+      // confirmed against the actual distinct qualification strings on file.
+      has_doctorate: (row.qualification ?? '').toLowerCase().includes('ph.d'),
       experience_years: this.experienceYears(
         row.date_of_joining,
         row.previous_experience_years,
       ),
       classes_count: classesByFaculty.get(row.id) ?? 0,
       attendance_percentage: attendanceByFaculty.get(row.id) ?? null,
+      publications_count: publicationsByFaculty.get(row.id) ?? 0,
+      status: row.status,
       email: row.users.email,
       phone: row.users.phone,
     }));
@@ -299,6 +311,19 @@ export class PrincipalFacultyService {
       }
     }
     return result;
+  }
+
+  /** All-time publication count per faculty, from the real (currently sparsely-populated) faculty_publications table. */
+  private async publicationsByFaculty(
+    facultyIds: number[],
+  ): Promise<Map<number, number>> {
+    if (facultyIds.length === 0) return new Map();
+    const rows = await this.prisma.faculty_publications.groupBy({
+      by: ['faculty_id'],
+      where: { faculty_id: { in: facultyIds } },
+      _count: { _all: true },
+    });
+    return new Map(rows.map((r) => [r.faculty_id, r._count._all]));
   }
 
   /**
@@ -401,5 +426,162 @@ export class PrincipalFacultyService {
     });
 
     return { departments: rows, support_unassigned: supportUnassigned };
+  }
+
+  /**
+   * GET /me/principal/faculty/publications/venues
+   *
+   * Venue-wise leading entries, matching the reference design's
+   * JOURNAL/VENUE · PAPERS · CITATIONS table. No "INDEXING" column: this
+   * schema's faculty_publications has no indexing field (Scopus/SCIE/etc
+   * is embedded in real `venue` strings inconsistently, not a separate,
+   * groupable value) — dropped rather than guessed at.
+   */
+  /**
+   * POST /me/iqac/faculty-development/publications — the reference
+   * design's "+ Add faculty entry" action for this metric. A real
+   * faculty_publications row, not a fabricated one.
+   */
+  async createPublication(dto: {
+    faculty_id: number;
+    title: string;
+    type: string;
+    year?: number;
+    venue?: string;
+    doi?: string;
+    citation_count?: number;
+  }) {
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { id: dto.faculty_id },
+      select: { id: true },
+    });
+    if (!faculty) {
+      throw new NotFoundException({
+        message: 'Faculty not found',
+        errorCode: 'FACULTY_NOT_FOUND',
+      });
+    }
+    return this.prisma.faculty_publications.create({ data: dto });
+  }
+
+  async leadingPublicationVenues() {
+    const rows = await this.prisma.faculty_publications.findMany({
+      select: {
+        venue: true,
+        citation_count: true,
+        faculty: { select: { departments: { select: { code: true } } } },
+      },
+    });
+
+    const byVenue = new Map<
+      string,
+      { papers: number; citations: number; departments: Set<string> }
+    >();
+    for (const r of rows) {
+      const venue = r.venue?.trim() || 'Unspecified venue';
+      const entry = byVenue.get(venue) ?? {
+        papers: 0,
+        citations: 0,
+        departments: new Set<string>(),
+      };
+      entry.papers += 1;
+      entry.citations += r.citation_count;
+      const deptCode = r.faculty?.departments?.code;
+      if (deptCode) entry.departments.add(deptCode);
+      byVenue.set(venue, entry);
+    }
+
+    return Array.from(byVenue.entries())
+      .map(([venue, e]) => ({
+        venue,
+        papers: e.papers,
+        citations: e.citations,
+        department_codes: Array.from(e.departments),
+      }))
+      .sort((a, b) => b.papers - a.papers);
+  }
+
+  /**
+   * GET /me/iqac/faculty-development/publications/departments —
+   * department-wise rollup for the Publications leading-entries panel,
+   * matching the reference design's always-8-department rollup grid.
+   */
+  async publicationDepartments() {
+    const [departments, rows] = await Promise.all([
+      this.prisma.departments.findMany({
+        select: { id: true, name: true, code: true },
+      }),
+      this.prisma.faculty_publications.findMany({
+        select: {
+          citation_count: true,
+          faculty: { select: { department_id: true } },
+        },
+      }),
+    ]);
+
+    const byDept = new Map<number, { papers: number; citations: number }>();
+    for (const r of rows) {
+      const deptId = r.faculty?.department_id;
+      if (deptId == null) continue;
+      const entry = byDept.get(deptId) ?? { papers: 0, citations: 0 };
+      entry.papers += 1;
+      entry.citations += r.citation_count;
+      byDept.set(deptId, entry);
+    }
+
+    return departments.map((dept) => ({
+      department: dept,
+      papers: byDept.get(dept.id)?.papers ?? 0,
+      citations: byDept.get(dept.id)?.citations ?? 0,
+    }));
+  }
+
+  /**
+   * GET /me/principal/faculty/publications/venues/:venue — every real paper
+   * on file for one venue. `venue` is nullable/blankable in the schema, and
+   * leadingPublicationVenues() above buckets those under the display label
+   * "Unspecified venue" — match that sentinel back to the real null/blank
+   * rows here so the drill-through isn't a dead end for that bucket.
+   */
+  async venuePublications(venue: string) {
+    const where =
+      venue === 'Unspecified venue'
+        ? { OR: [{ venue: null }, { venue: '' }] }
+        : { venue };
+
+    const rows = await this.prisma.faculty_publications.findMany({
+      where,
+      orderBy: { year: 'desc' },
+      select: {
+        id: true,
+        title: true,
+        type: true,
+        year: true,
+        doi: true,
+        citation_count: true,
+        faculty: {
+          select: {
+            id: true,
+            first_name: true,
+            last_name: true,
+            departments: { select: { code: true } },
+          },
+        },
+      },
+    });
+
+    return rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      type: r.type,
+      year: r.year,
+      doi: r.doi,
+      citation_count: r.citation_count,
+      author: {
+        faculty_id: r.faculty.id,
+        name: `${r.faculty.first_name} ${r.faculty.last_name}`,
+        department_code: r.faculty.departments?.code ?? null,
+      },
+    }));
   }
 }

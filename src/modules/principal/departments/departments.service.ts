@@ -82,6 +82,9 @@ export class PrincipalDepartmentsService {
           faculty_departments_head_of_department_faculty_idTofaculty: {
             select: HOD_SELECT,
           },
+          courses: {
+            select: { accreditation_status: true },
+          },
         },
         orderBy: { name: 'asc' },
       }),
@@ -131,6 +134,14 @@ export class PrincipalDepartmentsService {
         ),
         students_count: studentIds.length,
         faculty_count: facultyCountByDept.get(dept.id) ?? 0,
+        accreditation_status:
+          Array.from(
+            new Set(
+              dept.courses
+                .map((c) => c.accreditation_status)
+                .filter((s): s is string => !!s),
+            ),
+          ).join(', ') || null,
         attendance_percentage:
           attendance && attendance.total > 0
             ? Math.round((attendance.present / attendance.total) * 1000) / 10
