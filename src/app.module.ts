@@ -39,6 +39,7 @@ import { StudentEntrepreneurshipModule } from './modules/student-entrepreneurshi
 import { PrincipalStudentsModule as PrincipalStudentsFlatModule } from './modules/principal-students/principal-students.module';
 import { PrincipalFacultyModule as PrincipalFacultyFlatModule } from './modules/principal-faculty/principal-faculty.module';
 import { PrincipalDepartmentsModule as PrincipalDepartmentsFlatModule } from './modules/principal-departments/principal-departments.module';
+import { HodModule } from './modules/hod/hod.module';
 import { PrincipalExamsModule as PrincipalExamsFlatModule } from './modules/principal-exams/principal-exams.module';
 import { PrincipalFinanceModule as PrincipalFinanceFlatModule } from './modules/principal-finance/principal-finance.module';
 import { PrincipalPlacementsModule as PrincipalPlacementsFlatModule } from './modules/principal-placements/principal-placements.module';
@@ -248,6 +249,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     PrincipalStudentsFlatModule,
     PrincipalFacultyFlatModule,
     PrincipalDepartmentsFlatModule,
+    HodModule,
     PrincipalExamsFlatModule,
     PrincipalFinanceFlatModule,
     PrincipalPlacementsFlatModule,

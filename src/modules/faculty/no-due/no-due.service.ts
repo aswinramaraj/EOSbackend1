@@ -109,6 +109,29 @@ export class NoDueService {
   }
 
   /**
+   * Same real dues computation as getStudents, scoped to ONE class instead
+   * of the whole department — added for the HoD portal's class-by-class
+   * No-Due screen (`hod-no-due.service.ts`), which reuses this rather than
+   * duplicating the fee/library waterfall logic below. `classId` is
+   * verified to belong to the caller's own department before querying.
+   */
+  async getStudentsForClass(
+    classId: number,
+    query: ListNoDueStudentsQueryDto,
+    userId: number,
+  ) {
+    const hod = await this.resolveFacultyByUserId(userId);
+    const cls = await this.prisma.classes.findUnique({
+      where: { id: classId },
+      select: { department_id: true },
+    });
+    if (!cls || cls.department_id !== hod.department_id) {
+      throw new NotFoundException('Class not found in your department.');
+    }
+    return this.queryNoDueStudents({ classes: { id: classId } }, query);
+  }
+
+  /**
    * GET /me/mentee-no-due/batches (Faculty — class mentor). Same shape as
    * getBatches, scoped by class_mentors instead of department_id — the
    * class-advisor read-only equivalent of the HoD view. No approve action
@@ -165,7 +188,10 @@ export class NoDueService {
 
   /** Shared dues computation for both the HoD and class-mentor views — only
    * the `where` scope (department vs. mentored classes) differs. */
-  private async queryNoDueStudents(where: Record<string, unknown>, query: ListNoDueStudentsQueryDto) {
+  private async queryNoDueStudents(
+    where: Record<string, unknown>,
+    query: ListNoDueStudentsQueryDto,
+  ) {
     const status = query.status ?? 'cleared';
 
     if (query.search) {
@@ -271,7 +297,8 @@ export class NoDueService {
         }
       }
 
-      const map = feesByStudent.get(row.student_id) ?? new Map<string, number>();
+      const map =
+        feesByStudent.get(row.student_id) ?? new Map<string, number>();
       for (const item of [...items].sort((a, b) => a.id - b.id)) {
         const category = item.demand_categories?.name ?? 'Other fees';
         let pending = Number(item.amount) - (paidByItem.get(item.id) ?? 0);
@@ -291,7 +318,10 @@ export class NoDueService {
       if (row.student_id === null) continue;
 
       let owed = 0;
-      if (row.status === 'borrowed' && startOfDay(row.due_date) < startOfDay(today)) {
+      if (
+        row.status === 'borrowed' &&
+        startOfDay(row.due_date) < startOfDay(today)
+      ) {
         owed = daysBetween(today, row.due_date) * rules.finePerDay;
       } else if (
         row.status === 'returned' &&
@@ -311,13 +341,17 @@ export class NoDueService {
       }
 
       if (owed > 0) {
-        libraryByStudent.set(row.student_id, (libraryByStudent.get(row.student_id) ?? 0) + owed);
+        libraryByStudent.set(
+          row.student_id,
+          (libraryByStudent.get(row.student_id) ?? 0) + owed,
+        );
       }
     }
 
     const overrideByStudent = new Set<number>();
     for (const row of overrideRows) {
-      const stillValid = !row.valid_until || startOfDay(row.valid_until) >= startOfDay(today);
+      const stillValid =
+        !row.valid_until || startOfDay(row.valid_until) >= startOfDay(today);
       if (stillValid) overrideByStudent.add(row.student_id);
     }
 
@@ -340,7 +374,10 @@ export class NoDueService {
         register_no: student.register_no,
         section: student.classes?.section ?? null,
         fees,
-        library: { cleared: libraryPending <= 0, pending_amount: libraryPending },
+        library: {
+          cleared: libraryPending <= 0,
+          pending_amount: libraryPending,
+        },
         total_pending: totalPending,
         override_approved: overrideByStudent.has(student.id),
       };
@@ -401,7 +438,8 @@ export class NoDueService {
     });
     if (!exam) {
       throw new NotFoundException({
-        message: "No exam found for this student's batch to attach the override to",
+        message:
+          "No exam found for this student's batch to attach the override to",
         errorCode: 'NO_EXAM_FOUND',
       });
     }
@@ -409,15 +447,16 @@ export class NoDueService {
     const validUntil = new Date();
     validUntil.setFullYear(validUntil.getFullYear() + 1);
 
-    const existing = await this.prisma.hall_ticket_clearance_exceptions.findUnique({
-      where: {
-        student_id_exam_id_clearance_type: {
-          student_id: studentId,
-          exam_id: exam.id,
-          clearance_type: 'no_due',
+    const existing =
+      await this.prisma.hall_ticket_clearance_exceptions.findUnique({
+        where: {
+          student_id_exam_id_clearance_type: {
+            student_id: studentId,
+            exam_id: exam.id,
+            clearance_type: 'no_due',
+          },
         },
-      },
-    });
+      });
 
     if (existing) {
       await this.prisma.hall_ticket_clearance_exceptions.update({

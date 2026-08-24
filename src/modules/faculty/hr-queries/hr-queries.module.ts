@@ -8,5 +8,6 @@ import { HrQueriesController } from './hr-queries.controller';
   imports: [PrismaModule, StorageModule],
   controllers: [HrQueriesController],
   providers: [HrQueriesService],
+  exports: [HrQueriesService],
 })
 export class HrQueriesModule {}

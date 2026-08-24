@@ -8,5 +8,6 @@ import { NoDueController, MenteeNoDueController } from './no-due.controller';
   imports: [PrismaModule, LibrarySettingsModule],
   controllers: [NoDueController, MenteeNoDueController],
   providers: [NoDueService],
+  exports: [NoDueService],
 })
 export class NoDueModule {}

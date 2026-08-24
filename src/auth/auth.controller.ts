@@ -49,4 +49,16 @@ export class AuthController {
   getMe(@CurrentUser() user: JwtPayload) {
     return this.authService.getMe(user.sub);
   }
+
+  /**
+   * GET /api/v1/auth/roles
+   * Every role the caller can switch into (currently always just their
+   * own — see AuthService.getRoles for why).
+   */
+  @Get('roles')
+  @UseGuards(JwtAuthGuard)
+  @SkipThrottle()
+  getRoles(@CurrentUser() user: JwtPayload) {
+    return this.authService.getRoles(user.sub);
+  }
 }

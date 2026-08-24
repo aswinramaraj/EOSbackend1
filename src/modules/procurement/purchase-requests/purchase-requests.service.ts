@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
@@ -71,11 +72,18 @@ type ProposalRow = {
     needed_by: Date | null;
     department_id: number;
     created_at: Date;
+    estimated_amount: Prisma.Decimal | null;
     departments: { id: number; name: string };
     users: { id: number; email: string };
   };
-  users_purchase_order_proposals_hod_reviewed_byTousers: { id: number; email: string } | null;
-  users_purchase_order_proposals_finance_reviewed_byTousers: { id: number; email: string } | null;
+  users_purchase_order_proposals_hod_reviewed_byTousers: {
+    id: number;
+    email: string;
+  } | null;
+  users_purchase_order_proposals_finance_reviewed_byTousers: {
+    id: number;
+    email: string;
+  } | null;
   purchase_orders: { po_number: string; created_at: Date } | null;
 };
 
@@ -113,11 +121,14 @@ function toResponse(row: ProposalRow) {
     purpose: indent.purpose,
     quantity: indent.quantity,
     needed_by: indent.needed_by,
+    estimated_amount:
+      indent.estimated_amount != null ? Number(indent.estimated_amount) : null,
     status: deriveStatus(row),
     hod_reviewer: row.users_purchase_order_proposals_hod_reviewed_byTousers,
     hod_reviewed_at: row.hod_reviewed_at,
     hod_remarks: row.hod_remarks,
-    finance_reviewer: row.users_purchase_order_proposals_finance_reviewed_byTousers,
+    finance_reviewer:
+      row.users_purchase_order_proposals_finance_reviewed_byTousers,
     finance_reviewed_at: row.finance_reviewed_at,
     finance_remarks: row.finance_remarks,
     order_number: row.purchase_orders?.po_number ?? null,
@@ -163,7 +174,7 @@ export class PurchaseRequestsService {
     this.logger.log(
       `Purchase request created: proposal=${proposal.id} indent=${indent.id} by user=${userId} dept=${dto.department_id}`,
     );
-    return toResponse(proposal as unknown as ProposalRow);
+    return toResponse(proposal);
   }
 
   /**
@@ -245,7 +256,11 @@ export class PurchaseRequestsService {
    * PATCH /me/purchase-requests/:id/hod-review (HoD only, own department,
    * only while the proposal is 'pending').
    */
-  async hodReview(id: number, dto: HodReviewPurchaseRequestDto, currentUser: JwtPayload) {
+  async hodReview(
+    id: number,
+    dto: HodReviewPurchaseRequestDto,
+    currentUser: JwtPayload,
+  ) {
     const hod = await this.resolveFacultyByUserId(currentUser.sub);
 
     const existing = await this.prisma.purchase_order_proposals.findUnique({
@@ -271,7 +286,8 @@ export class PurchaseRequestsService {
       });
     }
 
-    const nextStatus = dto.decision === 'approved' ? 'hod_approved' : 'rejected';
+    const nextStatus =
+      dto.decision === 'approved' ? 'hod_approved' : 'rejected';
     const [proposal] = await this.prisma.$transaction([
       this.prisma.purchase_order_proposals.update({
         where: { id },
@@ -292,14 +308,18 @@ export class PurchaseRequestsService {
     this.logger.log(
       `Purchase request ${id} ${dto.decision === 'approved' ? 'forwarded to Finance' : 'rejected'} by HoD user=${currentUser.sub}`,
     );
-    return toResponse(proposal as unknown as ProposalRow);
+    return toResponse(proposal);
   }
 
   /**
    * PATCH /me/purchase-requests/:id/finance-review (Finance only, only
    * while the proposal is 'hod_approved').
    */
-  async financeReview(id: number, dto: FinanceReviewPurchaseRequestDto, userId: number) {
+  async financeReview(
+    id: number,
+    dto: FinanceReviewPurchaseRequestDto,
+    userId: number,
+  ) {
     const existing = await this.prisma.purchase_order_proposals.findUnique({
       where: { id },
     });
@@ -316,7 +336,8 @@ export class PurchaseRequestsService {
       });
     }
 
-    const nextStatus = dto.decision === 'approved' ? 'finance_approved' : 'rejected';
+    const nextStatus =
+      dto.decision === 'approved' ? 'finance_approved' : 'rejected';
     const [proposal] = await this.prisma.$transaction([
       this.prisma.purchase_order_proposals.update({
         where: { id },
@@ -337,7 +358,7 @@ export class PurchaseRequestsService {
     this.logger.log(
       `Purchase request ${id} ${dto.decision === 'approved' ? 'approved' : 'rejected'} by Finance user=${userId}`,
     );
-    return toResponse(proposal as unknown as ProposalRow);
+    return toResponse(proposal);
   }
 
   /**
@@ -392,7 +413,9 @@ export class PurchaseRequestsService {
       }),
     ]);
 
-    this.logger.log(`Purchase request ${id} converted to ${poNumber} by admin user=${userId}`);
+    this.logger.log(
+      `Purchase request ${id} converted to ${poNumber} by admin user=${userId}`,
+    );
     return toResponse(proposal as unknown as ProposalRow);
   }
 
