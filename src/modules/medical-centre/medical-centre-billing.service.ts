@@ -51,8 +51,10 @@ export class MedicalCentreBillingService {
       }
 
       const billRows = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
-        INSERT INTO medical_bills (patient_name, patient_dept, condition, attended_by_staff_id, payment_mode, status, medicine_total, service_total, total)
-        VALUES (${dto.patient_name}, ${dto.patient_dept ?? null}, ${dto.condition ?? null}, ${dto.attended_by_staff_id ?? null}, ${dto.payment_mode}, ${dto.status}, ${medTotal}, ${svcTotal}, ${total})
+        INSERT INTO medical_bills (patient_name, patient_dept, condition, attended_by_staff_id, payment_mode, status, medicine_total, service_total, total, upi_transaction_id, visit_id)
+        VALUES (${dto.patient_name}, ${dto.patient_dept ?? null}, ${dto.condition ?? null}, ${dto.attended_by_staff_id ?? null}, ${dto.payment_mode}, ${dto.status}, ${medTotal}, ${svcTotal}, ${total},
+                ${dto.payment_mode === 'upi' ? (dto.upi_transaction_id ?? null) : null},
+                ${dto.visit_id ?? null}::int)
         RETURNING id
       `);
       const billId = billRows[0].id;
@@ -113,6 +115,144 @@ export class MedicalCentreBillingService {
       this.logger.error('DB error listing bill history', err);
       throw new InternalServerErrorException({ message: 'Something went wrong. Please try again.', errorCode: 'INTERNAL_ERROR' });
     }
+  }
+
+  /**
+   * GET /me/medical-centre-billing/:id/receipt
+   *
+   * Everything the printed receipt needs, in one read: the patient block, the
+   * reason for the visit, and the line items as real rows (description,
+   * quantity, unit rate, line amount) rather than the pre-joined summary
+   * string `getHistory` returns for the on-screen list.
+   *
+   * `medical_bills` holds the patient as free text (`patient_name`,
+   * `patient_dept`) with no FK to `students`, so no roll number exists to
+   * print for a bill. The receipt shows what was actually recorded rather
+   * than guessing a student by name.
+   */
+  async getReceipt(id: number) {
+    // Raw SQL rather than the Prisma model: `upi_transaction_id` is a plain
+    // column on medical_bills that is not present in schema.prisma (that file
+    // is owned by the DB owner and not edited from here), so there is no
+    // generated field to select. The rest of this module already reads this way.
+    const bills = await this.prisma.$queryRaw<
+      {
+        id: number;
+        patient_name: string;
+        patient_dept: string | null;
+        condition: string | null;
+        payment_mode: string;
+        upi_transaction_id: string | null;
+        status: string;
+        medicine_total: string;
+        service_total: string;
+        total: string;
+        created_at: Date;
+        staff_name: string | null;
+        staff_designation: string | null;
+        linked_name: string | null;
+        linked_identifier: string | null;
+        linked_department: string | null;
+        visit_id: number | null;
+      }[]
+    >(Prisma.sql`
+      SELECT b.id, b.patient_name, b.patient_dept, b.condition,
+             b.payment_mode, b.upi_transaction_id, b.status,
+             b.medicine_total::text AS medicine_total,
+             b.service_total::text  AS service_total,
+             b.total::text          AS total,
+             b.created_at,
+             ms.name        AS staff_name,
+             ms.designation AS staff_designation,
+             -- Identity resolved through the visit rather than the free-text
+             -- patient_name: a student is named on soa_applications and carries
+             -- a roll number on students, a faculty patient carries a staff
+             -- code. Null for a walk-in billed with no queue entry.
+             COALESCE(
+               NULLIF(TRIM(CONCAT_WS(' ', sa.first_name, sa.last_name)), ''),
+               NULLIF(TRIM(CONCAT_WS(' ', vf.first_name, vf.last_name)), '')
+             )                                        AS linked_name,
+             COALESCE(st.roll_no, st.register_no, vf.staff_code) AS linked_identifier,
+             COALESCE(sd.name, vfd.name)              AS linked_department,
+             v.id                                     AS visit_id
+      FROM medical_bills b
+      LEFT JOIN medical_staff ms        ON ms.id = b.attended_by_staff_id
+      LEFT JOIN medical_visits v        ON v.id = b.visit_id
+      LEFT JOIN students st             ON st.id = v.student_id
+      LEFT JOIN soa_applications sa     ON sa.id = st.soa_application_id
+      LEFT JOIN classes cl              ON cl.id = st.class_id
+      LEFT JOIN departments sd          ON sd.id = cl.department_id
+      LEFT JOIN faculty vf              ON vf.id = v.faculty_id
+      LEFT JOIN departments vfd         ON vfd.id = vf.department_id
+      WHERE b.id = ${id}
+    `);
+
+    const bill = bills[0];
+    if (!bill) {
+      throw new NotFoundException({
+        message: 'Bill not found',
+        errorCode: 'BILL_NOT_FOUND',
+      });
+    }
+
+    const items = await this.prisma.$queryRaw<
+      {
+        id: number;
+        item_type: string;
+        description: string;
+        quantity: number;
+        rate: string;
+        amount: string;
+      }[]
+    >(Prisma.sql`
+      SELECT id, item_type, description, quantity, rate::text AS rate, amount::text AS amount
+      FROM medical_bill_items
+      WHERE bill_id = ${id}
+      ORDER BY id ASC
+    `);
+
+    const money = (v: string | null) => (v == null ? 0 : Number(v));
+
+    return {
+      receipt_no: `MB-${String(bill.id).padStart(4, '0')}`,
+      bill_id: bill.id,
+      issued_at: bill.created_at.toISOString(),
+      patient: {
+        // The linked record wins when the bill came from a queued visit; the
+        // typed values are the fallback for a walk-in.
+        name: bill.linked_name ?? bill.patient_name,
+        department: bill.linked_department ?? bill.patient_dept,
+        // Roll number for a student, staff code for a faculty patient. Null
+        // when the bill has no visit behind it, and the receipt then omits the
+        // line rather than printing a guess.
+        identifier: bill.linked_identifier,
+        is_linked: bill.visit_id != null,
+      },
+      // The clinical reason the visit was billed for; drives the receipt's
+      // "Reason for consultation" block.
+      reason: bill.condition,
+      attended_by: bill.staff_name
+        ? { name: bill.staff_name, designation: bill.staff_designation }
+        : null,
+      payment_mode: MODE_LABEL[bill.payment_mode] ?? bill.payment_mode,
+      // Only ever populated for a UPI settlement, so the receipt prints the
+      // reference line only when there is one.
+      upi_transaction_id: bill.upi_transaction_id,
+      status: STATUS_LABEL[bill.status] ?? bill.status,
+      items: items.map((it) => ({
+        id: it.id,
+        item_type: it.item_type,
+        description: it.description,
+        quantity: it.quantity,
+        rate: money(it.rate),
+        amount: money(it.amount),
+      })),
+      totals: {
+        medicine: money(bill.medicine_total),
+        service: money(bill.service_total),
+        total: money(bill.total),
+      },
+    };
   }
 
   async collect(id: number) {

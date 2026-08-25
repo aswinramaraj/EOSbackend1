@@ -21,7 +21,7 @@ import { CreateHostelRoomTypeDto } from './dto/create-hostel-room-type.dto';
 import { UpdateHostelRoomTypeDto } from './dto/update-hostel-room-type.dto';
 
 @Controller('hostel-room-types')
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class HostelRoomTypeController {
   constructor(private readonly hostelRoomTypeService: HostelRoomTypeService) {}
@@ -55,7 +55,7 @@ export class HostelRoomTypeController {
    *  500 INTERNAL_ERROR – unexpected server failure
    */
   @Get()
-  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN, ROLES.BILLING)
+  @Roles(ROLES.ADMIN, ROLES.WARDEN, ROLES.BILLING)
   findAll() {
     return this.hostelRoomTypeService.findAll();
   }
@@ -70,7 +70,7 @@ export class HostelRoomTypeController {
    *  500 INTERNAL_ERROR             – unexpected server failure
    */
   @Get(':id')
-  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN, ROLES.BILLING)
+  @Roles(ROLES.ADMIN, ROLES.WARDEN, ROLES.BILLING)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.hostelRoomTypeService.findOne(id);
   }

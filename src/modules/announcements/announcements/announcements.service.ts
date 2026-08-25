@@ -40,6 +40,17 @@ interface UserContext {
  * name+role+designation+department. `classes`/`roles` resolve human-readable
  * audience labels (department code + section, role name) instead of raw ids.
  */
+/** Shape the publishing screen reads back as `social`. */
+const SOCIAL_DETAILS_SELECT = {
+  select: {
+    format: true,
+    link_url: true,
+    expires_at: true,
+    is_pinned: true,
+    allow_comments: true,
+  },
+} as const;
+
 const ANNOUNCEMENT_RESPONSE_INCLUDE = {
   announcement_class_mapping: {
     select: {
@@ -52,6 +63,9 @@ const ANNOUNCEMENT_RESPONSE_INCLUDE = {
   announcement_role_mapping: {
     select: { role_id: true, roles: { select: { name: true } } },
   },
+  // Present only for posts published through the social/publishing screen;
+  // toResponseShape surfaces it as `social`.
+  social_post_details: SOCIAL_DETAILS_SELECT,
   users: {
     select: {
       email: true,
@@ -67,6 +81,26 @@ const ANNOUNCEMENT_RESPONSE_INCLUDE = {
     },
   },
 } satisfies Prisma.announcementsInclude;
+
+/**
+ * True when the caller supplied any social-post field, so a plain announcement
+ * from another module does not get an empty details row attached to it.
+ */
+function hasSocialDetails(dto: {
+  format?: string;
+  link_url?: string;
+  expires_at?: string;
+  is_pinned?: boolean;
+  allow_comments?: boolean;
+}): boolean {
+  return (
+    dto.format !== undefined ||
+    dto.link_url !== undefined ||
+    dto.expires_at !== undefined ||
+    dto.is_pinned !== undefined ||
+    dto.allow_comments !== undefined
+  );
+}
 
 @Injectable()
 export class AnnouncementsService {
@@ -193,8 +227,43 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               priority: dto.priority,
-            },
+              // Real column that nothing was writing, so a scheduled post kept
+              // no record of when it was meant to go out.
+              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+              },
           });
+
+          // Social post details live in their own 1:1 table. Written inside
+          // this transaction so a post can never exist without the format,
+          // link and pin/expiry settings it was published with — those were
+          // previously accepted by the UI and then silently dropped.
+          if (hasSocialDetails(dto)) {
+            await tx.social_post_details.create({
+              data: {
+                announcement_id: announcement.id,
+                format: dto.format ?? null,
+                link_url: dto.link_url ?? null,
+                expires_at: dto.expires_at ? new Date(dto.expires_at) : null,
+                is_pinned: dto.is_pinned ?? false,
+                allow_comments: dto.allow_comments ?? true,
+              },
+            });
+          }
+
+          // Posted inside the same transaction as the announcement, so a
+          // post can never appear without the opening comment it was
+          // published with.
+          if (dto.first_comment && dto.first_comment.trim().length > 0) {
+            await tx.announcement_comments.create({
+              data: {
+                announcement_id: announcement.id,
+                commented_by_user_id: user.sub,
+                comment_text: dto.first_comment.trim(),
+              },
+            });
+          }
 
           if (dto.class_ids && dto.class_ids.length > 0) {
             await tx.announcement_class_mapping.createMany({
@@ -216,6 +285,17 @@ export class AnnouncementsService {
 
           return this.toResponseShape({
             ...announcement,
+            // The insert above returns no relations, so the social details are
+            // echoed back from what was just written rather than re-queried.
+            social_post_details: hasSocialDetails(dto)
+              ? {
+                  format: dto.format ?? null,
+                  link_url: dto.link_url ?? null,
+                  expires_at: dto.expires_at ? new Date(dto.expires_at) : null,
+                  is_pinned: dto.is_pinned ?? false,
+                  allow_comments: dto.allow_comments ?? true,
+                }
+              : null,
             announcement_class_mapping: (dto.class_ids ?? []).map(
               (class_id) => ({ class_id, classes: null }),
             ),
@@ -256,7 +336,12 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               priority: dto.priority,
-            },
+              // Real column that nothing was writing, so a scheduled post kept
+              // no record of when it was meant to go out.
+              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+              },
           });
 
           await tx.announcement_role_mapping.createMany({
@@ -265,6 +350,19 @@ export class AnnouncementsService {
               role_id,
             })),
           });
+
+          // An opening comment is written in the same transaction as the post
+          // for every create branch, so it can never go missing from a post
+          // that was published with one.
+          if (dto.first_comment && dto.first_comment.trim().length > 0) {
+            await tx.announcement_comments.create({
+              data: {
+                announcement_id: created.id,
+                commented_by_user_id: user.sub,
+                comment_text: dto.first_comment.trim(),
+              },
+            });
+          }
 
           return created;
         });
@@ -276,7 +374,7 @@ export class AnnouncementsService {
         });
       }
 
-      await this.notifyNewAnnouncement(announcement.id, dto.title, 'roles', {
+      void this.notifyNewAnnouncement(announcement.id, dto.title, 'roles', {
         roleIds: dto.role_ids,
       });
 
@@ -313,7 +411,12 @@ export class AnnouncementsService {
             file_key: dto.file_key,
             file_name: dto.file_name,
             priority: dto.priority,
-          },
+            // Real column that nothing was writing, so a scheduled post kept
+            // no record of when it was meant to go out.
+            scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+            },
         });
       } catch (err) {
         this.logger.error('DB error while creating announcement', err);
@@ -323,7 +426,7 @@ export class AnnouncementsService {
         });
       }
 
-      await this.notifyNewAnnouncement(announcement.id, dto.title, 'teachers', {
+      void this.notifyNewAnnouncement(announcement.id, dto.title, 'teachers', {
         departmentId,
       });
 
@@ -362,7 +465,12 @@ export class AnnouncementsService {
             file_key: dto.file_key,
             file_name: dto.file_name,
             priority: dto.priority,
-            category: dto.category,
+            // Real column that nothing was writing, so a scheduled post kept
+            // no record of when it was meant to go out.
+            scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+              category: dto.category,
           },
         });
       } catch (err) {
@@ -392,7 +500,12 @@ export class AnnouncementsService {
             file_key: dto.file_key,
             file_name: dto.file_name,
             priority: dto.priority,
-          },
+            // Real column that nothing was writing, so a scheduled post kept
+            // no record of when it was meant to go out.
+            scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+            },
         });
 
         await tx.announcement_class_mapping.createMany({
@@ -401,6 +514,34 @@ export class AnnouncementsService {
             class_id,
           })),
         });
+
+        // Same transaction as the post itself, so a published social post
+        // always carries the format/link/pin settings it went out with.
+        if (hasSocialDetails(dto)) {
+          await tx.social_post_details.create({
+            data: {
+              announcement_id: created.id,
+              format: dto.format ?? null,
+              link_url: dto.link_url ?? null,
+              expires_at: dto.expires_at ? new Date(dto.expires_at) : null,
+              is_pinned: dto.is_pinned ?? false,
+              allow_comments: dto.allow_comments ?? true,
+            },
+          });
+        }
+
+        // Same transaction as the post: this is the branch the social
+        // publishing screen goes through, so its opening comment has to be
+        // written here too.
+        if (dto.first_comment && dto.first_comment.trim().length > 0) {
+          await tx.announcement_comments.create({
+            data: {
+              announcement_id: created.id,
+              commented_by_user_id: user.sub,
+              comment_text: dto.first_comment.trim(),
+            },
+          });
+        }
 
         return created;
       });
@@ -412,7 +553,12 @@ export class AnnouncementsService {
       });
     }
 
-    await this.notifyNewAnnouncement(
+    // Fire-and-forget, exactly like the other two call sites. Awaiting this
+    // held the response open while every student in every targeted class was
+    // notified one batch at a time: publishing to all 160 classes took 309
+    // seconds, so the browser gave up long before the post appeared even
+    // though the post itself had already committed.
+    void this.notifyNewAnnouncement(
       announcement.id,
       dto.title,
       dto.target_audience!,
@@ -467,7 +613,12 @@ export class AnnouncementsService {
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
       context.role === ROLES.SECRETARY ||
-      context.role === ROLES.BILLING
+      context.role === ROLES.BILLING ||
+      // IQAC posts institution-wide at the same oversight tier as Admin/
+      // Principal elsewhere in this service (see resolveUserContext) — no
+      // department linkage exists for IQAC, so it's always an all-faculty
+      // broadcast, same as Admin/Principal omitting requestedDepartmentId.
+      context.role === ROLES.IQAC
     ) {
       if (requestedDepartmentId === undefined) {
         return null;
@@ -497,6 +648,15 @@ export class AnnouncementsService {
    * announced - it isn't addressed to anyone yet). Never throws - a
    * failure here must not roll back or fail the announcement's own
    * creation, which has already committed by the time this runs.
+   *
+   * Deliberately NOT awaited by any caller (see the 3 call sites in
+   * create()) - this used to await each recipient's notify() one at a
+   * time, which meant an institution-wide broadcast (hundreds/thousands of
+   * recipients) held the HTTP response open for minutes and could time
+   * out outright. Callers now fire this and return immediately once the
+   * announcement itself is committed; recipients are notified in the
+   * background, in bounded-size concurrent batches (not one giant
+   * Promise.all) so it doesn't exhaust the Prisma connection pool either.
    */
   private async notifyNewAnnouncement(
     announcementId: number,
@@ -513,15 +673,21 @@ export class AnnouncementsService {
         targetAudience,
         opts,
       );
-      for (const userId of userIds) {
-        await this.notifications.notify({
-          user_id: userId,
-          title: 'New announcement',
-          message: title,
-          type: 'announcement_new',
-          related_entity_type: 'announcement',
-          related_entity_id: announcementId,
-        });
+      const BATCH_SIZE = 25;
+      for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
+        const batch = userIds.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          batch.map((userId) =>
+            this.notifications.notify({
+              user_id: userId,
+              title: 'New announcement',
+              message: title,
+              type: 'announcement_new',
+              related_entity_type: 'announcement',
+              related_entity_id: announcementId,
+            }),
+          ),
+        );
       }
     } catch (err) {
       this.logger.error(
@@ -779,7 +945,12 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               priority: dto.priority,
-            },
+              // Real column that nothing was writing, so a scheduled post kept
+              // no record of when it was meant to go out.
+              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+              },
           });
         }
 
@@ -897,6 +1068,12 @@ export class AnnouncementsService {
       // billing->department linkage exists anywhere in the schema either).
       case ROLES.BILLING:
         return { role: ROLES.BILLING, userId: user.sub, roleId: user.roleId };
+
+      // Finance is institution-wide as well: the schema has no
+      // finance->department linkage either, and Finance posts notices to the
+      // whole institution (budget cut-offs, claim deadlines).
+      case ROLES.FINANCE:
+        return { role: ROLES.FINANCE, userId: user.sub, roleId: user.roleId };
 
       case ROLES.HOD: {
         const faculty = await this.getFacultyByUserId(user.sub);
@@ -1037,6 +1214,14 @@ export class AnnouncementsService {
 
       // Institution-wide, same as Secretary — see resolveUserContext.
       case ROLES.BILLING:
+      case ROLES.FINANCE:
+        return {};
+
+      // IQAC is an institution-wide quality/audit function — it needs to
+      // see every announcement for oversight purposes, same broadcast tier
+      // as Admin/Principal/Secretary/Billing, not a narrower "own posts
+      // only" scope like Media Room/Higher Education.
+      case ROLES.IQAC:
         return {};
 
       // EDC coordinator has no recipient list to resolve (no "founders"
@@ -1158,6 +1343,12 @@ export class AnnouncementsService {
       // (same as HOD/Faculty).
       case ROLES.HIGHER_EDUCATION:
       case ROLES.MEDICAL_CENTRE:
+      // Media Room is the same shape: institution-wide poster with no
+      // class/department scope. Without a case here it fell through to
+      // `default`, which matches only role-targeted broadcasts — so the Media
+      // Room could not see even the posts it had just published, and reading
+      // or deleting one came back 404.
+      case ROLES.MEDIA_ROOM:
         return {
           OR: [
             { posted_by_user_id: context.userId },
@@ -1215,6 +1406,8 @@ export class AnnouncementsService {
     // same unrestricted class selection as Admin/Principal, not scoped to
     // one department the way HOD/Faculty are. Secretary is institution-wide
     // too (no secretary->department table exists anywhere in the schema).
+    // Media Room is institution-wide for the same reason: its social posts
+    // go to the whole college, and it has no department of its own to scope to.
     if (
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
@@ -1222,7 +1415,9 @@ export class AnnouncementsService {
       context.role === ROLES.HIGHER_EDUCATION ||
       context.role === ROLES.MEDICAL_CENTRE ||
       context.role === ROLES.SECRETARY ||
-      context.role === ROLES.BILLING
+      context.role === ROLES.BILLING ||
+      context.role === ROLES.IQAC ||
+      context.role === ROLES.MEDIA_ROOM
     ) {
       return;
     }
@@ -1241,7 +1436,11 @@ export class AnnouncementsService {
       context.role !== ROLES.PRINCIPAL &&
       // Billing's real "All HoDs" audience option (fee-due escalation
       // notices to department heads) needs role targeting too.
-      context.role !== ROLES.BILLING
+      context.role !== ROLES.BILLING &&
+      // IQAC's composer targets HOD/HR/Placement directly (e.g. NAAC
+      // documentation requests, audit follow-ups) — same oversight-tier
+      // posting capability as its 'teachers' broadcast above.
+      context.role !== ROLES.IQAC
     ) {
       throw new ForbiddenException({
         message: 'You are not permitted to target announcements by role',
@@ -1676,10 +1875,24 @@ export class AnnouncementsService {
 
     // Built via omit rather than destructure-to-omit so the excluded keys
     // don't trip no-unused-vars.
+    // Present as `social` (the key the publishing screen reads) and normalise
+    // the timestamp; the raw relation name is dropped from the payload.
+    const socialRow = announcement.social_post_details as
+      | {
+          format: string | null;
+          link_url: string | null;
+          expires_at: Date | null;
+          is_pinned: boolean | null;
+          allow_comments: boolean | null;
+        }
+      | null
+      | undefined;
+
     const rest = { ...announcement };
     delete rest.announcement_class_mapping;
     delete rest.announcement_role_mapping;
     delete rest.users;
+    delete rest.social_post_details;
 
     const fileKey = announcement.file_key as string | null | undefined;
 
@@ -1688,6 +1901,17 @@ export class AnnouncementsService {
       // Derived fresh from file_key on every read rather than trusting a
       // stored file_url — avoids ever serving an expired signed URL.
       file_url: fileKey ? this.storage.getPublicUrl(fileKey) : null,
+      // Absent (rather than an empty object) for announcements that were not
+      // published as social posts, so the UI can tell the two apart.
+      social: socialRow
+        ? {
+            format: socialRow.format,
+            link_url: socialRow.link_url,
+            expires_at: socialRow.expires_at ? socialRow.expires_at.toISOString() : null,
+            is_pinned: socialRow.is_pinned ?? false,
+            allow_comments: socialRow.allow_comments ?? true,
+          }
+        : undefined,
       class_ids: classMappings.map((m) => m.class_id),
       class_labels: classMappings
         .map((m) =>

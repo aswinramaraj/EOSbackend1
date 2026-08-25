@@ -2,9 +2,11 @@ import {
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
+  IsDateString,
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
   MaxLength,
   ValidateIf,
@@ -77,4 +79,9 @@ export class UpdateAnnouncementDto {
   @IsString()
   @MaxLength(20)
   priority?: string;
+  /** Re-schedule (or clear) when a post goes out. */
+  @IsOptional()
+  @IsDateString({}, { message: 'scheduled_at must be an ISO date-time' })
+  scheduled_at?: string;
+
 }

@@ -18,9 +18,16 @@ import { BudgetService } from './budget.service';
 import { CreateBudgetRequestDto } from './dto/create-budget-request.dto';
 import { SearchBudgetRequestsDto } from './dto/search-budget-requests.dto';
 
+/**
+ * Sports budget requests.
+ *
+ * Sports raises the request; **Finance decides it**. The approve/reject
+ * routes below are therefore granted to Finance only — Sports approving its
+ * own spending was the defect, not a missing button.
+ */
 @Controller('sports-admin/budget-requests')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.SPORTS_ADMIN, ROLES.ADMIN)
+@Roles(ROLES.SPORTS_ADMIN, ROLES.ADMIN, ROLES.FINANCE)
 export class BudgetController {
   constructor(private readonly budgetService: BudgetService) {}
 
@@ -29,7 +36,9 @@ export class BudgetController {
     return this.budgetService.findAll(query);
   }
 
+  /** Raising a request stays with Sports. */
   @Post()
+  @Roles(ROLES.SPORTS_ADMIN, ROLES.ADMIN)
   create(@Body() dto: CreateBudgetRequestDto, @CurrentUser() user: JwtPayload) {
     return this.budgetService.create(dto, user.sub);
   }
@@ -39,7 +48,12 @@ export class BudgetController {
     return this.budgetService.findOne(id);
   }
 
+  /**
+   * Decided by Finance. A method-level @Roles overrides the class-level list,
+   * so Sports cannot reach these two routes at all.
+   */
   @Post(':id/approve')
+  @Roles(ROLES.FINANCE, ROLES.ADMIN)
   approve(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -48,6 +62,7 @@ export class BudgetController {
   }
 
   @Post(':id/reject')
+  @Roles(ROLES.FINANCE, ROLES.ADMIN)
   reject(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

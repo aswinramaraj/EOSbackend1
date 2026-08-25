@@ -27,6 +27,7 @@ export class FinanceOverviewController {
    *  403 FORBIDDEN      – authenticated user is not an admin
    *  500 INTERNAL_ERROR – unexpected server failure
    */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('finance-overview/batches')
   getAvailableBatches() {
     return this.financeOverviewService.getAvailableBatches();
@@ -49,6 +50,7 @@ export class FinanceOverviewController {
    *  403 FORBIDDEN      – authenticated user is not an admin
    *  500 INTERNAL_ERROR – unexpected server failure
    */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('finance-overview')
   getOverview(@Query('batch') batch?: string) {
     return this.financeOverviewService.getOverview(batch);

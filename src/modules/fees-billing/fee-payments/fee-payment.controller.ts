@@ -37,6 +37,7 @@ export class FeePaymentController {
    *  403 FORBIDDEN      – authenticated user is not an admin
    *  500 INTERNAL_ERROR – unexpected server failure
    */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('fee-payments')
   findAll() {
     return this.feePaymentService.findAll();
@@ -53,6 +54,7 @@ export class FeePaymentController {
    *  403 FORBIDDEN      – authenticated user is not an admin
    *  500 INTERNAL_ERROR – unexpected server failure
    */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('fee-payments/dashboard')
   dashboard() {
     return this.feePaymentService.dashboard();
@@ -67,6 +69,7 @@ export class FeePaymentController {
    *  404 STUDENT_NOT_FOUND – no student with the given id
    *  500 INTERNAL_ERROR   – unexpected server failure
    */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('fee-payments/students/:studentId/workspace')
   getStudentWorkspace(@Param('studentId', ParseIntPipe) studentId: number) {
     return this.feePaymentService.getStudentWorkspace(studentId);
@@ -112,6 +115,7 @@ export class FeePaymentController {
    *  404 STUDENT_FEE_DEMAND_NOT_FOUND – no demand mapping with the given id
    *  500 INTERNAL_ERROR               – unexpected server failure
    */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('student-fee-demand-mappings/:id/category-breakdown')
   getCategoryBreakdown(@Param('id', ParseIntPipe) id: number) {
     return this.feePaymentService.getCategoryBreakdown(id);

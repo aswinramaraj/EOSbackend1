@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -6,8 +7,21 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { ROLES } from 'src/common/constants/roles.constant';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { CreateAcademicCalendarEventDto } from './dto/create-academic-calendar-event.dto';
 import { UpdateAcademicCalendarEventDto } from './dto/update-academic-calendar-event.dto';
+
+/**
+ * Roles that may publish their own events onto the shared academic calendar
+ * but must not be able to edit or delete anyone else's. The calendar also
+ * carries institution-wide entries (semester boundaries, exam dates, holidays),
+ * so blanket write access here would let a departmental role remove them.
+ */
+const OWN_EVENTS_ONLY_ROLES: readonly string[] = [
+  ROLES.MEDIA_ROOM,
+  ROLES.PLACEMENT,
+];
 
 @Injectable()
 export class AcademicCalendarEventsService {
@@ -53,6 +67,26 @@ export class AcademicCalendarEventsService {
       throw new UnprocessableEntityException({
         message: 'end_time must be after start_time',
         errorCode: 'INVALID_EVENT_TIME_RANGE',
+      });
+    }
+  }
+
+  /**
+   * Departmental roles may only mutate the events they themselves created.
+   * The privileged calendar owners (coordinator/principal/secretary) keep
+   * unrestricted access, so this narrows the two newly-granted roles only.
+   */
+  private assertMayMutate(
+    event: { created_by_user_id: number | null },
+    currentUser?: JwtPayload,
+  ): void {
+    if (!currentUser || !OWN_EVENTS_ONLY_ROLES.includes(currentUser.role)) {
+      return;
+    }
+    if (event.created_by_user_id !== currentUser.sub) {
+      throw new ForbiddenException({
+        message: 'You can only modify calendar events you created',
+        errorCode: 'FORBIDDEN',
       });
     }
   }
@@ -119,8 +153,13 @@ export class AcademicCalendarEventsService {
     return event;
   }
 
-  async update(id: number, dto: UpdateAcademicCalendarEventDto) {
+  async update(
+    id: number,
+    dto: UpdateAcademicCalendarEventDto,
+    currentUser?: JwtPayload,
+  ) {
     const event = await this.findOne(id);
+    this.assertMayMutate(event, currentUser);
 
     let finalCalendar: { start_date: Date; end_date: Date };
 
@@ -194,8 +233,9 @@ export class AcademicCalendarEventsService {
     }
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, currentUser?: JwtPayload) {
+    const event = await this.findOne(id);
+    this.assertMayMutate(event, currentUser);
     await this.prisma.calendar_events.delete({ where: { id } });
     return { message: 'Academic calendar event deleted successfully' };
   }

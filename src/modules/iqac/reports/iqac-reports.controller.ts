@@ -12,7 +12,10 @@ import {
   type ReportTable,
 } from 'src/common/utils/report-export.util';
 import { IqacReportsService } from './iqac-reports.service';
-import { IqacReportQueryDto, IqacReportFormat } from './dto/iqac-report-query.dto';
+import {
+  IqacReportQueryDto,
+  IqacReportFormat,
+} from './dto/iqac-report-query.dto';
 import { IqacReportBundleQueryDto } from './dto/iqac-report-bundle-query.dto';
 import { VenueHistoryQueryDto } from './dto/venue-history-query.dto';
 
@@ -70,7 +73,10 @@ export class IqacReportsController {
   }
 
   @Get('venue-bookings')
-  async venueBookings(@Query() query: IqacReportQueryDto, @Res() res: Response) {
+  async venueBookings(
+    @Query() query: IqacReportQueryDto,
+    @Res() res: Response,
+  ) {
     const table = await this.reportsService.venueBookingsReport(query);
     await this.respond(table, query.format, res);
   }
@@ -93,6 +99,12 @@ export class IqacReportsController {
     return this.reportsService.venueHistory(query);
   }
 
+  /** GET /iqac/reports/scorecard — always JSON, goes through the normal envelope. */
+  @Get('scorecard')
+  scorecard() {
+    return this.reportsService.scorecard();
+  }
+
   /**
    * GET /iqac/reports/bundle?types=venue_bookings,student_ods&format=excel|pdf
    * The admin portal's "Build a download" checklist + single download
@@ -108,12 +120,15 @@ export class IqacReportsController {
     };
 
     const tableBuilders: Record<string, () => Promise<ReportTable>> = {
-      venue_bookings: () => this.reportsService.venueBookingsReport(reportQuery),
+      venue_bookings: () =>
+        this.reportsService.venueBookingsReport(reportQuery),
       student_ods: () => this.reportsService.studentOdsReport(reportQuery),
       faculty_ods: () => this.reportsService.facultyOdsReport(reportQuery),
     };
 
-    const tables = await Promise.all(query.types.map((t) => tableBuilders[t]()));
+    const tables = await Promise.all(
+      query.types.map((t) => tableBuilders[t]()),
+    );
 
     if (query.format === 'excel') {
       const buffer = await renderExcelWorkbook(tables);

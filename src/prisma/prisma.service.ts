@@ -6,6 +6,17 @@ import { Pool, type PoolClient } from 'pg';
 
 const POOL_SIZE = 6;
 
+/**
+ * Reads a numeric setting from DATABASE_URL's query string so the pool can be
+ * tuned without a code change. Previously `max` was hardcoded here, which
+ * silently overrode `connection_limit=` in the URL — changing the URL appeared
+ * to do nothing.
+ */
+function urlParam(connectionString: string, key: string): number | undefined {
+  const match = new RegExp(`[?&]${key}=(\\d+)`).exec(connectionString);
+  return match ? Number(match[1]) : undefined;
+}
+
 @Injectable()
 export class PrismaService
   extends PrismaClient

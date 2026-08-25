@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class ListPrincipalFacultyQueryDto {
   @IsOptional()
@@ -10,4 +10,9 @@ export class ListPrincipalFacultyQueryDto {
   @Type(() => Number)
   @IsInt()
   department_id?: number;
+
+  /** Defaults to 'active' (the Principal page's original, unchanged behaviour) when omitted — 'all'/'inactive' are opt-in for callers (e.g. IQAC's Status filter) that actually want to see inactive faculty too. */
+  @IsOptional()
+  @IsIn(['active', 'inactive', 'all'])
+  status?: 'active' | 'inactive' | 'all';
 }

@@ -7,5 +7,6 @@ import { AccreditationService } from './accreditation.service';
   imports: [PrismaModule],
   controllers: [AccreditationController],
   providers: [AccreditationService],
+  exports: [AccreditationService],
 })
 export class AccreditationModule {}
