@@ -49,7 +49,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
    */
   @Get('lookup/roles')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.BILLING, ROLES.FINANCE)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.BILLING, ROLES.IQAC)
   lookupRoles() {
     return this.announcementsService.lookupRoles();
   }
@@ -109,15 +109,7 @@ export class AnnouncementsController {
    * every department) with no department/batch scope to narrow by.
    */
   @Get('lookup/all-classes')
-  // MEDIA_ROOM publishes institution-wide social posts, so it needs the same
-  // every-class lookup these roles use. Without it the publishing screen 403s
-  // before it can even assemble the audience for a post.
-  @Roles(
-    ROLES.HIGHER_EDUCATION,
-    ROLES.BILLING,
-    ROLES.FINANCE,
-    ROLES.MEDIA_ROOM,
-  )
+  @Roles(ROLES.HIGHER_EDUCATION, ROLES.BILLING, ROLES.IQAC, ROLES.MEDIA_ROOM)
   lookupAllClasses() {
     return this.announcementsService.lookupAllClasses();
   }
@@ -159,10 +151,9 @@ export class AnnouncementsController {
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
     ROLES.BILLING,
-    ROLES.FINANCE,
-    // The Media Room publishes the institution's social posts, which are
-    // announcements underneath. Edit/delete stay own-only regardless — the
-    // service's assertOwnership applies to every role here.
+    ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
     ROLES.MEDIA_ROOM,
   )
   @UseInterceptors(
@@ -200,10 +191,9 @@ export class AnnouncementsController {
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
     ROLES.BILLING,
-    ROLES.FINANCE,
-    // The Media Room publishes the institution's social posts, which are
-    // announcements underneath. Edit/delete stay own-only regardless — the
-    // service's assertOwnership applies to every role here.
+    ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
     ROLES.MEDIA_ROOM,
   )
   async create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
@@ -315,10 +305,9 @@ export class AnnouncementsController {
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
     ROLES.BILLING,
-    ROLES.FINANCE,
-    // The Media Room publishes the institution's social posts, which are
-    // announcements underneath. Edit/delete stay own-only regardless — the
-    // service's assertOwnership applies to every role here.
+    ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
     ROLES.MEDIA_ROOM,
   )
   async update(
@@ -356,10 +345,9 @@ export class AnnouncementsController {
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
     ROLES.BILLING,
-    ROLES.FINANCE,
-    // The Media Room publishes the institution's social posts, which are
-    // announcements underneath. Edit/delete stay own-only regardless — the
-    // service's assertOwnership applies to every role here.
+    ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
     ROLES.MEDIA_ROOM,
   )
   async patch(
@@ -398,10 +386,9 @@ export class AnnouncementsController {
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
     ROLES.BILLING,
-    ROLES.FINANCE,
-    // The Media Room publishes the institution's social posts, which are
-    // announcements underneath. Edit/delete stay own-only regardless — the
-    // service's assertOwnership applies to every role here.
+    ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
     ROLES.MEDIA_ROOM,
   )
   async remove(

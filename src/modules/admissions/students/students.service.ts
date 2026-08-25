@@ -913,8 +913,12 @@ export class StudentsService {
       });
     }
 
+    // certificate_type_id is now nullable — student_certificates also holds
+    // IQAC's real skill-certification rows (platform/track/score, no
+    // certificate_type_id). This admin endpoint stays scoped to actual
+    // administrative document types, same as its own doc comment says.
     const rows = await this.prisma.student_certificates.findMany({
-      where: { student_id: id },
+      where: { student_id: id, certificate_type_id: { not: null } },
       select: {
         id: true,
         certificate_type_id: true,
@@ -933,7 +937,7 @@ export class StudentsService {
       rows.map(async (r) => ({
         id: r.id,
         certificate_type_id: r.certificate_type_id,
-        certificate_name: r.certificate_types.name,
+        certificate_name: r.certificate_types!.name,
         is_available: r.is_available,
         file_url: r.file_url
           ? await this.storage.getSignedDownloadUrl(

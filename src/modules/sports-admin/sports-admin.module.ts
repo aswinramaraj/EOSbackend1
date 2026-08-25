@@ -19,6 +19,7 @@ import { CalendarModule as SportsCalendarModule } from './calendar/calendar.modu
 import { AnnouncementsModule as SportsAnnouncementsModule } from './announcements/announcements.module';
 import { BudgetModule } from './budget/budget.module';
 import { OdModule as SportsOdModule } from './od/od.module';
+import { OdLettersModule } from './od-letters/od-letters.module';
 import { ReportsModule as SportsReportsModule } from './reports/reports.module';
 
 /**
@@ -52,6 +53,7 @@ import { ReportsModule as SportsReportsModule } from './reports/reports.module';
     SportsAnnouncementsModule,
     BudgetModule,
     SportsOdModule,
+    OdLettersModule,
     SportsReportsModule,
   ],
 })

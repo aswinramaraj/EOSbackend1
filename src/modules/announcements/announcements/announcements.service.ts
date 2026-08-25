@@ -252,6 +252,19 @@ export class AnnouncementsService {
             });
           }
 
+          // Posted inside the same transaction as the announcement, so a
+          // post can never appear without the opening comment it was
+          // published with.
+          if (dto.first_comment && dto.first_comment.trim().length > 0) {
+            await tx.announcement_comments.create({
+              data: {
+                announcement_id: announcement.id,
+                commented_by_user_id: user.sub,
+                comment_text: dto.first_comment.trim(),
+              },
+            });
+          }
+
           if (dto.class_ids && dto.class_ids.length > 0) {
             await tx.announcement_class_mapping.createMany({
               data: dto.class_ids.map((class_id) => ({
@@ -338,6 +351,19 @@ export class AnnouncementsService {
             })),
           });
 
+          // An opening comment is written in the same transaction as the post
+          // for every create branch, so it can never go missing from a post
+          // that was published with one.
+          if (dto.first_comment && dto.first_comment.trim().length > 0) {
+            await tx.announcement_comments.create({
+              data: {
+                announcement_id: created.id,
+                commented_by_user_id: user.sub,
+                comment_text: dto.first_comment.trim(),
+              },
+            });
+          }
+
           return created;
         });
       } catch (err) {
@@ -348,7 +374,7 @@ export class AnnouncementsService {
         });
       }
 
-      await this.notifyNewAnnouncement(announcement.id, dto.title, 'roles', {
+      void this.notifyNewAnnouncement(announcement.id, dto.title, 'roles', {
         roleIds: dto.role_ids,
       });
 
@@ -400,7 +426,7 @@ export class AnnouncementsService {
         });
       }
 
-      await this.notifyNewAnnouncement(announcement.id, dto.title, 'teachers', {
+      void this.notifyNewAnnouncement(announcement.id, dto.title, 'teachers', {
         departmentId,
       });
 
@@ -504,6 +530,19 @@ export class AnnouncementsService {
           });
         }
 
+        // Same transaction as the post: this is the branch the social
+        // publishing screen goes through, so its opening comment has to be
+        // written here too.
+        if (dto.first_comment && dto.first_comment.trim().length > 0) {
+          await tx.announcement_comments.create({
+            data: {
+              announcement_id: created.id,
+              commented_by_user_id: user.sub,
+              comment_text: dto.first_comment.trim(),
+            },
+          });
+        }
+
         return created;
       });
     } catch (err) {
@@ -514,7 +553,12 @@ export class AnnouncementsService {
       });
     }
 
-    await this.notifyNewAnnouncement(
+    // Fire-and-forget, exactly like the other two call sites. Awaiting this
+    // held the response open while every student in every targeted class was
+    // notified one batch at a time: publishing to all 160 classes took 309
+    // seconds, so the browser gave up long before the post appeared even
+    // though the post itself had already committed.
+    void this.notifyNewAnnouncement(
       announcement.id,
       dto.title,
       dto.target_audience!,
@@ -570,7 +614,11 @@ export class AnnouncementsService {
       context.role === ROLES.PRINCIPAL ||
       context.role === ROLES.SECRETARY ||
       context.role === ROLES.BILLING ||
-      context.role === ROLES.FINANCE
+      // IQAC posts institution-wide at the same oversight tier as Admin/
+      // Principal elsewhere in this service (see resolveUserContext) — no
+      // department linkage exists for IQAC, so it's always an all-faculty
+      // broadcast, same as Admin/Principal omitting requestedDepartmentId.
+      context.role === ROLES.IQAC
     ) {
       if (requestedDepartmentId === undefined) {
         return null;
@@ -600,6 +648,15 @@ export class AnnouncementsService {
    * announced - it isn't addressed to anyone yet). Never throws - a
    * failure here must not roll back or fail the announcement's own
    * creation, which has already committed by the time this runs.
+   *
+   * Deliberately NOT awaited by any caller (see the 3 call sites in
+   * create()) - this used to await each recipient's notify() one at a
+   * time, which meant an institution-wide broadcast (hundreds/thousands of
+   * recipients) held the HTTP response open for minutes and could time
+   * out outright. Callers now fire this and return immediately once the
+   * announcement itself is committed; recipients are notified in the
+   * background, in bounded-size concurrent batches (not one giant
+   * Promise.all) so it doesn't exhaust the Prisma connection pool either.
    */
   private async notifyNewAnnouncement(
     announcementId: number,
@@ -616,15 +673,21 @@ export class AnnouncementsService {
         targetAudience,
         opts,
       );
-      for (const userId of userIds) {
-        await this.notifications.notify({
-          user_id: userId,
-          title: 'New announcement',
-          message: title,
-          type: 'announcement_new',
-          related_entity_type: 'announcement',
-          related_entity_id: announcementId,
-        });
+      const BATCH_SIZE = 25;
+      for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
+        const batch = userIds.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          batch.map((userId) =>
+            this.notifications.notify({
+              user_id: userId,
+              title: 'New announcement',
+              message: title,
+              type: 'announcement_new',
+              related_entity_type: 'announcement',
+              related_entity_id: announcementId,
+            }),
+          ),
+        );
       }
     } catch (err) {
       this.logger.error(
@@ -1154,6 +1217,13 @@ export class AnnouncementsService {
       case ROLES.FINANCE:
         return {};
 
+      // IQAC is an institution-wide quality/audit function — it needs to
+      // see every announcement for oversight purposes, same broadcast tier
+      // as Admin/Principal/Secretary/Billing, not a narrower "own posts
+      // only" scope like Media Room/Higher Education.
+      case ROLES.IQAC:
+        return {};
+
       // EDC coordinator has no recipient list to resolve (no "founders"
       // user table exists yet) - sees only what they authored themselves,
       // plus anything explicitly role-targeted at edc_coordinator via the
@@ -1346,7 +1416,7 @@ export class AnnouncementsService {
       context.role === ROLES.MEDICAL_CENTRE ||
       context.role === ROLES.SECRETARY ||
       context.role === ROLES.BILLING ||
-      context.role === ROLES.FINANCE ||
+      context.role === ROLES.IQAC ||
       context.role === ROLES.MEDIA_ROOM
     ) {
       return;
@@ -1367,7 +1437,10 @@ export class AnnouncementsService {
       // Billing's real "All HoDs" audience option (fee-due escalation
       // notices to department heads) needs role targeting too.
       context.role !== ROLES.BILLING &&
-      context.role !== ROLES.FINANCE
+      // IQAC's composer targets HOD/HR/Placement directly (e.g. NAAC
+      // documentation requests, audit follow-ups) — same oversight-tier
+      // posting capability as its 'teachers' broadcast above.
+      context.role !== ROLES.IQAC
     ) {
       throw new ForbiddenException({
         message: 'You are not permitted to target announcements by role',

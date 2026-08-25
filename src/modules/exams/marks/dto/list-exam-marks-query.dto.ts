@@ -14,4 +14,13 @@ export class ListExamMarksQueryDto {
   @IsInt()
   @Min(1)
   student_id?: number;
+
+  // Added for the COE marks-review pages, which need every student's marks
+  // for one paper rather than one student's marks across papers — additive,
+  // existing student_id-only callers are unaffected.
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @IsInt()
+  @Min(1)
+  exam_subject_mapping_id?: number;
 }

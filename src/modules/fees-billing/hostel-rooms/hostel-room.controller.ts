@@ -47,7 +47,7 @@ export class HostelRoomController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.WARDEN)
   create(@Body() dto: CreateHostelRoomDto) {
     return this.hostelRoomService.create(dto);
   }
@@ -60,7 +60,12 @@ export class HostelRoomController {
    *  500 INTERNAL_ERROR – unexpected server failure
    */
   @Get()
-  @UseGuards(JwtAuthGuard)
+  // Reads were guarded by JwtAuthGuard alone, so ANY authenticated account
+  // — including every student and parent — could list hostel records. The
+  // write methods on this controller were always role-guarded; the reads
+  // were simply missed. Same roles as the writes.
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN, ROLES.WARDEN, ROLES.BILLING)
   async findAll(
     @Query('hostel_id') hostelId: string | undefined,
     @CurrentUser() user: JwtPayload,
@@ -80,7 +85,8 @@ export class HostelRoomController {
    *  500 INTERNAL_ERROR        – unexpected server failure
    */
   @Get(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN, ROLES.WARDEN, ROLES.BILLING)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.hostelRoomService.findOne(id);
   }
@@ -100,7 +106,7 @@ export class HostelRoomController {
    */
   @Put(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.WARDEN)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateHostelRoomDto,
@@ -118,7 +124,7 @@ export class HostelRoomController {
    */
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.WARDEN)
   patch(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateHostelRoomDto,
@@ -138,7 +144,7 @@ export class HostelRoomController {
    */
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
+  @Roles(ROLES.ADMIN, ROLES.WARDEN)
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.hostelRoomService.remove(id);
   }

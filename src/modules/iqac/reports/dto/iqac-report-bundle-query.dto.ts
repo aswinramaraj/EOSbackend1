@@ -1,5 +1,11 @@
 import { Transform, Type } from 'class-transformer';
-import { ArrayNotEmpty, IsIn, IsInt, IsISO8601, IsOptional } from 'class-validator';
+import {
+  ArrayNotEmpty,
+  IsIn,
+  IsInt,
+  IsISO8601,
+  IsOptional,
+} from 'class-validator';
 
 export const IQAC_REPORT_BUNDLE_TYPES = [
   'venue_bookings',

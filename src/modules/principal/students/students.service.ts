@@ -83,13 +83,12 @@ export class PrincipalStudentsService {
    * rather than forced open — same tradeoff this codebase already makes for
    * MeFeesService.computeFees()'s reuse-by-pattern, not by import).
    *
-   * "Mean CGPA" and "students with arrears" from the reference design are
-   * deliberately not included: no table stores or lets us honestly derive
-   * either (see PrincipalExamsService's own doc comment on why a composite
-   * CGPA can't be recovered from exam_marks, and
-   * PrincipalDashboardService.insights()'s comment on why an arrears figure
-   * can't be computed correctly). The frontend renders "—" for both rather
-   * than a guess.
+   * This summary() endpoint doesn't compute mean CGPA or arrears itself —
+   * list() below does, via examOutcomesByStudent(), reusing the same
+   * grade_bands.is_pass/grade_point percentage rule IqacAcademicQualityService's
+   * Results/Grade-distribution pages already treat as authoritative
+   * (exam_pass_rules_settings.min_external_marks still can't be applied,
+   * for the same no-internal/external-split reason).
    */
   async summary() {
     const [todayStats, termStats, feeStats, placementStats] = await Promise.all(
@@ -175,9 +174,9 @@ export class PrincipalStudentsService {
   async list(query: ListPrincipalStudentsQueryDto) {
     const where: NonNullable<
       Parameters<typeof this.prisma.students.findMany>[0]
-    >['where'] = {
-      status: 'active',
-    };
+    >['where'] = {};
+    if (!query.status || query.status === 'active') where.status = 'active';
+    else if (query.status === 'inactive') where.status = 'inactive';
     if (query.batch_id) where.batch_id = query.batch_id;
     if (query.section) where.classes = { section: query.section };
     if (query.department_id) {
@@ -228,6 +227,7 @@ export class PrincipalStudentsService {
         student_id_no: true,
         roll_no: true,
         register_no: true,
+        status: true,
         batches: { select: { id: true, name: true } },
         classes: {
           select: {
@@ -243,15 +243,17 @@ export class PrincipalStudentsService {
         },
         users: { select: { email: true } },
         soa_applications: { select: { first_name: true, last_name: true } },
+        faculty: { select: { id: true, first_name: true, last_name: true } },
       },
     });
 
     const ids = rows.map((r) => r.id);
-    const [attendanceByStudent, feeByStudent, placementByStudent] =
+    const [attendanceByStudent, feeByStudent, placementByStudent, examOutcomesByStudent] =
       await Promise.all([
         this.attendanceByStudent(ids),
         this.feesByStudent(ids),
         this.placementByStudent(ids),
+        this.examOutcomesByStudent(ids),
       ]);
 
     let students = rows.map((row) => {
@@ -270,6 +272,7 @@ export class PrincipalStudentsService {
         student_id_no: row.student_id_no,
         roll_no: row.roll_no,
         register_no: row.register_no,
+        status: row.status,
         batch: row.batches,
         department,
         section: row.classes?.section ?? null,
@@ -277,6 +280,11 @@ export class PrincipalStudentsService {
         attendance_percentage: attendanceByStudent.get(row.id) ?? null,
         fees_status: feeByStudent.get(row.id) ?? 'not_billed',
         placement_status: placementByStudent.get(row.id) ?? 'not_registered',
+        has_arrears: examOutcomesByStudent.get(row.id)?.has_arrears ?? null,
+        mean_grade_point: examOutcomesByStudent.get(row.id)?.mean_grade_point ?? null,
+        mentor: row.faculty
+          ? { id: row.faculty.id, name: `${row.faculty.first_name} ${row.faculty.last_name}` }
+          : null,
       };
     });
 
@@ -390,6 +398,77 @@ export class PrincipalStudentsService {
       } else if (result.get(a.student_id) !== 'placed') {
         result.set(a.student_id, 'applied');
       }
+    }
+    return result;
+  }
+
+  /**
+   * Real per-student exam outcomes, derived from the same grade_bands
+   * percentage rule IqacAcademicQualityService's Results/Grade-distribution
+   * pages already treat as authoritative (exam_pass_rules_settings.
+   * min_external_marks still can't be applied — exam_marks has no
+   * internal/external split):
+   *  - has_arrears: true if any real exam_marks row falls in a failing band.
+   *  - mean_grade_point: the unweighted mean of grade_bands.grade_point
+   *    across every real graded exam_marks row on file for that student —
+   *    the same "mean grade point" methodology the Grade-distribution page
+   *    already computes institution/class-wide, just scoped to one student
+   *    instead. This is NOT a formal credit-weighted CGPA (subjects.credits
+   *    exists but is nullable/inconsistently populated, and exam_marks has
+   *    no internal/external split) — it's the same honest approximation
+   *    already shipped elsewhere, applied consistently here too.
+   * A student with no real exam_marks on file gets `null` for both (status
+   * genuinely unknown), never fabricated as "no arrears" / a made-up GPA.
+   */
+  private async examOutcomesByStudent(studentIds: number[]): Promise<
+    Map<number, { has_arrears: boolean; mean_grade_point: number | null }>
+  > {
+    if (studentIds.length === 0) return new Map();
+    const [bands, marks] = await Promise.all([
+      this.prisma.grade_bands.findMany({ orderBy: { display_order: 'asc' } }),
+      this.prisma.exam_marks.findMany({
+        where: { student_id: { in: studentIds }, is_absent: false },
+        select: { student_id: true, marks_obtained: true, max_marks: true },
+      }),
+    ]);
+    const bandFor = (pct: number) => {
+      for (const b of bands) {
+        if (pct >= Number(b.min_percentage)) return b;
+      }
+      return bands[bands.length - 1];
+    };
+
+    const byStudent = new Map<
+      number,
+      { hasArrears: boolean; gpSum: number; gpCount: number }
+    >();
+    for (const mk of marks) {
+      if (mk.marks_obtained == null) continue;
+      const pct = (Number(mk.marks_obtained) / Number(mk.max_marks)) * 100;
+      const band = bandFor(pct);
+      const entry = byStudent.get(mk.student_id) ?? {
+        hasArrears: false,
+        gpSum: 0,
+        gpCount: 0,
+      };
+      if (!band?.is_pass) entry.hasArrears = true;
+      if (band?.grade_point != null) {
+        entry.gpSum += Number(band.grade_point);
+        entry.gpCount += 1;
+      }
+      byStudent.set(mk.student_id, entry);
+    }
+
+    const result = new Map<
+      number,
+      { has_arrears: boolean; mean_grade_point: number | null }
+    >();
+    for (const [studentId, e] of byStudent.entries()) {
+      result.set(studentId, {
+        has_arrears: e.hasArrears,
+        mean_grade_point:
+          e.gpCount > 0 ? Math.round((e.gpSum / e.gpCount) * 100) / 100 : null,
+      });
     }
     return result;
   }

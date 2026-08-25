@@ -63,7 +63,7 @@ test\methods
 /generated/prisma
 TWILIO_VERIFY_INTEGRATION.md
 FACULTY_MODULE_UPDATE.MD
-
+query.md
 sql.md
 queries.md
 # local .env snapshots - never commit

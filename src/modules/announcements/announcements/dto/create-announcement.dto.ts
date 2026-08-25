@@ -175,4 +175,21 @@ export class CreateAnnouncementDto {
   @IsBoolean()
   @Type(() => Boolean)
   allow_comments?: boolean;
+
+  /**
+   * Optional opening comment, posted by the author onto their own post the
+   * moment it is created — the "first comment" convention social publishing
+   * uses for hashtags and credits, so it reads as part of the thread rather
+   * than cluttering the caption.
+   *
+   * Stored in `announcement_comments` (the table the thread already reads
+   * from), not on the announcement itself. The publishing screen has always
+   * sent this field; it simply had nowhere to land, and because the global
+   * ValidationPipe runs with `forbidNonWhitelisted` an undeclared property
+   * made the whole request 400 — which is why publishing failed outright.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  first_comment?: string;
 }

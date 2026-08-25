@@ -2,13 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ListHigherEducationQueryDto } from './dto/list-higher-education-query.dto';
 
-interface ScholarshipRow {
-  id: number;
-  is_scholarship: boolean | null;
-  scholarship_name: string | null;
-  admission_status: string | null;
-}
-
 @Injectable()
 export class PrincipalHigherEducationService {
   constructor(private readonly prisma: PrismaService) {}
@@ -29,38 +22,22 @@ export class PrincipalHigherEducationService {
   }
 
   /**
-   * `is_scholarship`/`scholarship_name`/`admission_status` are real
-   * (query.md #4 ran) — still read via `$queryRaw` rather than the typed
-   * client (predates the `prisma db pull` that synced these columns into
-   * schema.prisma); fine to convert to typed calls whenever this file is
-   * next touched.
-   */
-  private async tryLoadScholarshipData(): Promise<Map<number, ScholarshipRow>> {
-    try {
-      const rows = await this.prisma.$queryRaw<ScholarshipRow[]>`
-        SELECT id, is_scholarship, scholarship_name, admission_status FROM student_higher_education
-      `;
-      return new Map(rows.map((r) => [r.id, r]));
-    } catch {
-      return new Map();
-    }
-  }
-
-  /**
    * GET /me/principal/higher-education/summary
    *
    * "Overseas" is derived as `preferred_country` not case-insensitively
-   * equal to "India" (no is_abroad flag exists). Scholarship count and
-   * confirmed-admission count are real once query.md #4 is run — until
-   * then both are 0/untracked, not invented.
+   * equal to "India" (no is_abroad flag exists). `is_scholarship`/
+   * `admission_status` are real columns (synced into schema.prisma), read
+   * via the typed client directly now — no fallback needed.
    */
   async summary() {
-    const [rows, scholarshipData] = await Promise.all([
-      this.prisma.student_higher_education.findMany({
-        select: { id: true, preferred_country: true },
-      }),
-      this.tryLoadScholarshipData(),
-    ]);
+    const rows = await this.prisma.student_higher_education.findMany({
+      select: {
+        id: true,
+        preferred_country: true,
+        is_scholarship: true,
+        admission_status: true,
+      },
+    });
     const overseas = rows.filter(
       (r) => r.preferred_country.trim().toLowerCase() !== 'india',
     ).length;
@@ -70,14 +47,10 @@ export class PrincipalHigherEducationService {
         .map((r) => r.preferred_country.trim()),
     );
 
-    const scholarshipRows = rows
-      .map((r) => scholarshipData.get(r.id))
-      .filter((r): r is ScholarshipRow => r != null);
-    const scholarshipTracked = scholarshipData.size > 0;
-    const scholarshipCount = scholarshipRows.filter(
+    const scholarshipCount = rows.filter(
       (r) => r.is_scholarship === true,
     ).length;
-    const confirmedAdmissionCount = scholarshipRows.filter(
+    const confirmedAdmissionCount = rows.filter(
       (r) =>
         r.admission_status === 'admitted' || r.admission_status === 'enrolled',
     ).length;
@@ -88,10 +61,8 @@ export class PrincipalHigherEducationService {
       overseas,
       countries_count: countries.size,
       countries: Array.from(countries).sort(),
-      scholarship_count: scholarshipTracked ? scholarshipCount : null,
-      confirmed_admission_count: scholarshipTracked
-        ? confirmedAdmissionCount
-        : null,
+      scholarship_count: scholarshipCount,
+      confirmed_admission_count: confirmedAdmissionCount,
     };
   }
 
@@ -102,42 +73,45 @@ export class PrincipalHigherEducationService {
    * no server pagination, same tradeoff as Students/Faculty.
    */
   async list(query: ListHigherEducationQueryDto) {
-    const [rows, scholarshipData] = await Promise.all([
-      this.prisma.student_higher_education.findMany({
-        select: {
-          id: true,
-          preferred_course: true,
-          preferred_country: true,
-          preferred_university: true,
-          remarks: true,
-          students: {
-            select: {
-              id: true,
-              register_no: true,
-              batch_id: true,
-              batches: { select: { id: true, name: true } },
-              classes: {
-                select: {
-                  department_id: true,
-                  departments: { select: { id: true, name: true, code: true } },
-                },
+    const rows = await this.prisma.student_higher_education.findMany({
+      select: {
+        id: true,
+        preferred_course: true,
+        preferred_country: true,
+        preferred_university: true,
+        remarks: true,
+        is_scholarship: true,
+        scholarship_name: true,
+        admission_status: true,
+        students: {
+          select: {
+            id: true,
+            register_no: true,
+            roll_no: true,
+            batch_id: true,
+            batches: { select: { id: true, name: true } },
+            classes: {
+              select: {
+                section: true,
+                current_semester: true,
+                department_id: true,
+                departments: { select: { id: true, name: true, code: true } },
               },
-              courses: {
-                select: {
-                  departments: { select: { id: true, name: true, code: true } },
-                },
+            },
+            courses: {
+              select: {
+                departments: { select: { id: true, name: true, code: true } },
               },
-              users: { select: { email: true } },
-              soa_applications: {
-                select: { first_name: true, last_name: true },
-              },
+            },
+            users: { select: { email: true } },
+            soa_applications: {
+              select: { first_name: true, last_name: true },
             },
           },
         },
-        orderBy: { id: 'desc' },
-      }),
-      this.tryLoadScholarshipData(),
-    ]);
+      },
+      orderBy: { id: 'desc' },
+    });
 
     const records = rows
       .map((row) => {
@@ -154,21 +128,28 @@ export class PrincipalHigherEducationService {
                 .filter(Boolean)
                 .join(' ')
             : student.users.email;
-        const scholarship = scholarshipData.get(row.id);
+        const semester = student.classes?.current_semester ?? null;
 
         return {
           id: row.id,
-          student: { id: student.id, name, register_no: student.register_no },
+          student: {
+            id: student.id,
+            name,
+            register_no: student.register_no,
+            roll_no: student.roll_no,
+          },
           batch: student.batches,
           department,
+          section: student.classes?.section ?? null,
+          year: semester != null ? Math.ceil(semester / 2) : null,
           programme: row.preferred_course,
           university: row.preferred_university,
           country: row.preferred_country,
           is_abroad: row.preferred_country.trim().toLowerCase() !== 'india',
           remarks: row.remarks,
-          is_scholarship: scholarship?.is_scholarship ?? null,
-          scholarship_name: scholarship?.scholarship_name ?? null,
-          admission_status: scholarship?.admission_status ?? null,
+          is_scholarship: row.is_scholarship,
+          scholarship_name: row.scholarship_name,
+          admission_status: row.admission_status,
         };
       })
       .filter((r) => {
@@ -180,6 +161,7 @@ export class PrincipalHigherEducationService {
           const haystack = [
             r.student.name,
             r.student.register_no,
+            r.student.roll_no,
             r.programme,
             r.university,
             r.country,

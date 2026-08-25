@@ -43,8 +43,11 @@ export class OdController {
    */
   @Get('hod-queue')
   @Roles(ROLES.HOD, ROLES.ADMIN)
-  hodQueue(@CurrentUser() user: JwtPayload) {
-    return this.odService.hodQueue(user.sub);
+  hodQueue(
+    @Query('status') status: 'pending' | 'approved' | 'rejected' | 'all' | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.odService.hodQueue(user.sub, status);
   }
 
   @Get(':id')

@@ -8,17 +8,14 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { UpdateResultDto } from './dto/update-result.dto';
+import { ScheduleResultDto } from './dto/schedule-result.dto';
 
 @Injectable()
 export class ResultsService {
   private readonly logger = new Logger(ResultsService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly notifications: NotificationsService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async publish(examId: number, publishedByUserId: number) {
     const exam = await this.prisma.exams.findUnique({ where: { id: examId } });
@@ -78,9 +75,8 @@ export class ResultsService {
       });
     }
 
-    let publication;
     try {
-      publication = await this.prisma.result_publications.create({
+      return await this.prisma.result_publications.create({
         data: {
           exam_id: examId,
           publication_type: 'original',
@@ -94,53 +90,53 @@ export class ResultsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
-
-    await this.notifyResultsPublished(examId, exam.title, mappingIds);
-
-    return publication;
   }
 
-  /**
-   * Only students who actually have an exam_marks row for one of this
-   * exam's subject mappings get notified - reusing the same mappingIds
-   * already resolved above, rather than a class roster, so a student
-   * enrolled but never marked (e.g. added after marks entry closed) isn't
-   * told results exist for them. Never throws - a failure here must not
-   * roll back or fail the publish, which has already committed.
-   */
-  private async notifyResultsPublished(
-    examId: number,
-    examTitle: string | null,
-    mappingIds: number[],
-  ): Promise<void> {
-    try {
-      const marked = await this.prisma.exam_marks.findMany({
-        where: { exam_subject_mapping_id: { in: mappingIds } },
-        select: { student_id: true },
-        distinct: ['student_id'],
-      });
-      const students = await this.prisma.students.findMany({
-        where: { id: { in: marked.map((m) => m.student_id) } },
-        select: { user_id: true },
-      });
-      for (const s of students) {
-        await this.notifications.notify({
-          user_id: s.user_id,
-          title: 'Exam results published',
-          message: `Results for ${examTitle ?? 'your exam'} have been published.`,
-          type: 'exam_result_published',
-          related_entity_type: 'exam',
-          related_entity_id: examId,
-        });
-      }
-    } catch (err) {
-      this.logger.error(`Failed to notify students of published results for exam ${examId}`, err);
-    }
+  /** Real department scope + candidate count for one exam — backs the Result Publication table's SCOPE column. Candidates come from exam_marks (works for every exam type) rather than exam_registrations, which only applies to University-registered exams and would read 0 for internal CIA cycles that still have real recorded marks. */
+  private async scopeForExam(examId: number) {
+    const [mappings, totalDepartments] = await Promise.all([
+      this.prisma.exam_subject_mapping.findMany({
+        where: { exam_id: examId },
+        select: { id: true, classes: { select: { departments: { select: { code: true } } } } },
+      }),
+      this.prisma.departments.count(),
+    ]);
+
+    const mappingIds = mappings.map((m) => m.id);
+    const candidateRows = mappingIds.length
+      ? await this.prisma.exam_marks.findMany({ where: { exam_subject_mapping_id: { in: mappingIds }, is_absent: false }, select: { student_id: true }, distinct: ['student_id'] })
+      : [];
+
+    const departmentCodes = [...new Set(mappings.map((m) => m.classes?.departments?.code).filter((c): c is string => !!c))].sort();
+    const label = departmentCodes.length === 0 ? '—' : departmentCodes.length >= totalDepartments ? 'All programmes' : departmentCodes.join(', ');
+
+    return { departments: departmentCodes, label, candidates: candidateRows.length };
+  }
+
+  /** Real withheld-from-publication count for one exam: candidates flagged for malpractice on this exam, plus candidates with unpaid exam fees — the same two reasons a COE actually withholds a result. */
+  private async withheldForExam(examId: number) {
+    const [malpracticeStudents, dues] = await Promise.all([
+      this.prisma.malpractice_incidents.findMany({ where: { exam_id: examId }, select: { student_id: true }, distinct: ['student_id'] }),
+      this.prisma.exam_registrations.count({ where: { exam_id: examId, fee_status: 'unpaid' } }),
+    ]);
+
+    const malpractice = malpracticeStudents.length;
+    return { malpractice, dues, total: malpractice + dues };
+  }
+
+  private async enrich<T extends { exam_id: number }>(rows: T[]) {
+    return Promise.all(
+      rows.map(async (r) => ({
+        ...r,
+        scope: await this.scopeForExam(r.exam_id),
+        withheld: await this.withheldForExam(r.exam_id),
+      })),
+    );
   }
 
   async findAll() {
     try {
-      return await this.prisma.result_publications.findMany({
+      const rows = await this.prisma.result_publications.findMany({
         include: {
           exams: true,
           users: {
@@ -152,7 +148,20 @@ export class ResultsService {
             },
           },
         },
+        orderBy: { published_at: 'desc' },
       });
+
+      const enriched = await this.enrich(rows);
+
+      // Only the most recently published Live set can still be rolled back —
+      // an older Live set has real downstream consequences (revaluation
+      // windows, certificates) that make a straight rollback unsafe.
+      const liveRowsDesc = enriched
+        .filter((r) => r.state === 'live')
+        .sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+      const mostRecentLiveId = liveRowsDesc[0]?.id ?? null;
+
+      return enriched.map((r) => ({ ...r, can_rollback: r.state === 'live' && r.id === mostRecentLiveId }));
     } catch (err: any) {
       this.logger.error('DB error while fetching results', err);
       throw new InternalServerErrorException({
@@ -160,6 +169,30 @@ export class ResultsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  /** Real KPI tiles for the Result Publication page header. */
+  async getStats() {
+    const rows = await this.findAll();
+
+    const live = rows.filter((r) => r.state === 'live');
+    const embargo = rows.filter((r) => r.state === 'embargo');
+    const nearestEmbargoRelease =
+      embargo
+        .map((r) => r.scheduled_release_at)
+        .filter((d): d is Date => d != null)
+        .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
+
+    return {
+      sets_published: live.length,
+      under_embargo: embargo.length,
+      nearest_embargo_release: nearestEmbargoRelease,
+      withheld_total: rows.reduce((s, r) => s + r.withheld.total, 0),
+      withheld_malpractice: rows.reduce((s, r) => s + r.withheld.malpractice, 0),
+      withheld_dues: rows.reduce((s, r) => s + r.withheld.dues, 0),
+      candidates_covered: live.reduce((s, r) => s + r.scope.candidates, 0),
+      live_set_count: live.length,
+    };
   }
 
   async findOne(id: number) {
@@ -196,6 +229,22 @@ export class ResultsService {
     }
 
     return result;
+  }
+
+  async schedule(id: number, dto: ScheduleResultDto) {
+    const existing = await this.prisma.result_publications.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException({ message: 'Result not found.', errorCode: 'RESULT_NOT_FOUND' });
+    }
+
+    return this.prisma.result_publications.update({
+      where: { id },
+      data: {
+        scheduled_release_at: dto.scheduled_release_at ? new Date(dto.scheduled_release_at) : undefined,
+        channels: dto.channels,
+        state: dto.state,
+      },
+    });
   }
 
   async update(id: number, updateResultDto: UpdateResultDto) {

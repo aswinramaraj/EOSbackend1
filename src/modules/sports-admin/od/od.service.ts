@@ -152,13 +152,13 @@ export class OdService {
         // request can never exist without the approvals that gate it.
         await tx.$executeRaw(Prisma.sql`
           INSERT INTO sports_od_hod_approvals (od_request_id, department_id, hod_user_id)
-          SELECT DISTINCT ${request.id}, c.department_id, f.user_id
+          SELECT DISTINCT ${request.id}::int, c.department_id, f.user_id
           FROM sports_od_squad_members m
           JOIN students s   ON s.id = m.student_id
           JOIN classes c    ON c.id = s.class_id
           LEFT JOIN departments d ON d.id = c.department_id
           LEFT JOIN faculty f     ON f.id = d.head_of_department_faculty_id
-          WHERE m.od_request_id = ${request.id}
+          WHERE m.od_request_id = ${request.id}::int
           ON CONFLICT (od_request_id, department_id) DO NOTHING
         `);
 
@@ -203,13 +203,6 @@ export class OdService {
     return toOdRequestDetailResponse(row);
   }
 
-  /**
-   * POST /sports-admin/od-requests/:id/approve
-   *
-   * Error cases:
-   *  404 OD_REQUEST_NOT_FOUND – no OD request with this id
-   *  409 OD_REQUEST_ALREADY_DECIDED – request is not currently pending
-   */
   /**
    * POST /sports-admin/od-requests/:id/approve — acted on by an HoD.
    *
@@ -281,12 +274,19 @@ export class OdService {
   }
 
   /**
-   * GET /sports-admin/od-requests/hod-queue — the requests waiting on the
-   * calling HoD's own department(s).
+   * GET /sports-admin/od-requests/hod-queue?status= — the requests waiting
+   * on (or already decided by) the calling HoD's own department(s).
+   *
+   * Fetches every status in one query and filters/counts in memory — the row
+   * volume per HoD's own department(s) is small, and this avoids a second
+   * round trip just for the tab counts (same reasoning as the student/faculty
+   * OD list's counts).
    */
-  async hodQueue(userId: number) {
+  async hodQueue(userId: number, status?: 'pending' | 'approved' | 'rejected' | 'all') {
     const departmentIds = await this.departmentsHeadedBy(userId);
-    if (departmentIds.length === 0) return [];
+    if (departmentIds.length === 0) {
+      return { counts: { pending: 0, approved: 0, rejected: 0, all: 0 }, rows: [] };
+    }
 
     try {
       const rows = await this.prisma.$queryRaw<
@@ -294,6 +294,7 @@ export class OdService {
           od_request_id: number;
           department_id: number;
           department_name: string | null;
+          status: string;
           event: string;
           od_type: string;
           from_date: Date;
@@ -306,6 +307,7 @@ export class OdService {
         SELECT a.od_request_id,
                a.department_id,
                d.name AS department_name,
+               a.status::text AS status,
                r.event, r.od_type, r.from_date, r.to_date, r.venue, r.level,
                (
                  SELECT count(*)
@@ -317,23 +319,35 @@ export class OdService {
         FROM sports_od_hod_approvals a
         JOIN sports_od_requests r ON r.id = a.od_request_id
         LEFT JOIN departments d   ON d.id = a.department_id
-        WHERE a.status = 'pending'
-          AND a.department_id IN (${Prisma.join(departmentIds)})
-        ORDER BY r.from_date ASC, r.id DESC
+        WHERE a.department_id IN (${Prisma.join(departmentIds)})
+        ORDER BY r.from_date DESC, r.id DESC
       `);
 
-      return rows.map((r) => ({
-        od_request_id: r.od_request_id,
-        department_id: r.department_id,
-        department_name: r.department_name,
-        event: r.event,
-        od_type: r.od_type,
-        from_date: toDateOnly(r.from_date),
-        to_date: toDateOnly(r.to_date),
-        venue: r.venue,
-        level: r.level,
-        students_from_my_department: Number(r.students_from_my_department),
-      }));
+      const counts = {
+        pending: rows.filter((r) => r.status === 'pending').length,
+        approved: rows.filter((r) => r.status === 'approved').length,
+        rejected: rows.filter((r) => r.status === 'rejected').length,
+        all: rows.length,
+      };
+
+      const filtered = !status || status === 'all' ? rows : rows.filter((r) => r.status === status);
+
+      return {
+        counts,
+        rows: filtered.map((r) => ({
+          od_request_id: r.od_request_id,
+          department_id: r.department_id,
+          department_name: r.department_name,
+          status: r.status,
+          event: r.event,
+          od_type: r.od_type,
+          from_date: toDateOnly(r.from_date),
+          to_date: toDateOnly(r.to_date),
+          venue: r.venue,
+          level: r.level,
+          students_from_my_department: Number(r.students_from_my_department),
+        })),
+      };
     } catch (err) {
       this.logger.error('DB error while loading HoD OD queue', err);
       throw new InternalServerErrorException(INTERNAL_ERROR);
