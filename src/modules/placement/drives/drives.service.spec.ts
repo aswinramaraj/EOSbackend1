@@ -445,14 +445,24 @@ describe('DrivesService', () => {
           scheduled_date: new Date('2026-09-01T00:00:00.000Z'),
           is_disclosed: true,
           disclosed_reveal_date: null,
+          job_role: 'SDE',
+          venue: 'Auditorium',
+          status: 'scheduled',
+          eligibility_cgpa: 7.5,
           companies: { name: 'TCS', profile_info: 'IT services' },
+          _count: { student_drive_applications: 12 },
         },
         {
           id: 2,
           scheduled_date: new Date('2026-09-10T00:00:00.000Z'),
           is_disclosed: false,
           disclosed_reveal_date: new Date('2026-09-05T00:00:00.000Z'),
+          job_role: 'Analyst',
+          venue: null,
+          status: 'scheduled',
+          eligibility_cgpa: null,
           companies: { name: 'Secret Corp', profile_info: 'Stealth mode' },
+          _count: { student_drive_applications: 0 },
         },
       ]);
 
@@ -470,6 +480,11 @@ describe('DrivesService', () => {
           scheduled_date: new Date('2026-09-01T00:00:00.000Z'),
           is_disclosed: true,
           disclosed_reveal_date: null,
+          job_role: 'SDE',
+          venue: 'Auditorium',
+          status: 'scheduled',
+          eligibility_cgpa: 7.5,
+          registered_count: 12,
         },
         {
           drive_id: 2,
@@ -478,6 +493,11 @@ describe('DrivesService', () => {
           scheduled_date: new Date('2026-09-10T00:00:00.000Z'),
           is_disclosed: false,
           disclosed_reveal_date: new Date('2026-09-05T00:00:00.000Z'),
+          job_role: 'Analyst',
+          venue: null,
+          status: 'scheduled',
+          eligibility_cgpa: null,
+          registered_count: 0,
         },
       ]);
       expect(result[0]).not.toHaveProperty('application_status');
