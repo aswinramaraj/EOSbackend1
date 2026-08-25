@@ -18,6 +18,7 @@ import { MedicalCentreTeamController } from './medical-centre-team.controller';
 import { MedicalCentreTeamService } from './medical-centre-team.service';
 import { MedicalCentreCampsController } from './medical-centre-camps.controller';
 import { MedicalCentreCampsService } from './medical-centre-camps.service';
+import { MedicalCampRegistrationsService } from './medical-camp-registrations.service';
 import { MedicalCentreBillingController } from './medical-centre-billing.controller';
 import { MedicalCentreBillingService } from './medical-centre-billing.service';
 import { MedicalCentreReportsController } from './medical-centre-reports.controller';
@@ -51,6 +52,7 @@ import { MedicalCentreAdvisoriesService } from './medical-centre-advisories.serv
     MedicalCentreAmbulanceService,
     MedicalCentreTeamService,
     MedicalCentreCampsService,
+    MedicalCampRegistrationsService,
     MedicalCentreBillingService,
     MedicalCentreReportsService,
     MedicalCentreAdvisoriesService,

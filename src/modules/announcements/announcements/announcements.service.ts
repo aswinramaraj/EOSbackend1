@@ -252,6 +252,19 @@ export class AnnouncementsService {
             });
           }
 
+          // Posted inside the same transaction as the announcement, so a
+          // post can never appear without the opening comment it was
+          // published with.
+          if (dto.first_comment && dto.first_comment.trim().length > 0) {
+            await tx.announcement_comments.create({
+              data: {
+                announcement_id: announcement.id,
+                commented_by_user_id: user.sub,
+                comment_text: dto.first_comment.trim(),
+              },
+            });
+          }
+
           if (dto.class_ids && dto.class_ids.length > 0) {
             await tx.announcement_class_mapping.createMany({
               data: dto.class_ids.map((class_id) => ({
@@ -337,6 +350,19 @@ export class AnnouncementsService {
               role_id,
             })),
           });
+
+          // An opening comment is written in the same transaction as the post
+          // for every create branch, so it can never go missing from a post
+          // that was published with one.
+          if (dto.first_comment && dto.first_comment.trim().length > 0) {
+            await tx.announcement_comments.create({
+              data: {
+                announcement_id: created.id,
+                commented_by_user_id: user.sub,
+                comment_text: dto.first_comment.trim(),
+              },
+            });
+          }
 
           return created;
         });
@@ -504,6 +530,19 @@ export class AnnouncementsService {
           });
         }
 
+        // Same transaction as the post: this is the branch the social
+        // publishing screen goes through, so its opening comment has to be
+        // written here too.
+        if (dto.first_comment && dto.first_comment.trim().length > 0) {
+          await tx.announcement_comments.create({
+            data: {
+              announcement_id: created.id,
+              commented_by_user_id: user.sub,
+              comment_text: dto.first_comment.trim(),
+            },
+          });
+        }
+
         return created;
       });
     } catch (err) {
@@ -514,7 +553,12 @@ export class AnnouncementsService {
       });
     }
 
-    await this.notifyNewAnnouncement(
+    // Fire-and-forget, exactly like the other two call sites. Awaiting this
+    // held the response open while every student in every targeted class was
+    // notified one batch at a time: publishing to all 160 classes took 309
+    // seconds, so the browser gave up long before the post appeared even
+    // though the post itself had already committed.
+    void this.notifyNewAnnouncement(
       announcement.id,
       dto.title,
       dto.target_audience!,
@@ -1372,7 +1416,8 @@ export class AnnouncementsService {
       context.role === ROLES.MEDICAL_CENTRE ||
       context.role === ROLES.SECRETARY ||
       context.role === ROLES.BILLING ||
-      context.role === ROLES.IQAC
+      context.role === ROLES.IQAC ||
+      context.role === ROLES.MEDIA_ROOM
     ) {
       return;
     }

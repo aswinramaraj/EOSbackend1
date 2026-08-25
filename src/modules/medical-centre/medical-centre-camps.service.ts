@@ -165,19 +165,4 @@ export class MedicalCentreCampsService {
       throw new InternalServerErrorException({ message: 'Something went wrong. Please try again.', errorCode: 'INTERNAL_ERROR' });
     }
   }
-
-  async registerBatch(id: number, count: number) {
-    try {
-      const rows = await this.prisma.$queryRaw<{ id: number; registered_count: number; target_count: number }[]>(Prisma.sql`
-        UPDATE medical_camps SET registered_count = LEAST(target_count, registered_count + ${count})
-        WHERE id = ${id} RETURNING id, registered_count, target_count
-      `);
-      if (rows.length === 0) throw new NotFoundException({ message: 'Camp not found', errorCode: 'CAMP_NOT_FOUND' });
-      return { id, registered: rows[0].registered_count, target: rows[0].target_count };
-    } catch (err) {
-      if (err instanceof NotFoundException) throw err;
-      this.logger.error(`DB error registering batch for camp ${id}`, err);
-      throw new InternalServerErrorException({ message: 'Something went wrong. Please try again.', errorCode: 'INTERNAL_ERROR' });
-    }
-  }
 }

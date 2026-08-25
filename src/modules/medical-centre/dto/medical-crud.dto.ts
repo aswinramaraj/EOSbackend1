@@ -1,5 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
+  IsArray,
   IsDateString,
   IsIn,
   IsInt,
@@ -10,6 +12,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 
 const trim = Transform(({ value }: { value: unknown }) =>
@@ -286,4 +289,45 @@ export class OpdSearchQueryDto {
   @IsOptional()
   @IsIn(['student', 'faculty', 'all'])
   kind?: 'student' | 'faculty' | 'all';
+}
+
+// ─────────────────────── Camp registrations (roster) ───────────────────────
+
+/**
+ * One person on a camp roster. Exactly one of student_id / faculty_id is set —
+ * the DB enforces it with a CHECK constraint, and the service rejects a payload
+ * carrying both or neither before it ever reaches the insert.
+ */
+export class AddCampRegistrationDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  student_id?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  faculty_id?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  remarks?: string;
+}
+
+/** Saving the whole selection the Register dialog has built up. */
+export class BulkCampRegistrationDto {
+  @IsArray()
+  @ArrayNotEmpty({ message: 'Select at least one person to register' })
+  @ValidateNested({ each: true })
+  @Type(() => AddCampRegistrationDto)
+  people: AddCampRegistrationDto[];
+}
+
+/** Only the remarks are editable; see the service for why. */
+export class UpdateCampRegistrationDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  remarks?: string;
 }

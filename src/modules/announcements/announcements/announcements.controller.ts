@@ -109,7 +109,7 @@ export class AnnouncementsController {
    * every department) with no department/batch scope to narrow by.
    */
   @Get('lookup/all-classes')
-  @Roles(ROLES.HIGHER_EDUCATION, ROLES.BILLING, ROLES.IQAC)
+  @Roles(ROLES.HIGHER_EDUCATION, ROLES.BILLING, ROLES.IQAC, ROLES.MEDIA_ROOM)
   lookupAllClasses() {
     return this.announcementsService.lookupAllClasses();
   }
@@ -152,6 +152,9 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
+    ROLES.MEDIA_ROOM,
   )
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }),
@@ -189,6 +192,9 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
+    ROLES.MEDIA_ROOM,
   )
   async create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     const result = await this.announcementsService.create(dto, user);
@@ -300,6 +306,9 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
+    ROLES.MEDIA_ROOM,
   )
   async update(
     @Param('id', ParseIntPipe) id: number,
@@ -337,6 +346,9 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
+    ROLES.MEDIA_ROOM,
   )
   async patch(
     @Param('id', ParseIntPipe) id: number,
@@ -375,6 +387,9 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
+    ROLES.MEDIA_ROOM,
   )
   async remove(
     @Param('id', ParseIntPipe) id: number,
