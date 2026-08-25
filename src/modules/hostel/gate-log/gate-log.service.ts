@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -228,17 +229,58 @@ export class GateLogService {
     }
 
     try {
-      const entry = await this.prisma.hostel_in_out_ledger.create({
-        data: {
-          student_id: dto.student_id,
-          entry_type: dto.entry_type,
-          outing_id: dto.outing_id,
-          recorded_by_user_id: recordedByUserId,
-        },
-        include: LOG_INCLUDE,
+      // A gate movement is a state transition, not a free-form insert. The
+      // ledger previously accepted any direction at any time, so the same
+      // student could be checked out twice (or checked in without ever having
+      // left) and the "currently out" list — which reads the latest row — was
+      // then wrong. Out must follow In, and In must follow Out.
+      //
+      // The whole thing runs in one transaction that first takes a row lock on
+      // the student, so two desks scanning the same person at once serialise
+      // instead of both passing the check and writing two 'out' rows.
+      const entry = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM students WHERE id = ${dto.student_id} FOR UPDATE`;
+
+        const latest = await tx.hostel_in_out_ledger.findFirst({
+          where: { student_id: dto.student_id },
+          orderBy: { recorded_at: 'desc' },
+          select: { entry_type: true, recorded_at: true },
+        });
+
+        const isCurrentlyOut = latest?.entry_type === 'out';
+
+        if (dto.entry_type === 'out' && isCurrentlyOut) {
+          throw new ConflictException({
+            message:
+              'This student is already marked outside. Record their check-in before checking them out again.',
+            errorCode: 'GATE_ALREADY_OUT',
+          });
+        }
+
+        if (dto.entry_type === 'in' && !isCurrentlyOut) {
+          throw new ConflictException({
+            message: latest
+              ? 'This student is already marked inside. There is no open check-out to close.'
+              : 'This student has no recorded check-out yet, so there is nothing to check in.',
+            errorCode: 'GATE_ALREADY_IN',
+          });
+        }
+
+        return tx.hostel_in_out_ledger.create({
+          data: {
+            student_id: dto.student_id,
+            entry_type: dto.entry_type,
+            outing_id: dto.outing_id,
+            recorded_by_user_id: recordedByUserId,
+          },
+          include: LOG_INCLUDE,
+        });
       });
+
       return toLogResponse(entry);
     } catch (err) {
+      // A rejected transition is a business rule, not a server fault.
+      if (err instanceof ConflictException) throw err;
       this.logger.error('DB error while recording gate log entry', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
@@ -248,16 +290,76 @@ export class GateLogService {
   }
 
   /** GET /hostel/gate-log?student_id=&entry_type=&hostel_id=&page=&page_size= */
+  /**
+   * Case-insensitive match across every identifier a warden might type. The
+   * display name lives on the admission record rather than on `students`, so
+   * names are matched through that relation; a two-word query is also tried as
+   * first-name plus last-name so "arun prakash" finds the same person that
+   * "arun" does.
+   */
+  private studentTextFilter(q: string): Prisma.studentsWhereInput {
+    const contains = { contains: q, mode: 'insensitive' as const };
+    const or: Prisma.studentsWhereInput[] = [
+      { roll_no: contains },
+      { register_no: contains },
+      { student_id_no: contains },
+      {
+        soa_applications: {
+          OR: [{ first_name: contains }, { last_name: contains }],
+        },
+      },
+      {
+        student_hostel_mapping: {
+          hostel_rooms: { room_number: contains },
+        },
+      },
+    ];
+
+    const parts = q.split(/\s+/).filter(Boolean);
+    if (parts.length === 2) {
+      or.push({
+        soa_applications: {
+          AND: [
+            { first_name: { contains: parts[0], mode: 'insensitive' } },
+            { last_name: { contains: parts[1], mode: 'insensitive' } },
+          ],
+        },
+      });
+    }
+
+    return { OR: or };
+  }
+
   async findAll(dto: SearchGateLogDto) {
-    const { student_id, entry_type, hostel_id, page = 1, page_size = 20 } = dto;
+    const {
+      student_id,
+      entry_type,
+      hostel_id,
+      q,
+      page = 1,
+      page_size = 20,
+    } = dto;
 
     const where: Prisma.hostel_in_out_ledgerWhereInput = {};
     if (student_id) where.student_id = student_id;
     if (entry_type) where.entry_type = entry_type;
+
+    // Hostel scoping and the text filter both narrow the same relation, so they
+    // are collected and ANDed rather than assigned in turn — assigning twice
+    // would drop the warden's hostel restriction whenever a search was typed.
+    const studentFilters: Prisma.studentsWhereInput[] = [];
     if (hostel_id) {
-      where.students = {
+      studentFilters.push({
         student_hostel_mapping: { hostel_rooms: { hostel_id } },
-      };
+      });
+    }
+    if (q) {
+      studentFilters.push(this.studentTextFilter(q));
+    }
+    if (studentFilters.length === 1) {
+      where.students = studentFilters[0];
+    } else if (studentFilters.length > 1) {
+      where.students = { AND: studentFilters };
     }
 
     try {
@@ -387,6 +489,91 @@ export class GateLogService {
   }
 
   /**
+   * GET /hostel/gate-log/search?q= — type-ahead for the gate desk.
+   *
+   * Matches a partial, case-insensitive term against the student's name, roll
+   * number, register number and allotted room number, and returns a short
+   * pick-list. This exists because the desk previously offered either a
+   * dropdown of every student (unusable at this scale) or an exact-match box
+   * (requires knowing the number already, and was case-sensitive).
+   *
+   * Capped at 25 rows: enough to choose from, small enough that a one-letter
+   * term cannot pull the whole student body over the wire.
+   */
+  async searchStudents(term: string) {
+    const q = term.trim();
+    if (q.length < 2) return [];
+
+    const contains = { contains: q, mode: 'insensitive' as const };
+
+    try {
+      const students = await this.prisma.students.findMany({
+        where: {
+          status: 'active',
+          OR: [
+            { roll_no: contains },
+            { register_no: contains },
+            { student_id_no: contains },
+            { soa_applications: { first_name: contains } },
+            { soa_applications: { last_name: contains } },
+            { student_hostel_mapping: { hostel_rooms: { room_number: contains } } },
+          ],
+        },
+        take: 25,
+        orderBy: { roll_no: 'asc' },
+        select: {
+          id: true,
+          roll_no: true,
+          register_no: true,
+          student_type: true,
+          photo_url: true,
+          soa_applications: { select: { first_name: true, last_name: true } },
+          student_hostel_mapping: {
+            select: {
+              hostel_rooms: {
+                select: { room_number: true, hostels: { select: { name: true } } },
+              },
+            },
+          },
+          classes: {
+            select: { section: true, departments: { select: { code: true } } },
+          },
+          // Latest ledger row tells the desk which direction to default to.
+          hostel_in_out_ledger: {
+            orderBy: { recorded_at: 'desc' },
+            take: 1,
+            select: { entry_type: true },
+          },
+        },
+      });
+
+      return students.map((st) => ({
+        student_id: st.id,
+        name: [st.soa_applications?.first_name, st.soa_applications?.last_name]
+          .filter(Boolean)
+          .join(' ')
+          .trim(),
+        roll_no: st.roll_no,
+        register_no: st.register_no,
+        student_type: st.student_type,
+        photo_url: st.photo_url,
+        room_number: st.student_hostel_mapping?.hostel_rooms?.room_number ?? null,
+        hostel_name: st.student_hostel_mapping?.hostel_rooms?.hostels?.name ?? null,
+        class_label: st.classes
+          ? `${st.classes.departments?.code ?? ''}-${st.classes.section ?? ''}`.replace(/^-|-$/g, '')
+          : null,
+        is_currently_out: st.hostel_in_out_ledger[0]?.entry_type === 'out',
+      }));
+    } catch (err) {
+      this.logger.error(`DB error while searching students for "${q}"`, err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
    * GET /hostel/gate-log/lookup?roll_no= — what the Gate Warden pulls up
    * when a student physically reaches the gate. Works for any student, not
    * just hostellers with an approved outing (day scholars have no
@@ -410,7 +597,15 @@ export class GateLogService {
 
     try {
       student = await this.prisma.students.findFirst({
-        where: { roll_no: rollNo },
+        // Case-insensitive, and either identifier: staff type what is printed
+        // on the ID card, in whatever case, and a register number is just as
+        // valid an identifier at the gate as a roll number.
+        where: {
+          OR: [
+            { roll_no: { equals: rollNo, mode: 'insensitive' } },
+            { register_no: { equals: rollNo, mode: 'insensitive' } },
+          ],
+        },
         select: {
           ...LOOKUP_STUDENT_SELECT,
           hostel_outings: {

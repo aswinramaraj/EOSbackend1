@@ -7,5 +7,6 @@ import { PrincipalDepartmentsService } from './departments.service';
   imports: [PrismaModule],
   controllers: [PrincipalDepartmentsController],
   providers: [PrincipalDepartmentsService],
+  exports: [PrincipalDepartmentsService],
 })
 export class PrincipalDepartmentsModule {}

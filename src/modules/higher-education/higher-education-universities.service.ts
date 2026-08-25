@@ -1,7 +1,15 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import type { CreateUniversityDto } from './dto/create-university.dto';
+import type { UpdateUniversityDto } from './dto/update-university.dto';
+import { requireUpdateSet } from './higher-education-sql.util';
 
 interface UniversityRegisterRow {
   id: number;
@@ -57,6 +65,85 @@ export class HigherEducationUniversitiesService {
       };
     } catch (err) {
       this.logger.error('DB error building higher-education universities view', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /** PATCH /me/higher-education-universities/:id */
+  async updateUniversity(id: number, dto: UpdateUniversityDto) {
+    const set = requireUpdateSet([
+      { column: 'name', value: dto.name },
+      { column: 'country', value: dto.country },
+      { column: 'programmes', value: dto.programmes },
+      { column: 'applied_count', value: dto.applied_count },
+      { column: 'admits_count', value: dto.admits_count },
+      { column: 'funded_count', value: dto.funded_count },
+      { column: 'relation', value: dto.relation },
+    ]);
+
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+        UPDATE higher_education_universities SET ${set} WHERE id = ${id} RETURNING id
+      `);
+      if (rows.length === 0) {
+        throw new NotFoundException({
+          message: 'University not found',
+          errorCode: 'UNIVERSITY_NOT_FOUND',
+        });
+      }
+      this.logger.log(`University updated: id=${id}`);
+      return { id };
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      this.logger.error('DB error updating university', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * DELETE /me/higher-education-universities/:id
+   *
+   * Aspirants record their target university as free text
+   * (student_higher_education.preferred_university), so no foreign key blocks
+   * this. Those aspirations are counted first and the delete refused if any
+   * exist — otherwise removing the university would quietly orphan them.
+   */
+  async deleteUniversity(id: number) {
+    try {
+      const existing = await this.prisma.$queryRaw<{ name: string }[]>(Prisma.sql`
+        SELECT name FROM higher_education_universities WHERE id = ${id}
+      `);
+      if (existing.length === 0) {
+        throw new NotFoundException({
+          message: 'University not found',
+          errorCode: 'UNIVERSITY_NOT_FOUND',
+        });
+      }
+
+      const aspirants = await this.prisma.student_higher_education.count({
+        where: { preferred_university: existing[0].name },
+      });
+      if (aspirants > 0) {
+        throw new ConflictException({
+          message: `${aspirants} aspirant(s) still list this university as their preference. Reassign them before deleting it.`,
+          errorCode: 'UNIVERSITY_IN_USE',
+        });
+      }
+
+      await this.prisma.$executeRaw(Prisma.sql`
+        DELETE FROM higher_education_universities WHERE id = ${id}
+      `);
+      this.logger.log(`University deleted: id=${id}`);
+      return { id, message: 'University deleted successfully' };
+    } catch (err) {
+      if (err instanceof NotFoundException || err instanceof ConflictException) throw err;
+      this.logger.error('DB error deleting university', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

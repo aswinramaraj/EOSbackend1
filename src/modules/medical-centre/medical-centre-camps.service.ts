@@ -1,5 +1,15 @@
-import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type {
+  CreateCampDto,
+  UpdateCampDto,
+} from './dto/medical-crud.dto';
 import { Prisma } from '../../../generated/prisma/client';
 
 interface CampRow {
@@ -22,6 +32,104 @@ export class MedicalCentreCampsService {
   private readonly logger = new Logger(MedicalCentreCampsService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /** POST /me/medical-centre-camps */
+  async create(dto: CreateCampDto) {
+    try {
+      const campDate = new Date(`${dto.camp_date}T00:00:00.000Z`);
+      const row = await this.prisma.medical_camps.create({
+        data: {
+          title: dto.title,
+          detail: dto.detail,
+          camp_date: campDate,
+          state: dto.state ?? 'planning',
+          target_count: dto.target_count ?? 0,
+          outcome_summary: dto.outcome_summary,
+          // Derived from the date rather than accepted from the caller, so the
+          // "past camps" list cannot disagree with the calendar.
+          is_past: campDate.getTime() < Date.now(),
+        },
+        select: { id: true },
+      });
+      this.logger.log(`Medical camp created: id=${row.id}`);
+      return { id: row.id };
+    } catch (err) {
+      this.logger.error('DB error creating medical camp', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /** PATCH /me/medical-centre-camps/:id */
+  async update(id: number, dto: UpdateCampDto) {
+    const campDate = dto.camp_date
+      ? new Date(`${dto.camp_date}T00:00:00.000Z`)
+      : undefined;
+
+    const data = {
+      title: dto.title,
+      detail: dto.detail,
+      camp_date: campDate,
+      state: dto.state,
+      target_count: dto.target_count,
+      registered_count: dto.registered_count,
+      outcome_summary: dto.outcome_summary,
+      // Kept in step whenever the date moves.
+      is_past: campDate ? campDate.getTime() < Date.now() : undefined,
+    };
+
+    if (Object.values(data).every((v) => v === undefined)) {
+      throw new BadRequestException({
+        message: 'No fields provided to update',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+
+    try {
+      const row = await this.prisma.medical_camps.update({
+        where: { id },
+        data,
+        select: { id: true },
+      });
+      this.logger.log(`Medical camp updated: id=${id}`);
+      return { id: row.id };
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2025') {
+        throw new NotFoundException({
+          message: 'Camp not found',
+          errorCode: 'CAMP_NOT_FOUND',
+        });
+      }
+      this.logger.error('DB error updating medical camp', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /** DELETE /me/medical-centre-camps/:id */
+  async remove(id: number) {
+    try {
+      await this.prisma.medical_camps.delete({ where: { id } });
+      this.logger.log(`Medical camp deleted: id=${id}`);
+      return { id, message: 'Camp deleted successfully' };
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2025') {
+        throw new NotFoundException({
+          message: 'Camp not found',
+          errorCode: 'CAMP_NOT_FOUND',
+        });
+      }
+      this.logger.error('DB error deleting medical camp', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
 
   async findAll() {
     try {

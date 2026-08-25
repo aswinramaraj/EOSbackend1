@@ -1,4 +1,10 @@
-import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { StorageService } from 'src/common/storage/storage.service';
@@ -17,8 +23,12 @@ const DOCUMENT_SELECT = {
   created_at: true,
   updated_at: true,
   departments: { select: { id: true, name: true, code: true } },
-  users_department_documents_uploaded_by_user_idTousers: { select: { id: true, email: true } },
-  users_department_documents_verified_by_user_idTousers: { select: { id: true, email: true } },
+  users_department_documents_uploaded_by_user_idTousers: {
+    select: { id: true, email: true },
+  },
+  users_department_documents_verified_by_user_idTousers: {
+    select: { id: true, email: true },
+  },
 } as const;
 
 function toResponse(row: {
@@ -33,8 +43,14 @@ function toResponse(row: {
   created_at: Date;
   updated_at: Date;
   departments: { id: number; name: string; code: string };
-  users_department_documents_uploaded_by_user_idTousers: { id: number; email: string };
-  users_department_documents_verified_by_user_idTousers: { id: number; email: string } | null;
+  users_department_documents_uploaded_by_user_idTousers: {
+    id: number;
+    email: string;
+  };
+  users_department_documents_verified_by_user_idTousers: {
+    id: number;
+    email: string;
+  } | null;
 }) {
   return {
     id: row.id,
@@ -76,15 +92,30 @@ export class DocumentsService {
    * hand-typed "size in MB" field with the real uploaded file's size.
    */
   async uploadAttachment(file: Express.Multer.File) {
-    const { key } = await this.storage.upload('department-documents', file.originalname, file.buffer, file.mimetype);
+    const { key } = await this.storage.upload(
+      'department-documents',
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+    );
     const url = this.storage.getPublicUrl(key);
-    return { file_key: key, file_name: file.originalname, url, size_bytes: file.size };
+    return {
+      file_key: key,
+      file_name: file.originalname,
+      url,
+      size_bytes: file.size,
+    };
   }
 
   async create(dto: CreateDocumentDto, userId: number) {
-    const department = await this.prisma.departments.findUnique({ where: { id: dto.department_id } });
+    const department = await this.prisma.departments.findUnique({
+      where: { id: dto.department_id },
+    });
     if (!department) {
-      throw new NotFoundException({ message: 'Department not found', errorCode: 'DEPARTMENT_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Department not found',
+        errorCode: 'DEPARTMENT_NOT_FOUND',
+      });
     }
 
     try {
@@ -94,7 +125,8 @@ export class DocumentsService {
           name: dto.name,
           category: dto.category,
           file_url: dto.file_url,
-          size_bytes: dto.size_bytes !== undefined ? BigInt(dto.size_bytes) : undefined,
+          size_bytes:
+            dto.size_bytes !== undefined ? BigInt(dto.size_bytes) : undefined,
           status: 'pending',
           uploaded_by_user_id: userId,
         },
@@ -103,7 +135,10 @@ export class DocumentsService {
       return toResponse(row);
     } catch (err) {
       this.logger.error('DB error creating department document', err);
-      throw new InternalServerErrorException({ message: 'Something went wrong. Please try again.', errorCode: 'INTERNAL_ERROR' });
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
     }
   }
 
@@ -129,18 +164,36 @@ export class DocumentsService {
   }
 
   async findOne(id: number) {
-    const row = await this.prisma.department_documents.findUnique({ where: { id }, select: DOCUMENT_SELECT });
+    const row = await this.prisma.department_documents.findUnique({
+      where: { id },
+      select: DOCUMENT_SELECT,
+    });
     if (!row) {
-      throw new NotFoundException({ message: 'Document not found', errorCode: 'DOCUMENT_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Document not found',
+        errorCode: 'DOCUMENT_NOT_FOUND',
+      });
     }
     return toResponse(row);
   }
 
   /** PATCH /me/department-documents/:id/verify — toggles verified/pending, bumping version on each verify. */
   async toggleVerify(id: number, userId: number) {
-    const existing = await this.prisma.department_documents.findUnique({ where: { id } });
+    const existing = await this.prisma.department_documents.findUnique({
+      where: { id },
+    });
     if (!existing) {
-      throw new NotFoundException({ message: 'Document not found', errorCode: 'DOCUMENT_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Document not found',
+        errorCode: 'DOCUMENT_NOT_FOUND',
+      });
+    }
+    if (existing.status === 'missing') {
+      throw new BadRequestException({
+        message:
+          'This document has not been submitted yet — nothing to verify.',
+        errorCode: 'DOCUMENT_MISSING',
+      });
     }
 
     const nextStatus = existing.status === 'verified' ? 'pending' : 'verified';
@@ -148,7 +201,8 @@ export class DocumentsService {
       where: { id },
       data: {
         status: nextStatus,
-        version: nextStatus === 'verified' ? existing.version + 1 : existing.version,
+        version:
+          nextStatus === 'verified' ? existing.version + 1 : existing.version,
         verified_by_user_id: nextStatus === 'verified' ? userId : null,
         verified_at: nextStatus === 'verified' ? new Date() : null,
         updated_at: new Date(),
@@ -162,9 +216,14 @@ export class DocumentsService {
    * remove any document, same as the register itself has no per-uploader
    * ownership concept in the design (a shared department office register). */
   async remove(id: number) {
-    const existing = await this.prisma.department_documents.findUnique({ where: { id } });
+    const existing = await this.prisma.department_documents.findUnique({
+      where: { id },
+    });
     if (!existing) {
-      throw new NotFoundException({ message: 'Document not found', errorCode: 'DOCUMENT_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Document not found',
+        errorCode: 'DOCUMENT_NOT_FOUND',
+      });
     }
     await this.prisma.department_documents.delete({ where: { id } });
     return { id, deleted: true };

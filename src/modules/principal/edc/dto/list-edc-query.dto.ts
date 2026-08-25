@@ -15,4 +15,9 @@ export class ListEdcQueryDto {
   @Type(() => Number)
   @IsInt()
   department_id?: number;
+
+  /** Real incubations.status (freeform text, default 'Active') — exact match. */
+  @IsOptional()
+  @IsString()
+  status?: string;
 }

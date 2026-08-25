@@ -31,6 +31,14 @@ export class NightAttendanceController {
     return this.nightAttendanceService.resolveAll(hostelId, user.sub, date);
   }
 
+  /** POST /hostel/night-attendance/publish — declared before ':studentId' so
+   *  the literal segment is not captured by the parameterised route. */
+  @Post('publish')
+  async publish(@Body('date') date: string | undefined, @CurrentUser() user: JwtPayload) {
+    const hostelId = await resolveWardenHostelId(this.prisma, user.sub);
+    return this.nightAttendanceService.publish(hostelId, user.sub, date);
+  }
+
   @Post(':studentId')
   async mark(
     @Param('studentId', ParseIntPipe) studentId: number,

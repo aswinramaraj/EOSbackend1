@@ -50,6 +50,11 @@ async function bootstrap() {
     origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
+    // Content-Disposition is not a CORS-safelisted response header, so without
+    // this the browser hides it and every file download falls back to a guessed
+    // client-side filename — which is why two different report exports both
+    // arrived as the same "placement-summary.xlsx".
+    exposedHeaders: ['Content-Disposition'],
   });
 
   // ── Global pipes ─────────────────────────────────────────────────────────────
