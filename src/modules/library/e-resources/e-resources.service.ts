@@ -4,10 +4,39 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/common/storage/storage.service';
 import type { Prisma } from 'generated/prisma/client';
-import { CreateEResourceDto } from './dto/create-e-resource.dto';
+import {
+  CreateEResourceDto,
+  EResourceFormat,
+} from './dto/create-e-resource.dto';
+import { CreateEResourceFileDto } from './dto/create-e-resource-file.dto';
 import { UpdateEResourceDto } from './dto/update-e-resource.dto';
 import { SearchEResourcesDto } from './dto/search-e-resources.dto';
+
+/** Dedicated Supabase Storage bucket for uploaded e-resource files, separate
+ * from StorageService's default (announcement_attachments) bucket. */
+const E_RESOURCE_BUCKET = 'library_books';
+
+/** Best-effort format from the uploaded file's own extension — same enum the
+ * manual "Format" dropdown already offers, so an uploaded file lands in
+ * exactly the same bucket a librarian would have picked by hand. */
+function formatFromFilename(originalName: string): EResourceFormat {
+  const ext = originalName.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'pdf':
+      return EResourceFormat.PDF;
+    case 'epub':
+      return EResourceFormat.EPUB;
+    case 'mobi':
+      return EResourceFormat.MOBI;
+    case 'docx':
+    case 'doc':
+      return EResourceFormat.DOCX;
+    default:
+      return EResourceFormat.Other;
+  }
+}
 
 // Minimum trigram/word similarity score for a row to count as a fuzzy match.
 const FUZZY_SIMILARITY_THRESHOLD = 0.2;
@@ -62,7 +91,10 @@ function formatEResource(resource: {
 
 @Injectable()
 export class EResourcesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async create(dto: CreateEResourceDto, uploadedByUserId: number) {
     const url = dto.url.trim();
@@ -94,6 +126,57 @@ export class EResourcesService {
         category_id: dto.category_id,
         format: dto.format,
         file_size_bytes: dto.file_size_bytes,
+        pages: dto.pages,
+        license_type: dto.license_type,
+        concurrent_seats: dto.concurrent_seats,
+        publish_state: dto.publish_state,
+        uploaded_by_user_id: uploadedByUserId,
+      },
+      include: {
+        book_categories: {
+          select: { id: true, name: true },
+        },
+      },
+    });
+
+    return formatEResource(resource);
+  }
+
+  /**
+   * POST /library/e-resources/upload — same as create(), except the file
+   * itself (not a typed-in link) is the source of truth for url/format/size.
+   */
+  async createFromFile(
+    dto: CreateEResourceFileDto,
+    file: Express.Multer.File,
+    uploadedByUserId: number,
+  ) {
+    if (dto.category_id) {
+      const category = await this.prisma.book_categories.findUnique({
+        where: { id: dto.category_id },
+      });
+
+      if (!category) {
+        throw new NotFoundException('Book category not found.');
+      }
+    }
+
+    const { key } = await this.storage.upload(
+      'library-e-resources',
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+      E_RESOURCE_BUCKET,
+    );
+    const url = this.storage.getPublicUrl(key, E_RESOURCE_BUCKET);
+
+    const resource = await this.prisma.e_resources.create({
+      data: {
+        title: dto.title,
+        url,
+        category_id: dto.category_id,
+        format: formatFromFilename(file.originalname),
+        file_size_bytes: file.size,
         pages: dto.pages,
         license_type: dto.license_type,
         concurrent_seats: dto.concurrent_seats,

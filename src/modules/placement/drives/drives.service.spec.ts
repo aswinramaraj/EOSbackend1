@@ -71,6 +71,8 @@ describe('DrivesService', () => {
         status: 'scheduled',
         is_disclosed: true,
         disclosed_reveal_date: null,
+        job_role: null,
+        package_lpa: null,
         companies: { name: 'TCS', profile_info: 'IT services' },
       },
       ...overrides,
@@ -119,6 +121,8 @@ describe('DrivesService', () => {
           scheduled_date: new Date('2026-09-01T00:00:00.000Z'),
           is_disclosed: true,
           disclosed_reveal_date: null,
+          job_role: null,
+          package_lpa: null,
           application_status: 'r1_cleared',
         },
       ]);
@@ -134,6 +138,8 @@ describe('DrivesService', () => {
             status: 'scheduled',
             is_disclosed: false,
             disclosed_reveal_date: new Date('2026-09-05T00:00:00.000Z'),
+            job_role: null,
+            package_lpa: null,
             companies: { name: 'Secret Corp', profile_info: 'Stealth mode' },
           },
         }),
@@ -148,7 +154,103 @@ describe('DrivesService', () => {
         scheduled_date: new Date('2026-09-10T00:00:00.000Z'),
         is_disclosed: false,
         disclosed_reveal_date: new Date('2026-09-05T00:00:00.000Z'),
+        job_role: null,
+        package_lpa: null,
         application_status: 'applied',
+        last_cleared_round: undefined,
+      });
+    });
+  });
+
+  describe('getPostedForStudent', () => {
+    it('throws 404 when the JWT user has no linked student record', async () => {
+      prisma.students.findUnique.mockResolvedValue(null);
+
+      await expect(service.getPostedForStudent(jwtUser)).rejects.toThrow(
+        'Student profile not found for the current user',
+      );
+    });
+
+    it('excludes drives already shortlisted for, filters to scheduled/upcoming', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 42 });
+      prisma.student_drive_applications.findMany.mockResolvedValue([
+        { drive_id: 10 },
+      ]);
+      prisma.placement_drives.findMany.mockResolvedValue([]);
+
+      await service.getPostedForStudent(jwtUser);
+
+      const [shortlistArgs] = prisma.student_drive_applications.findMany.mock
+        .calls[0] as [{ where: Record<string, unknown> }];
+      expect(shortlistArgs.where).toEqual({ student_id: 42 });
+
+      const [driveArgs] = prisma.placement_drives.findMany.mock.calls[0] as [
+        { where: Record<string, unknown>; orderBy: unknown },
+      ];
+      expect(driveArgs.where).toMatchObject({
+        status: 'scheduled',
+        id: { notIn: [10] },
+      });
+      expect(driveArgs.orderBy).toEqual({ scheduled_date: 'asc' });
+    });
+
+    it('is read-only/informational — never touches student_drive_applications.create', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 42 });
+      prisma.student_drive_applications.findMany.mockResolvedValue([]);
+      prisma.placement_drives.findMany.mockResolvedValue([
+        {
+          id: 20,
+          scheduled_date: new Date('2026-09-15T00:00:00.000Z'),
+          is_disclosed: true,
+          disclosed_reveal_date: null,
+          job_role: 'SDE',
+          package_lpa: 12,
+          companies: { name: 'Acme', profile_info: 'Widgets' },
+        },
+      ]);
+
+      const result = await service.getPostedForStudent(jwtUser);
+
+      expect(result).toEqual([
+        {
+          drive_id: 20,
+          company_name: 'Acme',
+          company_profile_info: 'Widgets',
+          scheduled_date: new Date('2026-09-15T00:00:00.000Z'),
+          is_disclosed: true,
+          disclosed_reveal_date: null,
+          job_role: 'SDE',
+          package_lpa: 12,
+        },
+      ]);
+    });
+
+    it('masks the company name/profile for an undisclosed drive, same as getUpcomingForStudent', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 42 });
+      prisma.student_drive_applications.findMany.mockResolvedValue([]);
+      prisma.placement_drives.findMany.mockResolvedValue([
+        {
+          id: 21,
+          scheduled_date: new Date('2026-09-20T00:00:00.000Z'),
+          is_disclosed: false,
+          disclosed_reveal_date: new Date('2026-09-18T00:00:00.000Z'),
+          job_role: null,
+          package_lpa: null,
+          companies: { name: 'Secret Corp', profile_info: 'Stealth mode' },
+        },
+      ]);
+
+      const result = await service.getPostedForStudent(jwtUser);
+
+      expect(result[0]).toEqual({
+        drive_id: 21,
+        company_name: 'Undisclosed',
+        company_profile_info: null,
+        scheduled_date: new Date('2026-09-20T00:00:00.000Z'),
+        is_disclosed: false,
+        disclosed_reveal_date: new Date('2026-09-18T00:00:00.000Z'),
+        job_role: null,
+        package_lpa: null,
       });
     });
   });
@@ -188,6 +290,8 @@ describe('DrivesService', () => {
             status: 'scheduled',
             is_disclosed: false,
             disclosed_reveal_date: null,
+            job_role: null,
+            package_lpa: null,
             companies: { name: 'Secret Corp', profile_info: null },
           },
         }),
@@ -201,6 +305,8 @@ describe('DrivesService', () => {
           company_name: 'Undisclosed',
           scheduled_date: new Date('2026-08-01T00:00:00.000Z'),
           drive_status: 'scheduled',
+          job_role: null,
+          package_lpa: null,
           application_status: 'placed',
           last_cleared_round: 3,
         },
@@ -481,6 +587,8 @@ describe('DrivesService', () => {
           company_name: 'TCS',
           scheduled_date: new Date('2026-09-01T00:00:00.000Z'),
           drive_status: 'scheduled',
+          job_role: null,
+          package_lpa: null,
           application_status: 'placed',
           last_cleared_round: 3,
         },
@@ -667,6 +775,8 @@ describe('DrivesService', () => {
           company_name: 'TCS',
           scheduled_date: new Date('2026-09-01T00:00:00.000Z'),
           drive_status: 'scheduled',
+          job_role: null,
+          package_lpa: null,
           application_status: 'placed',
           last_cleared_round: 3,
         },

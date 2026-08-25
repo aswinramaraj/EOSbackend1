@@ -100,6 +100,7 @@ import { LmsNotesModule } from './modules/faculty/lms-notes/lms-notes.module';
 import { MediaRequestsModule } from './modules/faculty/media-requests/media-requests.module';
 import { NoDueModule } from './modules/faculty/no-due/no-due.module';
 import { PayslipRequestsModule } from './modules/faculty/payslip-requests/payslip-requests.module';
+import { FacultyReportsModule } from './modules/faculty/reports/reports.module';
 import { SalaryDivisionsModule } from './modules/faculty/salary-divisions/salary-divisions.module';
 import { SubjectRecordsModule } from './modules/faculty/subject-records/subject-records.module';
 import { StudentAssignmentStatusModule } from './modules/faculty/student-assignment-status/student-assignment-status.module';
@@ -313,6 +314,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     MediaRequestsModule,
     NoDueModule,
     PayslipRequestsModule,
+    FacultyReportsModule,
     SalaryDivisionsModule,
     SubjectRecordsModule,
     StudentAssignmentStatusModule,
