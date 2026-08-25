@@ -1,7 +1,15 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import type { CreateSchemeDto } from './dto/create-scheme.dto';
+import type { UpdateSchemeDto } from './dto/update-scheme.dto';
+import { requireUpdateSet } from './higher-education-sql.util';
 
 interface ScholarshipRow {
   is_scholarship: boolean | null;
@@ -118,6 +126,80 @@ export class HigherEducationScholarshipsService {
       };
     } catch (err) {
       this.logger.error('DB error building higher-education scholarships view', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /** PATCH /me/higher-education-scholarship-schemes/:id */
+  async updateScheme(id: number, dto: UpdateSchemeDto) {
+    const set = requireUpdateSet([
+      { column: 'name', value: dto.name },
+      { column: 'scheme_type', value: dto.scheme_type },
+      { column: 'academic_year', value: dto.academic_year },
+      { column: 'status', value: dto.status },
+      { column: 'applied_count', value: dto.applied_count },
+      { column: 'awarded_count', value: dto.awarded_count },
+      { column: 'total_value', value: dto.total_value },
+    ]);
+
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+        UPDATE scholarship_schemes SET ${set} WHERE id = ${id} RETURNING id
+      `);
+      if (rows.length === 0) {
+        throw new NotFoundException({
+          message: 'Scholarship scheme not found',
+          errorCode: 'SCHEME_NOT_FOUND',
+        });
+      }
+      this.logger.log(`Scholarship scheme updated: id=${id}`);
+      return { id };
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      this.logger.error('DB error updating scholarship scheme', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * DELETE /me/higher-education-scholarship-schemes/:id
+   *
+   * Refused once awards exist under the scheme: those rows record money
+   * granted to named students, so the scheme they belong to must not vanish
+   * from under them.
+   */
+  async deleteScheme(id: number) {
+    try {
+      const awards = await this.prisma.student_scholarship_awards.count({
+        where: { scheme_id: id },
+      });
+      if (awards > 0) {
+        throw new ConflictException({
+          message: `${awards} award(s) have already been made under this scheme, so it cannot be deleted.`,
+          errorCode: 'SCHEME_HAS_AWARDS',
+        });
+      }
+
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+        DELETE FROM scholarship_schemes WHERE id = ${id} RETURNING id
+      `);
+      if (rows.length === 0) {
+        throw new NotFoundException({
+          message: 'Scholarship scheme not found',
+          errorCode: 'SCHEME_NOT_FOUND',
+        });
+      }
+      this.logger.log(`Scholarship scheme deleted: id=${id}`);
+      return { id, message: 'Scholarship scheme deleted successfully' };
+    } catch (err) {
+      if (err instanceof NotFoundException || err instanceof ConflictException) throw err;
+      this.logger.error('DB error deleting scholarship scheme', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

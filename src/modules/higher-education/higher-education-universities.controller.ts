@@ -1,10 +1,23 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { HigherEducationUniversitiesService } from './higher-education-universities.service';
 import { CreateUniversityDto } from './dto/create-university.dto';
+import { UpdateUniversityDto } from './dto/update-university.dto';
 
 @Controller('me')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -23,5 +36,20 @@ export class HigherEducationUniversitiesController {
   @HttpCode(HttpStatus.CREATED)
   createUniversity(@Body() dto: CreateUniversityDto) {
     return this.service.createUniversity(dto);
+  }
+
+  /** PATCH /api/v1/me/higher-education-universities/:id — edit a register entry. */
+  @Patch('higher-education-universities/:id')
+  updateUniversity(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateUniversityDto,
+  ) {
+    return this.service.updateUniversity(id, dto);
+  }
+
+  /** DELETE /api/v1/me/higher-education-universities/:id */
+  @Delete('higher-education-universities/:id')
+  deleteUniversity(@Param('id', ParseIntPipe) id: number) {
+    return this.service.deleteUniversity(id);
   }
 }
