@@ -2,6 +2,9 @@ import 'dotenv/config';
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '../../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool, type PoolClient } from 'pg';
+
+const POOL_SIZE = 6;
 
 /**
  * Reads a numeric setting from DATABASE_URL's query string so the pool can be
@@ -19,85 +22,75 @@ export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
-  private static readonly bootLogger = new Logger(PrismaService.name);
+  private readonly logger = new Logger(PrismaService.name);
+  private readonly pool: Pool;
 
   constructor() {
     const connectionString = process.env.DATABASE_URL!;
 
     // The Supabase pooler this project points at (session mode, port 5432)
-    // caps total *client* connections at 15, and that budget is shared with
-    // Supabase's own services — PostgREST, pg_net, pg_cron, the metrics
-    // exporter and the auth query connection together hold ~6 of it at all
-    // times. Anything this app holds is subtracted from what is left, and once
-    // the ceiling is reached the pooler stops accepting connections outright,
-    // which surfaces as ETIMEDOUT on the very next query.
+    // enforces its own connection ceiling, shared with PostgREST/pg_cron/etc.
+    // Live testing showed the *count* of concurrent connections isn't the
+    // real problem — sustained bursts against an already-open pool never
+    // failed. What reliably triggered EMAXCONNSESSION was a page load's
+    // several simultaneous requests each opening a brand-new physical
+    // connection to the pooler at the same instant (a cold pool, e.g. right
+    // after boot or after node-postgres's default idleTimeoutMillis closed
+    // everything). Opening several connections to this pooler at once hits
+    // a lower, separate concurrent-handshake limit than the advertised
+    // session ceiling — sequential opens never failed in testing.
     //
-    // 4 leaves genuine headroom for a psql session and for reconnects after a
-    // dropped TCP connection, while still covering the concurrent-query bursts
-    // the heavier pages make (the dashboard's batched queries are capped at 3).
-    const max = urlParam(connectionString, 'connection_limit') ?? 4;
-
-    const adapter = new PrismaPg({
+    // Fix: construct our own pg.Pool (rather than letting PrismaPg build
+    // one from a config object) so we can pre-warm it — open all POOL_SIZE
+    // connections one at a time at boot (see warmPool below), then hold
+    // them open forever (idleTimeoutMillis: 0) so the app never needs to
+    // open a new connection concurrently with another again.
+    const pool = new Pool({
       connectionString,
-      max,
-      // Bound how long a caller waits for a free connection instead of hanging
-      // until Prisma's own timeout fires.
-      connectionTimeoutMillis: urlParam(connectionString, 'pool_timeout')
-        ? urlParam(connectionString, 'pool_timeout')! * 1000
-        : 15_000,
-      // Recycle idle connections. Without this a connection the pooler has
-      // already discarded stays in the local pool and fails on next use.
-      idleTimeoutMillis: 30_000,
-      // Detect half-open TCP connections (the failure mode when the network
-      // drops mid-session) rather than waiting for a query to time out.
-      keepAlive: true,
+      max: POOL_SIZE,
+      idleTimeoutMillis: 0,
     });
 
-    super({ adapter });
+    const adapter = new PrismaPg(pool);
 
-    PrismaService.bootLogger.log(
-      `Prisma pool: max=${max}, keepAlive on, idle recycle 30s`,
-    );
+    // Prisma's own defaults (maxWait: 2000ms to acquire a connection,
+    // timeout: 5000ms for the transaction body to finish) are too tight for
+    // a pool this small under real concurrent load — raised so a
+    // `$transaction` waits out brief contention instead of failing with a
+    // 500 the moment every connection is briefly busy.
+    super({ adapter, transactionOptions: { maxWait: 10_000, timeout: 15_000 } });
+
+    this.pool = pool;
   }
 
   async onModuleInit() {
-    // Do not let a flaky first connection stop the whole app from booting —
-    // Prisma reconnects lazily on the next query anyway.
-    try {
-      await this.$connect();
-    } catch (err) {
-      PrismaService.bootLogger.warn(
-        `Initial database connect failed (${(err as Error).message}). ` +
-          'The app will keep serving and reconnect on demand.',
-      );
-    }
-
-    // Warm the pool in the background. Without this the first real request
-    // (in practice a login) pays the cost of opening a connection, and on an
-    // unreliable link that is exactly the request most likely to fail — which
-    // is what made the very first login after a restart return a 500 while
-    // every later one succeeded. Retried, and deliberately not awaited, so a
-    // slow warm-up never delays startup.
-    void this.warmUp();
+    await this.$connect();
+    await this.warmPool();
   }
 
-  /** Opens a few connections up front, tolerating a flaky link. */
-  private async warmUp(): Promise<void> {
-    const attempts = 6;
-    for (let i = 1; i <= attempts; i++) {
-      try {
-        await this.$queryRaw`SELECT 1`;
-        PrismaService.bootLogger.log(`Database pool warm (attempt ${i})`);
-        return;
-      } catch {
-        if (i === attempts) {
-          PrismaService.bootLogger.warn(
-            'Could not warm the database pool; requests will connect on demand.',
-          );
-          return;
-        }
-        await new Promise((r) => setTimeout(r, Math.min(2000, 300 * 2 ** (i - 1))));
+  /**
+   * Opens all POOL_SIZE physical connections one at a time (never
+   * concurrently) so the pooler never sees more than one brand-new
+   * connection attempt at once. Each connection is held open (not
+   * released) until every slot is warm, then all are released back —
+   * idleTimeoutMillis: 0 keeps them open for the rest of the process's
+   * life, so real traffic only ever reuses already-open connections.
+   */
+  private async warmPool() {
+    const clients: PoolClient[] = [];
+    try {
+      for (let i = 0; i < POOL_SIZE; i++) {
+        clients.push(await this.pool.connect());
       }
+      this.logger.log(`Pre-warmed ${clients.length} database connections.`);
+    } catch (error) {
+      this.logger.warn(
+        `Pool warm-up stopped after ${clients.length}/${POOL_SIZE} connections: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      for (const client of clients) client.release();
     }
   }
 

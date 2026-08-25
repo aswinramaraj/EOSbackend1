@@ -348,7 +348,7 @@ export class AnnouncementsService {
         });
       }
 
-      await this.notifyNewAnnouncement(announcement.id, dto.title, 'roles', {
+      void this.notifyNewAnnouncement(announcement.id, dto.title, 'roles', {
         roleIds: dto.role_ids,
       });
 
@@ -400,7 +400,7 @@ export class AnnouncementsService {
         });
       }
 
-      await this.notifyNewAnnouncement(announcement.id, dto.title, 'teachers', {
+      void this.notifyNewAnnouncement(announcement.id, dto.title, 'teachers', {
         departmentId,
       });
 
@@ -570,7 +570,11 @@ export class AnnouncementsService {
       context.role === ROLES.PRINCIPAL ||
       context.role === ROLES.SECRETARY ||
       context.role === ROLES.BILLING ||
-      context.role === ROLES.FINANCE
+      // IQAC posts institution-wide at the same oversight tier as Admin/
+      // Principal elsewhere in this service (see resolveUserContext) — no
+      // department linkage exists for IQAC, so it's always an all-faculty
+      // broadcast, same as Admin/Principal omitting requestedDepartmentId.
+      context.role === ROLES.IQAC
     ) {
       if (requestedDepartmentId === undefined) {
         return null;
@@ -600,6 +604,15 @@ export class AnnouncementsService {
    * announced - it isn't addressed to anyone yet). Never throws - a
    * failure here must not roll back or fail the announcement's own
    * creation, which has already committed by the time this runs.
+   *
+   * Deliberately NOT awaited by any caller (see the 3 call sites in
+   * create()) - this used to await each recipient's notify() one at a
+   * time, which meant an institution-wide broadcast (hundreds/thousands of
+   * recipients) held the HTTP response open for minutes and could time
+   * out outright. Callers now fire this and return immediately once the
+   * announcement itself is committed; recipients are notified in the
+   * background, in bounded-size concurrent batches (not one giant
+   * Promise.all) so it doesn't exhaust the Prisma connection pool either.
    */
   private async notifyNewAnnouncement(
     announcementId: number,
@@ -616,15 +629,21 @@ export class AnnouncementsService {
         targetAudience,
         opts,
       );
-      for (const userId of userIds) {
-        await this.notifications.notify({
-          user_id: userId,
-          title: 'New announcement',
-          message: title,
-          type: 'announcement_new',
-          related_entity_type: 'announcement',
-          related_entity_id: announcementId,
-        });
+      const BATCH_SIZE = 25;
+      for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
+        const batch = userIds.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          batch.map((userId) =>
+            this.notifications.notify({
+              user_id: userId,
+              title: 'New announcement',
+              message: title,
+              type: 'announcement_new',
+              related_entity_type: 'announcement',
+              related_entity_id: announcementId,
+            }),
+          ),
+        );
       }
     } catch (err) {
       this.logger.error(
@@ -1154,6 +1173,13 @@ export class AnnouncementsService {
       case ROLES.FINANCE:
         return {};
 
+      // IQAC is an institution-wide quality/audit function — it needs to
+      // see every announcement for oversight purposes, same broadcast tier
+      // as Admin/Principal/Secretary/Billing, not a narrower "own posts
+      // only" scope like Media Room/Higher Education.
+      case ROLES.IQAC:
+        return {};
+
       // EDC coordinator has no recipient list to resolve (no "founders"
       // user table exists yet) - sees only what they authored themselves,
       // plus anything explicitly role-targeted at edc_coordinator via the
@@ -1346,8 +1372,7 @@ export class AnnouncementsService {
       context.role === ROLES.MEDICAL_CENTRE ||
       context.role === ROLES.SECRETARY ||
       context.role === ROLES.BILLING ||
-      context.role === ROLES.FINANCE ||
-      context.role === ROLES.MEDIA_ROOM
+      context.role === ROLES.IQAC
     ) {
       return;
     }
@@ -1367,7 +1392,10 @@ export class AnnouncementsService {
       // Billing's real "All HoDs" audience option (fee-due escalation
       // notices to department heads) needs role targeting too.
       context.role !== ROLES.BILLING &&
-      context.role !== ROLES.FINANCE
+      // IQAC's composer targets HOD/HR/Placement directly (e.g. NAAC
+      // documentation requests, audit follow-ups) — same oversight-tier
+      // posting capability as its 'teachers' broadcast above.
+      context.role !== ROLES.IQAC
     ) {
       throw new ForbiddenException({
         message: 'You are not permitted to target announcements by role',

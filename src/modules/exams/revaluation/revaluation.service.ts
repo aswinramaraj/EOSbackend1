@@ -9,21 +9,19 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
-import { ROLES } from 'src/common/constants/roles.constant';
 import { CreateRevaluationDto } from './dto/create-revaluation.dto';
 import { UpdateRevaluationDto } from './dto/update-revaluation.dto';
 
-const VALID_STATUSES = ['requested', 'under_review', 'revised', 'no_change'];
+const VALID_STATUSES = ['requested', 'under_review', 'revised', 'no_change', 'approved', 'rejected'];
+
+const STUDENT_INCLUDE = { soa_applications: { select: { first_name: true, last_name: true } } } as const;
+const FACULTY_SELECT = { id: true, first_name: true, last_name: true } as const;
 
 @Injectable()
 export class RevaluationService {
   private readonly logger = new Logger(RevaluationService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly notifications: NotificationsService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async create(createRevaluationDto: CreateRevaluationDto) {
     const { exam_marks_id, student_id } = createRevaluationDto;
@@ -61,9 +59,8 @@ export class RevaluationService {
       });
     }
 
-    let request;
     try {
-      request = await this.prisma.revaluation_requests.create({
+      return await this.prisma.revaluation_requests.create({
         data: { exam_marks_id, student_id },
       });
     } catch (err: any) {
@@ -72,34 +69,6 @@ export class RevaluationService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
-    }
-
-    // COE is a single global role with no per-request assignee (unlike an
-    // HoD, there's no one department to route this to) - broadcast to
-    // every COE-role account rather than picking just one.
-    await this.notifyRoleOfNewRequest(request.id, student.student_id_no);
-
-    return request;
-  }
-
-  private async notifyRoleOfNewRequest(requestId: number, studentIdNo: string): Promise<void> {
-    try {
-      const coeUsers = await this.prisma.users.findMany({
-        where: { roles: { name: ROLES.COE } },
-        select: { id: true },
-      });
-      for (const u of coeUsers) {
-        await this.notifications.notify({
-          user_id: u.id,
-          title: 'New revaluation request',
-          message: `Student ${studentIdNo} has requested a revaluation.`,
-          type: 'approval_request_pending',
-          related_entity_type: 'revaluation_request',
-          related_entity_id: requestId,
-        });
-      }
-    } catch (err) {
-      this.logger.error(`Failed to notify COE of revaluation request ${requestId}`, err);
     }
   }
 
@@ -114,6 +83,7 @@ export class RevaluationService {
     try {
       return await this.prisma.revaluation_requests.findMany({
         where: status ? { status: status as any } : undefined,
+        orderBy: { requested_at: 'desc' },
         include: {
           exam_marks: {
             include: {
@@ -125,7 +95,8 @@ export class RevaluationService {
               },
             },
           },
-          students: true,
+          students: { include: STUDENT_INCLUDE },
+          faculty: { select: FACULTY_SELECT },
         },
       });
     } catch (err: any) {
@@ -154,7 +125,8 @@ export class RevaluationService {
               },
             },
           },
-          students: true,
+          students: { include: STUDENT_INCLUDE },
+          faculty: { select: FACULTY_SELECT },
         },
       });
     } catch (err: any) {
@@ -188,14 +160,37 @@ export class RevaluationService {
       });
     }
 
-    if (existing.status !== 'requested') {
+    const { status, revised_marks, evaluator_faculty_id } = updateRevaluationDto;
+
+    // Was previously hard-locked to "only while status === requested", so
+    // approved/rejected (real enum values) could never actually be reached —
+    // this is the missing final step, not a schema change. requested can go
+    // straight to any state (COE can reject outright, or fast-track a
+    // straightforward one); once under_review/revised/no_change, only the
+    // final approve/reject remains; approved/rejected is terminal.
+    const ALLOWED_NEXT: Record<string, string[]> = {
+      requested: ['under_review', 'revised', 'no_change', 'approved', 'rejected'],
+      under_review: ['revised', 'no_change', 'approved', 'rejected'],
+      revised: ['approved', 'rejected'],
+      no_change: ['approved', 'rejected'],
+    };
+
+    if (status !== undefined) {
+      const allowed = ALLOWED_NEXT[existing.status];
+      if (!allowed || !allowed.includes(status)) {
+        throw new ConflictException({
+          message: allowed
+            ? `Cannot move from "${existing.status}" to "${status}". Allowed: ${allowed.join(', ')}.`
+            : 'This revaluation request has already been processed.',
+          errorCode: 'REVALUATION_INVALID_TRANSITION',
+        });
+      }
+    } else if (existing.status === 'approved' || existing.status === 'rejected') {
       throw new ConflictException({
         message: 'This revaluation request has already been processed.',
         errorCode: 'REVALUATION_ALREADY_PROCESSED',
       });
     }
-
-    const { status, revised_marks } = updateRevaluationDto;
 
     if (revised_marks !== undefined) {
       if (revised_marks < 0) {
@@ -213,16 +208,40 @@ export class RevaluationService {
       }
     }
 
-    let updated;
+    if (evaluator_faculty_id !== undefined) {
+      const faculty = await this.prisma.faculty.findUnique({ where: { id: evaluator_faculty_id } });
+      if (!faculty) {
+        throw new NotFoundException({
+          message: 'Faculty not found.',
+          errorCode: 'FACULTY_NOT_FOUND',
+        });
+      }
+    }
+
     try {
-      updated = await this.prisma.revaluation_requests.update({
+      const updated = await this.prisma.revaluation_requests.update({
         where: { id },
         data: {
           status,
           revised_marks,
-          resolved_at: new Date(),
+          evaluator_faculty_id,
+          resolved_at: status === 'approved' || status === 'rejected' ? new Date() : undefined,
         },
       });
+
+      // The whole point of a revaluation/retotaling is a corrected official
+      // mark — approving one without writing it back to exam_marks would
+      // leave Results Management, Pass Board and the grade matrix all
+      // showing the pre-revaluation score.
+      const finalMarks = updated.revised_marks ?? existing.revised_marks;
+      if (status === 'approved' && finalMarks != null) {
+        await this.prisma.exam_marks.update({
+          where: { id: existing.exam_marks_id },
+          data: { marks_obtained: finalMarks, is_moderated: true },
+        });
+      }
+
+      return updated;
     } catch (err: any) {
       if (err?.code === 'P2025') {
         throw new NotFoundException({
@@ -236,48 +255,6 @@ export class RevaluationService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
-    }
-
-    if (status !== undefined) {
-      await this.notifyStudentOfDecision(existing.student_id, id, status, revised_marks);
-    }
-
-    return updated;
-  }
-
-  private async notifyStudentOfDecision(
-    studentId: number,
-    requestId: number,
-    status: string,
-    revisedMarks: number | undefined,
-  ): Promise<void> {
-    try {
-      const student = await this.prisma.students.findUnique({
-        where: { id: studentId },
-        select: { user_id: true },
-      });
-      if (!student) return;
-
-      const message =
-        status === 'revised'
-          ? `Your revaluation request has been resolved - revised marks: ${revisedMarks}.`
-          : status === 'no_change'
-            ? 'Your revaluation request has been resolved - no change to your marks.'
-            : `Your revaluation request status is now ${status}.`;
-
-      await this.notifications.notify({
-        user_id: student.user_id,
-        title: 'Revaluation request updated',
-        message,
-        type:
-          status === 'revised' || status === 'no_change'
-            ? 'approval_request_approved'
-            : 'approval_request_pending',
-        related_entity_type: 'revaluation_request',
-        related_entity_id: requestId,
-      });
-    } catch (err) {
-      this.logger.error(`Failed to notify student of revaluation decision ${requestId}`, err);
     }
   }
 

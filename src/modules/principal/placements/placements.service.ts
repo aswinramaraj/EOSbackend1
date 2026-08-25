@@ -76,24 +76,50 @@ export class PrincipalPlacementsService {
         student_id: true,
         status: true,
         offered_package: true,
+        offer_response: true,
         updated_at: true,
         students: {
           select: {
             id: true,
             class_id: true,
-            classes: { select: { department_id: true } },
-            courses: { select: { department_id: true } },
+            student_id_no: true,
+            register_no: true,
+            classes: {
+              select: {
+                department_id: true,
+                current_semester: true,
+                departments: { select: { code: true } },
+              },
+            },
+            courses: {
+              select: {
+                department_id: true,
+                departments: { select: { code: true } },
+              },
+            },
+            soa_applications: { select: { first_name: true, last_name: true } },
+            users: { select: { email: true } },
           },
         },
         placement_drives: {
           select: {
             package_lpa: true,
             job_role: true,
-            companies: { select: { name: true } },
+            companies: { select: { id: true, name: true } },
           },
         },
       },
     });
+  }
+
+  private studentName(s: {
+    soa_applications: { first_name: string; last_name: string | null } | null;
+    users: { email: string };
+  }): string {
+    if (!s.soa_applications) return s.users.email;
+    return [s.soa_applications.first_name, s.soa_applications.last_name]
+      .filter(Boolean)
+      .join(' ');
   }
 
   private packageFor(
@@ -470,5 +496,108 @@ export class PrincipalPlacementsService {
         top_recruiter: topRecruiter,
       };
     });
+  }
+
+  /**
+   * GET /me/principal/placements/recruiters
+   *
+   * Company-wise leading entries, matching the reference design's
+   * RECRUITER/ROLE/OFFERS/PACKAGE table — real, aggregated straight from
+   * placed applications, no fabricated "season".
+   */
+  async leadingRecruiters() {
+    const applications = await this.loadApplications();
+    const placed = applications.filter((a) => a.status === 'placed');
+
+    const byCompany = new Map<
+      number,
+      {
+        name: string;
+        roles: Set<string>;
+        offers: number;
+        packages: number[];
+        departments: Set<string>;
+      }
+    >();
+    for (const a of placed) {
+      const company = a.placement_drives.companies;
+      const entry = byCompany.get(company.id) ?? {
+        name: company.name,
+        roles: new Set<string>(),
+        offers: 0,
+        packages: [],
+        departments: new Set<string>(),
+      };
+      if (a.placement_drives.job_role)
+        entry.roles.add(a.placement_drives.job_role);
+      entry.offers += 1;
+      const pkg = this.packageFor(a);
+      if (pkg != null) entry.packages.push(pkg);
+      const deptCode =
+        a.students.classes?.departments.code ??
+        a.students.courses?.departments?.code;
+      if (deptCode) entry.departments.add(deptCode);
+      byCompany.set(company.id, entry);
+    }
+
+    return Array.from(byCompany.entries())
+      .map(([companyId, e]) => ({
+        company_id: companyId,
+        company_name: e.name,
+        roles: Array.from(e.roles),
+        offers: e.offers,
+        average_package:
+          e.packages.length > 0
+            ? round2(e.packages.reduce((a, b) => a + b, 0) / e.packages.length)
+            : null,
+        highest_package: e.packages.length > 0 ? Math.max(...e.packages) : null,
+        department_codes: Array.from(e.departments),
+      }))
+      .sort((a, b) => b.offers - a.offers);
+  }
+
+  /**
+   * GET /me/principal/placements/recruiters/:companyId
+   *
+   * Every real placed student for one recruiter — the cohort drill-down the
+   * reference design opens when a leading-entry row is clicked.
+   */
+  async recruiterStudents(companyId: number) {
+    const company = await this.prisma.companies.findUnique({
+      where: { id: companyId },
+      select: { name: true },
+    });
+    if (!company) {
+      throw new NotFoundException({
+        message: 'Recruiter not found',
+        errorCode: 'COMPANY_NOT_FOUND',
+      });
+    }
+
+    const applications = await this.loadApplications();
+    const rows = applications.filter(
+      (a) =>
+        a.status === 'placed' && a.placement_drives.companies.id === companyId,
+    );
+
+    return {
+      company_name: company.name,
+      students: rows.map((a) => ({
+        student_id: a.students.id,
+        name: this.studentName(a.students),
+        roll_no: a.students.student_id_no,
+        register_no: a.students.register_no,
+        department_code:
+          a.students.classes?.departments.code ??
+          a.students.courses?.departments?.code ??
+          null,
+        semester: a.students.classes?.current_semester ?? null,
+        job_role: a.placement_drives.job_role,
+        package: this.packageFor(a),
+        offer_response: a.offer_response ?? null,
+        status: a.status,
+        updated_at: toDateOnly(a.updated_at),
+      })),
+    };
   }
 }
