@@ -22,6 +22,12 @@ export class StudentDrivesController {
     return this.drivesService.getUpcomingForStudent(user);
   }
 
+  /** Posted drives not yet shortlisted for — see getPostedForStudent for why this is read-only. */
+  @Get('posted')
+  posted(@CurrentUser() user: JwtPayload) {
+    return this.drivesService.getPostedForStudent(user);
+  }
+
   @Get('history')
   history(@CurrentUser() user: JwtPayload) {
     return this.drivesService.getHistoryForStudent(user);

@@ -1501,6 +1501,59 @@ export class DrivesService {
     return applications.map((app) => this.toUpcomingDrive(app));
   }
 
+  /**
+   * GET /drives/student/posted — every currently-open drive the placement
+   * cell has posted that this student has NOT been shortlisted for yet
+   * (no student_drive_applications row). Read-only/informational: shortlisting
+   * students onto a drive stays a placement-cell action (addApplication/
+   * importApplications) — this only makes a posted drive visible before that
+   * step happens, it does not let a student add themselves.
+   *
+   * There's no real per-drive department/CGPA eligibility data to filter
+   * this by yet — `eligible_department_codes`/`eligibility_cgpa` are columns
+   * this service already reads (see loadDriveExtras), but they don't exist
+   * in the live DB (query.md #14 not run), so every drive currently reads as
+   * institution-wide. Once that migration lands, filter this list by the
+   * caller's own department code the same way loadDriveExtras degrades today.
+   */
+  async getPostedForStudent(user: JwtPayload) {
+    const student = await this.findStudentOrThrow(user.sub);
+    return this.getPostedForStudentId(student.id);
+  }
+
+  private async getPostedForStudentId(studentId: number) {
+    const shortlisted = await this.prisma.student_drive_applications.findMany({
+      where: { student_id: studentId },
+      select: { drive_id: true },
+    });
+
+    const drives = await this.prisma.placement_drives.findMany({
+      where: {
+        status: 'scheduled',
+        scheduled_date: { gte: today() },
+        id: { notIn: shortlisted.map((s) => s.drive_id) },
+      },
+      include: { companies: true },
+      orderBy: { scheduled_date: 'asc' },
+    });
+
+    return drives.map((drive) => ({
+      drive_id: drive.id,
+      company_name: this.resolveCompanyName(drive),
+      company_profile_info: drive.is_disclosed
+        ? drive.companies.profile_info
+        : null,
+      scheduled_date: drive.scheduled_date,
+      is_disclosed: drive.is_disclosed,
+      disclosed_reveal_date: drive.is_disclosed
+        ? null
+        : drive.disclosed_reveal_date,
+      job_role: drive.job_role,
+      package_lpa:
+        drive.package_lpa === null ? null : Number(drive.package_lpa),
+    }));
+  }
+
   /** GET /drives/student/history — drives where this student has a final outcome (placed/rejected). */
   async getHistoryForStudent(user: JwtPayload) {
     const student = await this.findStudentOrThrow(user.sub);

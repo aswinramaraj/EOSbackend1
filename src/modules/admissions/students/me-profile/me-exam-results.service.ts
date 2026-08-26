@@ -42,6 +42,8 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+type SubjectFaculty = { id: number; first_name: string; last_name: string };
+
 type ExamGroup = {
   exam_id: number;
   title: string;
@@ -53,6 +55,7 @@ type ExamGroup = {
     name: string;
     max: number;
     scored: number;
+    faculty: SubjectFaculty | null;
   }[];
 };
 
@@ -103,6 +106,10 @@ export class MeExamResultsService {
 
   private async computeExamResults(studentId: number, semester: number) {
     const marks = await this.fetchExamMarks(studentId, semester);
+    const facultyBySubjectId = await this.fetchSubjectFaculty(
+      studentId,
+      marks.map((m) => m.exam_subject_mapping.subjects.id),
+    );
 
     const groups = new Map<number, ExamGroup>();
     for (const mark of marks) {
@@ -128,6 +135,7 @@ export class MeExamResultsService {
         name: subject.name,
         max: Number(mark.max_marks),
         scored: mark.marks_obtained === null ? 0 : Number(mark.marks_obtained),
+        faculty: facultyBySubjectId.get(subject.id) ?? null,
       });
     }
 
@@ -154,6 +162,49 @@ export class MeExamResultsService {
       internals,
       semester_exam: semesterExam ? toResult(semesterExam) : null,
     };
+  }
+
+  /**
+   * subject_id -> assigned faculty, resolved via faculty_subject_class_mapping
+   * for this student's own class. Scoped to the class's most recent
+   * academic_year row (same "latest academic_year" tiebreak used for a
+   * faculty member's own current mapping elsewhere in this module) since the
+   * mapping table has no separate "current academic year" column.
+   */
+  private async fetchSubjectFaculty(
+    studentId: number,
+    subjectIds: number[],
+  ): Promise<Map<number, SubjectFaculty>> {
+    const map = new Map<number, SubjectFaculty>();
+    if (subjectIds.length === 0) return map;
+
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { class_id: true },
+    });
+    if (!student?.class_id) return map;
+
+    const latest = await this.prisma.faculty_subject_class_mapping.findFirst({
+      where: { class_id: student.class_id },
+      orderBy: { academic_year: 'desc' },
+      select: { academic_year: true },
+    });
+    if (!latest) return map;
+
+    const mappings = await this.prisma.faculty_subject_class_mapping.findMany({
+      where: {
+        class_id: student.class_id,
+        academic_year: latest.academic_year,
+        subject_id: { in: [...new Set(subjectIds)] },
+      },
+      select: {
+        subject_id: true,
+        faculty: { select: { id: true, first_name: true, last_name: true } },
+      },
+    });
+    for (const m of mappings) map.set(m.subject_id, m.faculty);
+
+    return map;
   }
 
   private async fetchExamMarks(studentId: number, semester: number) {
