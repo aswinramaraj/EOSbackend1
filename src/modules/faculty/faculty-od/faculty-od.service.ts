@@ -245,7 +245,45 @@ export class FacultyOdService {
     });
 
     this.logger.log(`Faculty OD request created: id=${od.id}`);
+
+    // faculty_od_requests.principal_approval_status is independent of the
+    // HoD/HR stages - it's "pending" for the Principal Approvals queue from
+    // the moment the request is created, so every active Principal is
+    // notified right here (same trigger point faculty-leaves.create() uses
+    // for its own principal_approval_status notification).
+    await this.notifyPrincipals(
+      'New on-duty request to review',
+      `${faculty.first_name} ${faculty.last_name} requested on-duty from ${dto.from_date} to ${dto.to_date}.`,
+      'faculty_od',
+      od.id,
+    );
+
     return toResponse(od);
+  }
+
+  /** Every active user with the Principal role - not assumed to be exactly one, so an officiating/second Principal account (if one exists) is notified too. */
+  private async notifyPrincipals(
+    title: string,
+    message: string,
+    relatedEntityType: string,
+    relatedEntityId: number,
+  ): Promise<void> {
+    const principals = await this.prisma.users.findMany({
+      where: { roles: { name: ROLES.PRINCIPAL }, status: 'active' },
+      select: { id: true },
+    });
+    await Promise.all(
+      principals.map((p) =>
+        this.notificationsService.notify({
+          user_id: p.id,
+          title,
+          message,
+          type: 'approval_request_pending',
+          related_entity_type: relatedEntityType,
+          related_entity_id: relatedEntityId,
+        }),
+      ),
+    );
   }
 
   /**

@@ -1,4 +1,5 @@
-import { Controller, Get, Param, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -39,5 +40,26 @@ export class PrincipalStudentsController {
   @Get(':id/profile')
   getProfile(@Param('id', ParseIntPipe) id: number) {
     return this.service.getStudentProfile(id);
+  }
+
+  /**
+   * GET /principal-students/:id/profile/export?format=csv|excel|pdf —
+   * the "Export CSV"/"Export PDF" buttons on the Student Profile screen.
+   * Same @Res()-and-manual-headers pattern as
+   * PrincipalReportsController.scorecard() (that route also opts out of
+   * the global TransformInterceptor to send a raw file buffer).
+   */
+  @Get(':id/profile/export')
+  async exportProfile(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('format') format: 'csv' | 'excel' | 'pdf' = 'pdf',
+    @Res() res: Response,
+  ) {
+    const { buffer, contentType, filename } = await this.service.exportStudentProfile(id, format);
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.send(buffer);
   }
 }

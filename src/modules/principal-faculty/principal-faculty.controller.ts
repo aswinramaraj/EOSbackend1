@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -27,6 +28,26 @@ export class PrincipalFacultyController {
   @Get(':id/profile')
   getProfile(@Param('id', ParseIntPipe) id: number) {
     return this.service.getFacultyProfile(id);
+  }
+
+  /**
+   * GET /principal-faculty/:id/profile/export?format=csv|excel|pdf — the
+   * Faculty Profile screen's "Export PDF" button. Same @Res()-and-manual-
+   * headers pattern as PrincipalStudentsController.exportProfile() and
+   * PrincipalReportsController.scorecard().
+   */
+  @Get(':id/profile/export')
+  async exportProfile(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('format') format: 'csv' | 'excel' | 'pdf' = 'pdf',
+    @Res() res: Response,
+  ) {
+    const { buffer, contentType, filename } = await this.service.exportFacultyProfile(id, format);
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    res.send(buffer);
   }
 
   /** POST /principal-faculty/:id/assign-duty — real write into faculty_committee_roles. */

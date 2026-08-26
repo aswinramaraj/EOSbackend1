@@ -2,6 +2,12 @@ import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { ListPrincipalStudentsQueryDto } from './dto/list-principal-students-query.dto';
+import { renderCsv, renderExcel, renderPdf, type ReportTable } from 'src/common/utils/report-export.util';
+
+function fmtDateForExport(d: Date | string | null): string {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 
 interface DirectoryRow {
   id: number;
@@ -307,6 +313,7 @@ export class PrincipalStudentsService {
         student_id_no: true,
         roll_no: true,
         register_no: true,
+        status: true,
         admission_no: true,
         admission_date: true,
         admission_type: true,
@@ -324,6 +331,7 @@ export class PrincipalStudentsService {
         photo_url: true,
         mentor_faculty_id: true,
         class_id: true,
+        quotas: { select: { name: true } },
         users: { select: { email: true } },
         classes: {
           select: {
@@ -355,7 +363,16 @@ export class PrincipalStudentsService {
         },
         student_hostel_mapping: { select: { room_id: true, allocated_date: true } },
         student_transport_mapping: { select: { route_id: true } },
-        student_fee_demand_mapping: { select: { total_amount: true, fee_payments: { select: { amount_paid: true } } } },
+        student_meeting_notes: { select: { meeting_date: true, note: true }, orderBy: { meeting_date: 'desc' } },
+        student_fee_demand_mapping: {
+          select: {
+            total_amount: true,
+            academic_year: true,
+            semester: true,
+            fee_structures: { select: { name: true } },
+            fee_payments: { select: { amount_paid: true } },
+          },
+        },
         sports_achievements: { select: { event_name: true, result: true, level: true, achievement_date: true } },
         student_test_scores: { select: { test_name: true, score: true, test_date: true } },
         malpractice_incidents: { select: { id: true } },
@@ -381,6 +398,21 @@ export class PrincipalStudentsService {
           where: { class_id: student.class_id },
           orderBy: { academic_year: 'desc' },
           select: { faculty: { select: { first_name: true, last_name: true } } },
+        })
+      : null;
+
+    const booksIssued = await this.prisma.book_borrow_records.count({
+      where: { student_id: id, status: 'borrowed' },
+    });
+
+    // Looked up separately (not as a nested `select` on the required
+    // hostel_rooms relation) so a room_id that no longer resolves to a real
+    // hostel_rooms row — a data gap, not a schema violation — degrades to
+    // "room number unknown" instead of throwing P2025 on the whole profile.
+    const hostelRoom = student.student_hostel_mapping
+      ? await this.prisma.hostel_rooms.findUnique({
+          where: { id: student.student_hostel_mapping.room_id },
+          select: { room_number: true, hostel_blocks: { select: { name: true } } },
         })
       : null;
 
@@ -489,9 +521,11 @@ export class PrincipalStudentsService {
       student_id_no: student.student_id_no,
       roll_no: student.roll_no,
       register_no: student.register_no,
+      status: student.status,
       admission_no: student.admission_no,
       admission_date: student.admission_date,
       admission_type: student.admission_type,
+      admission_quota: student.quotas?.name ?? null,
       department: student.classes?.departments ?? null,
       programme: student.classes?.courses?.name ?? null,
       batch: student.classes?.batches?.name ?? null,
@@ -547,6 +581,21 @@ export class PrincipalStudentsService {
               mobile: student.student_family_details.mother_mobile,
               photo_url: student.student_family_details.mother_photo_url,
             },
+            guardian: student.student_family_details.guardian_name
+              ? {
+                  name: student.student_family_details.guardian_name,
+                  relationship: student.student_family_details.guardian_relationship,
+                  is_father: false,
+                  mobile: student.student_family_details.guardian_phone,
+                  email: student.student_family_details.guardian_email,
+                }
+              : {
+                  name: student.student_family_details.father_name,
+                  relationship: 'Father',
+                  is_father: true,
+                  mobile: student.student_family_details.father_mobile,
+                  email: student.student_family_details.father_email,
+                },
           }
         : null,
       pre_admission: student.soa_applications
@@ -573,8 +622,32 @@ export class PrincipalStudentsService {
         amount: Number(s.amount),
         awarded_at: s.awarded_at,
       })),
-      hostel: student.student_hostel_mapping ? { room_id: student.student_hostel_mapping.room_id, allocated_date: student.student_hostel_mapping.allocated_date } : null,
+      hostel: student.student_hostel_mapping
+        ? {
+            room_id: student.student_hostel_mapping.room_id,
+            allocated_date: student.student_hostel_mapping.allocated_date,
+            room_number: hostelRoom?.room_number ?? null,
+            block: hostelRoom?.hostel_blocks?.name ?? null,
+          }
+        : null,
       transport: student.student_transport_mapping ? { route_id: student.student_transport_mapping.route_id } : null,
+      meeting_notes: student.student_meeting_notes.map((m) => ({ date: m.meeting_date, note: m.note })),
+      library: { books_issued: booksIssued },
+      // Itemized fee ledger — every real student_fee_demand_mapping row, no
+      // fabricated due dates (fee_structures/student_fee_demand_mapping have
+      // no due-date column anywhere in the schema, so none is shown).
+      fee_ledger: student.student_fee_demand_mapping.map((d) => {
+        const paid = d.fee_payments.reduce((s, p) => s + Number(p.amount_paid), 0);
+        const total = Number(d.total_amount);
+        return {
+          name: d.fee_structures.name,
+          academic_year: d.academic_year,
+          semester: d.semester,
+          total_amount: total,
+          paid_amount: paid,
+          status: paid >= total ? 'paid' : paid > 0 ? 'partial' : 'pending',
+        };
+      }),
       fees: { total_demand: totalDemand, total_paid: totalPaid, status: totalDemand === 0 ? 'no_demand' : totalPaid >= totalDemand ? 'paid' : 'due' },
       achievements: [
         ...student.sports_achievements.map((a) => ({ label: `${a.event_name} — ${a.result}`, date: a.achievement_date, source: 'sports' as const })),
@@ -588,5 +661,119 @@ export class PrincipalStudentsService {
         offered_package: d.offered_package ? Number(d.offered_package) : null,
       })),
     };
+  }
+
+  /**
+   * GET /principal-students/:id/profile/export?format=csv|excel|pdf
+   *
+   * Same shared renderCsv/renderExcel/renderPdf pipeline
+   * (src/common/utils/report-export.util.ts) the Reports page's "Export
+   * Excel"/"Export PDF" buttons already use — the whole profile flattened
+   * into one Field/Value table rather than a bespoke document renderer, so
+   * this download uses the exact same, already-proven infrastructure.
+   */
+  async exportStudentProfile(
+    id: number,
+    format: 'csv' | 'excel' | 'pdf',
+  ): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+    const p = await this.getStudentProfile(id);
+
+    const rows: Record<string, unknown>[] = [];
+    const add = (field: string, value: unknown) => rows.push({ field, value: value === null || value === undefined || value === '' ? '—' : value });
+
+    add('Name', p.name);
+    add('Student ID', p.student_id_no);
+    add('Roll No', p.roll_no);
+    add('Register No', p.register_no);
+    add('Admission No', p.admission_no);
+    add('Admission Date', fmtDateForExport(p.admission_date));
+    add('Admission Type', p.admission_type);
+    add('Admission Quota', p.admission_quota);
+    add('Department', p.department?.name);
+    add('Programme', p.programme);
+    add('Batch', p.batch);
+    add('Semester', p.semester);
+    add('Section', p.section);
+    add('Gender', p.gender);
+    add('Date of Birth', fmtDateForExport(p.date_of_birth));
+    add('Blood Group', p.blood_group);
+    add('Mother Tongue', p.mother_tongue);
+    add('Community', p.community);
+    add('Nationality', p.nationality);
+    add('Religion', p.religion);
+    add('Caste', p.caste);
+    add('Institute Email', p.institute_email);
+    add('Personal Email', p.personal_email);
+    add('Mobile', p.mobile);
+    add('Aadhaar Number', p.aadhar_number);
+    add('PAN Number', p.pan_number);
+    add('Passport Number', p.passport_number);
+    for (const a of p.addresses) {
+      add(
+        a.type === 'permanent' ? 'Permanent Address' : 'Communication Address',
+        [a.line, a.city, a.district, a.state, a.pincode].filter(Boolean).join(', '),
+      );
+    }
+    add('Class Advisor', p.class_advisor);
+    add('Faculty Mentor', p.faculty_mentor);
+    if (p.family) {
+      add('Father Name', p.family.father.name);
+      add('Father Occupation', p.family.father.occupation);
+      add('Father Mobile', p.family.father.mobile);
+      add('Mother Name', p.family.mother.name);
+      add('Mother Occupation', p.family.mother.occupation);
+      add('Mother Mobile', p.family.mother.mobile);
+      add('Guardian Name', p.family.guardian.name);
+      add('Guardian Mobile', p.family.guardian.mobile);
+      add('Guardian Email', p.family.guardian.email);
+    }
+    add('Overall CGPA', p.overall_gpa);
+    add('Overall Percentage', p.overall_percentage != null ? `${p.overall_percentage}%` : null);
+    add('Overall Attendance', p.overall_attendance_pct != null ? `${p.overall_attendance_pct}%` : null);
+    add(
+      'Semester-wise GPA',
+      p.gpa_history
+        .map((g) => `Sem ${g.semester}: ${g.gpa ?? '—'} (${g.credits} cr, ${g.arrears === 0 ? 'all clear' : `${g.arrears} arrear(s)`})`)
+        .join('; '),
+    );
+    add(
+      'Current Semester Subjects',
+      p.current_semester_subjects.map((s) => `${s.name} (${s.code}): ${s.total} - ${s.grade}`).join('; '),
+    );
+    add('Fee Status', p.fees.status);
+    add(
+      'Fee Ledger',
+      p.fee_ledger.map((f) => `${f.name} (${f.academic_year}): Rs.${f.total_amount} - ${f.status}`).join('; '),
+    );
+    add('Hostel', p.hostel ? `${p.hostel.block ?? 'Hostel'} - ${p.hostel.room_number ?? '—'}` : 'Day scholar');
+    add('Transport', p.transport ? 'Bus route assigned' : 'Not applicable');
+    add('Library', `${p.library.books_issued} book(s) issued`);
+    add('Scholarships', p.scholarships.map((s) => `${s.scheme} (Rs.${s.amount})`).join('; ') || 'None');
+    add('Discipline', p.discipline.incident_count === 0 ? 'No incidents on record' : `${p.discipline.incident_count} incident(s)`);
+    add('Achievements', p.achievements.map((a) => a.label).join('; ') || 'None');
+    add('Placement', p.placement.map((pl) => `${pl.company} (${pl.status})`).join('; ') || 'Not placed');
+    add('Documents', p.documents.map((d) => `${d.name}: ${d.available ? 'Available' : 'Missing'}`).join('; ') || 'None');
+
+    const table: ReportTable = {
+      title: `${p.name} - Student Profile`,
+      columns: [
+        { header: 'Field', key: 'field', width: 28 },
+        { header: 'Value', key: 'value', width: 60 },
+      ],
+      rows,
+    };
+
+    const slug = (p.register_no ?? p.student_id_no).replace(/[^a-zA-Z0-9-]+/g, '-');
+    if (format === 'excel') {
+      return {
+        buffer: await renderExcel(table),
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        filename: `student-${slug}.xlsx`,
+      };
+    }
+    if (format === 'pdf') {
+      return { buffer: await renderPdf(table), contentType: 'application/pdf', filename: `student-${slug}.pdf` };
+    }
+    return { buffer: renderCsv(table), contentType: 'text/csv', filename: `student-${slug}.csv` };
   }
 }

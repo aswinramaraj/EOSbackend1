@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -28,5 +28,11 @@ export class PrincipalHigherEducationController {
   @Get()
   list(@Query() query: ListHigherEducationQueryDto) {
     return this.higherEducationService.list(query);
+  }
+
+  /** GET /me/principal/higher-education/:id/profile — full Higher-Education Profile detail screen. */
+  @Get(':id/profile')
+  getProfile(@Param('id', ParseIntPipe) id: number) {
+    return this.higherEducationService.getProfile(id);
   }
 }

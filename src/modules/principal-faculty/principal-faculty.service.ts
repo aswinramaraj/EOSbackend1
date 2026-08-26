@@ -1,6 +1,30 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import { renderCsv, renderExcel, renderPdf, type ReportTable } from 'src/common/utils/report-export.util';
+
+function fmtDateForExport(d: Date | string | null): string {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/** Tenure since date_of_joining, plus any prior-institution years on file — same formula PrincipalFacultyService (the wired /me/principal/faculty list) already uses for this exact "Total experience" figure, duplicated here rather than imported across modules. */
+function totalExperienceYears(dateOfJoining: Date | null, previousExperienceYears: number | null): number | null {
+  if (!dateOfJoining) return previousExperienceYears ?? null;
+  const tenureYears = (Date.now() - dateOfJoining.getTime()) / (365.25 * 24 * 3600 * 1000);
+  return Math.round((tenureYears + (previousExperienceYears ?? 0)) * 10) / 10;
+}
+
+/** Standard h-index: the largest h such that h of the faculty's papers have at least h citations each — computed from real per-paper citation_count rows, not a stored/fabricated figure. */
+function computeHIndex(citationCounts: number[]): number {
+  const sorted = [...citationCounts].sort((a, b) => b - a);
+  let h = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i] >= i + 1) h = i + 1;
+    else break;
+  }
+  return h;
+}
 
 /**
  * Principal-only, institution-wide faculty & staff overview. Everything is
@@ -128,6 +152,7 @@ export class PrincipalFacultyService {
         specialization: true,
         previous_institution: true,
         previous_experience_years: true,
+        staff_code: true,
         office_room: true,
         work_location: true,
         employment_status: true,
@@ -210,13 +235,26 @@ export class PrincipalFacultyService {
     const present = attendanceRows.filter((r) => r.status === 'full_day' || r.status === 'half_day').length;
     const attendancePct = attendanceRows.length ? Math.round((present / attendanceRows.length) * 1000) / 10 : null;
 
+    // Publication rollup — total citations and h-index are computed live
+    // from every real faculty_publications.citation_count row on file, not
+    // stored/fabricated figures. type is free-text, so the journal/
+    // conference/book buckets match by substring against the real values
+    // on file (same defensive-match approach as the has_doctorate check
+    // in the /me/principal/faculty list, PrincipalFacultyService.list()).
+    const journalsCount = publications.filter((p) => p.type.toLowerCase().includes('journal')).length;
+    const conferencesCount = publications.filter((p) => p.type.toLowerCase().includes('conf')).length;
+    const booksCount = publications.filter((p) => p.type.toLowerCase().includes('book')).length;
+    const totalCitations = publications.reduce((sum, p) => sum + p.citation_count, 0);
+    const hIndex = computeHIndex(publications.map((p) => p.citation_count));
+
     return {
       id: faculty.id,
+      staff_code: faculty.staff_code,
       name: `${faculty.prefix ?? ''} ${faculty.first_name} ${faculty.last_name}`.trim(),
       designation: faculty.designation,
       department: faculty.departments,
       date_of_joining: faculty.date_of_joining,
-      experience_years: faculty.previous_experience_years,
+      experience_years: totalExperienceYears(faculty.date_of_joining, faculty.previous_experience_years),
       status: faculty.status,
       gender: faculty.gender,
       date_of_birth: faculty.date_of_birth,
@@ -274,9 +312,101 @@ export class PrincipalFacultyService {
           }
         : null,
       publications: publications.map((p) => ({ title: p.title, type: p.type, year: p.year, citation_count: p.citation_count })),
+      publications_summary: {
+        total: publications.length,
+        journals: journalsCount,
+        conferences: conferencesCount,
+        books: booksCount,
+        total_citations: totalCitations,
+        h_index: hIndex,
+      },
       awards: awards.map((a) => ({ title: a.title, year: a.year, awarded_by: a.awarded_by })),
       responsibilities: committeeRoles.map((c) => ({ title: c.role ? `${c.role}, ${c.committee_name}` : c.committee_name, academic_year: c.academic_year })),
     };
+  }
+
+  /**
+   * GET /principal-faculty/:id/profile/export?format=csv|excel|pdf
+   *
+   * Same shared renderCsv/renderExcel/renderPdf pipeline
+   * (src/common/utils/report-export.util.ts) the Reports page's export
+   * buttons and the Student Profile's export already use — the whole
+   * faculty profile flattened into one Field/Value table.
+   */
+  async exportFacultyProfile(
+    id: number,
+    format: 'csv' | 'excel' | 'pdf',
+  ): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+    const f = await this.getFacultyProfile(id);
+
+    const rows: Record<string, unknown>[] = [];
+    const add = (field: string, value: unknown) =>
+      rows.push({ field, value: value === null || value === undefined || value === '' ? '—' : value });
+
+    add('Employee ID', f.staff_code);
+    add('Name', f.name);
+    add('Designation', f.designation);
+    add('Department', f.department?.name);
+    add('Status', f.status);
+    add('Date of Joining', fmtDateForExport(f.date_of_joining));
+    add('Total Experience (yrs)', f.experience_years);
+    add('Gender', f.gender);
+    add('Date of Birth', fmtDateForExport(f.date_of_birth));
+    add('Institute Email', f.institute_email);
+    add('Personal Email', f.personal_email);
+    add('Phone', f.phone);
+    add('Qualification', f.qualification);
+    add('Specialization', f.specialization);
+    add('Previous Institution', f.previous_institution);
+    add('Office Room', f.office_room);
+    add('Work Location', f.work_location);
+    add('Employment Status', f.employment_status);
+    add('Employment Type', f.employment_type);
+    add('Attendance This Term', f.attendance_pct_this_term != null ? `${f.attendance_pct_this_term}%` : null);
+    add('Periods / Week', f.periods_per_week);
+    add('Class Advisor Of', f.class_advisor_of);
+    add(
+      'Subjects Handled',
+      f.subjects_handled.map((s) => `${s.name} (${s.code}), Sem ${s.semester ?? '—'}, Sec ${s.section}`).join('; '),
+    );
+    add(
+      'Leave Balances',
+      f.leave_balances.map((b) => `${b.leave_type}: ${b.used}/${b.allocated} used (${b.academic_year})`).join('; '),
+    );
+    add('Publications', f.publications_summary.total);
+    add('Journals', f.publications_summary.journals);
+    add('Conferences', f.publications_summary.conferences);
+    add('Books / Chapters', f.publications_summary.books);
+    add('h-index', f.publications_summary.h_index);
+    add('Total Citations', f.publications_summary.total_citations);
+    add('Awards', f.awards.map((a) => `${a.title}${a.awarded_by ? ` (${a.awarded_by})` : ''}, ${a.year}`).join('; '));
+    add('Responsibilities', f.responsibilities.map((r) => r.title).join('; '));
+    if (f.appraisal) {
+      add('Appraisal Status', f.appraisal.status);
+      add('Appraisal Academic Year', f.appraisal.academic_year);
+    }
+
+    const table: ReportTable = {
+      title: `${f.name} - Faculty Profile`,
+      columns: [
+        { header: 'Field', key: 'field', width: 28 },
+        { header: 'Value', key: 'value', width: 60 },
+      ],
+      rows,
+    };
+
+    const slug = (f.staff_code ?? String(f.id)).replace(/[^a-zA-Z0-9-]+/g, '-');
+    if (format === 'excel') {
+      return {
+        buffer: await renderExcel(table),
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        filename: `faculty-${slug}.xlsx`,
+      };
+    }
+    if (format === 'pdf') {
+      return { buffer: await renderPdf(table), contentType: 'application/pdf', filename: `faculty-${slug}.pdf` };
+    }
+    return { buffer: renderCsv(table), contentType: 'text/csv', filename: `faculty-${slug}.csv` };
   }
 
   /**

@@ -1,9 +1,21 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
 import { PrincipalDashboardService } from '../dashboard/dashboard.service';
 import { ListPrincipalStudentsQueryDto } from './dto/list-principal-students-query.dto';
 
 const ATTENDANCE_THRESHOLD_PERCENT = 75;
+const DEFAULT_PAGE_SIZE = 15;
+
+/** Same GRADE_LOOKUP formula as PrincipalExamsService/HodClassRecordsService — copied verbatim, not reinvented. */
+const GRADE_LOOKUP = Prisma.sql`
+  LEFT JOIN LATERAL (
+    SELECT is_pass, grade_point FROM grade_bands gb2
+    WHERE gb2.min_percentage <= (CASE WHEN em.is_absent THEN 0 ELSE em.marks_obtained / NULLIF(em.max_marks, 0) * 100 END)
+    ORDER BY gb2.min_percentage DESC
+    LIMIT 1
+  ) gb ON true
+`;
 
 /**
  * Same Odd/Even semester convention as PrincipalDashboardService's
@@ -84,7 +96,7 @@ export class PrincipalStudentsService {
    * MeFeesService.computeFees()'s reuse-by-pattern, not by import).
    *
    * This summary() endpoint doesn't compute mean CGPA or arrears itself —
-   * list() below does, via examOutcomesByStudent(), reusing the same
+   * list() below does, via cgpaByStudent(), reusing the same
    * grade_bands.is_pass/grade_point percentage rule IqacAcademicQualityService's
    * Results/Grade-distribution pages already treat as authoritative
    * (exam_pass_rules_settings.min_external_marks still can't be applied,
@@ -228,7 +240,7 @@ export class PrincipalStudentsService {
         roll_no: true,
         register_no: true,
         status: true,
-        batches: { select: { id: true, name: true } },
+        batches: { select: { id: true, name: true, start_year: true } },
         classes: {
           select: {
             section: true,
@@ -248,12 +260,12 @@ export class PrincipalStudentsService {
     });
 
     const ids = rows.map((r) => r.id);
-    const [attendanceByStudent, feeByStudent, placementByStudent, examOutcomesByStudent] =
+    const [attendanceByStudent, feeByStudent, placementByStudent, cgpaByStudent] =
       await Promise.all([
         this.attendanceByStudent(ids),
         this.feesByStudent(ids),
         this.placementByStudent(ids),
-        this.examOutcomesByStudent(ids),
+        this.cgpaByStudent(ids),
       ]);
 
     let students = rows.map((row) => {
@@ -280,8 +292,8 @@ export class PrincipalStudentsService {
         attendance_percentage: attendanceByStudent.get(row.id) ?? null,
         fees_status: feeByStudent.get(row.id) ?? 'not_billed',
         placement_status: placementByStudent.get(row.id) ?? 'not_registered',
-        has_arrears: examOutcomesByStudent.get(row.id)?.has_arrears ?? null,
-        mean_grade_point: examOutcomesByStudent.get(row.id)?.mean_grade_point ?? null,
+        cgpa: cgpaByStudent.get(row.id)?.cgpa ?? null,
+        has_arrears: cgpaByStudent.get(row.id) ? cgpaByStudent.get(row.id)!.arrear_count > 0 : null,
         mentor: row.faculty
           ? { id: row.faculty.id, name: `${row.faculty.first_name} ${row.faculty.last_name}` }
           : null,
@@ -298,9 +310,47 @@ export class PrincipalStudentsService {
       students = students.filter(
         (s) => s.fees_status === 'pending' || s.fees_status === 'partial',
       );
+    } else if (query.filter === 'cgpa_above_85') {
+      students = students.filter((s) => s.cgpa != null && s.cgpa > 8.5);
+    } else if (query.filter === 'cgpa_below_7') {
+      students = students.filter((s) => s.cgpa != null && s.cgpa < 7);
+    } else if (query.filter === 'has_arrears') {
+      students = students.filter((s) => s.has_arrears === true);
     }
 
-    return { total: students.length, students };
+    // Batch-wise register order: most recently admitted batch (current 1st
+    // years) first, then every department in code order, then section, then
+    // roll/register number — matches the paper register's real filing
+    // order, not an arbitrary id sort. Once a batch's rows are exhausted the
+    // next page continues straight into the next batch, no reset.
+    students.sort((a, b) => {
+      const startYearA = a.batch?.start_year ?? -Infinity;
+      const startYearB = b.batch?.start_year ?? -Infinity;
+      if (startYearB !== startYearA) return startYearB - startYearA;
+      const deptA = a.department?.code ?? '';
+      const deptB = b.department?.code ?? '';
+      if (deptA !== deptB) return deptA.localeCompare(deptB);
+      const secA = a.section ?? '';
+      const secB = b.section ?? '';
+      if (secA !== secB) return secA.localeCompare(secB);
+      const rollA = a.register_no ?? a.roll_no ?? '';
+      const rollB = b.register_no ?? b.roll_no ?? '';
+      return rollA.localeCompare(rollB);
+    });
+
+    const total = students.length;
+    const limit = query.limit ?? DEFAULT_PAGE_SIZE;
+    const page = query.page ?? 1;
+    const offset = (page - 1) * limit;
+    const pageStudents = students.slice(offset, offset + limit);
+
+    return {
+      total,
+      page,
+      limit,
+      total_pages: Math.max(Math.ceil(total / limit), 1),
+      students: pageStudents,
+    };
   }
 
   /** Attendance % this term (same Odd/Even range as the dashboard's own period stat), bulk-computed for exactly the given student ids. */
@@ -403,71 +453,45 @@ export class PrincipalStudentsService {
   }
 
   /**
-   * Real per-student exam outcomes, derived from the same grade_bands
-   * percentage rule IqacAcademicQualityService's Results/Grade-distribution
-   * pages already treat as authoritative (exam_pass_rules_settings.
-   * min_external_marks still can't be applied — exam_marks has no
-   * internal/external split):
-   *  - has_arrears: true if any real exam_marks row falls in a failing band.
-   *  - mean_grade_point: the unweighted mean of grade_bands.grade_point
-   *    across every real graded exam_marks row on file for that student —
-   *    the same "mean grade point" methodology the Grade-distribution page
-   *    already computes institution/class-wide, just scoped to one student
-   *    instead. This is NOT a formal credit-weighted CGPA (subjects.credits
-   *    exists but is nullable/inconsistently populated, and exam_marks has
-   *    no internal/external split) — it's the same honest approximation
-   *    already shipped elsewhere, applied consistently here too.
-   * A student with no real exam_marks on file gets `null` for both (status
-   * genuinely unknown), never fabricated as "no arrears" / a made-up GPA.
+   * Real per-student CGPA and arrears, credit-weighted — the same formula
+   * PrincipalExamsService's institution-wide "high CGPA" band and
+   * HodClassRecordsService's per-class CGPA column already use (SUM(grade_point
+   * * credits) / SUM(credits) over every real, results-published, non-absent
+   * exam_marks row; subjects.credits defaults to 1 when unset). arrear_count
+   * is the number of those rows whose grade_bands bracket is_pass = false.
+   * A student with no real graded exam_marks on file gets `cgpa: null` and
+   * `arrear_count: 0` — genuinely unknown, never fabricated.
    */
-  private async examOutcomesByStudent(studentIds: number[]): Promise<
-    Map<number, { has_arrears: boolean; mean_grade_point: number | null }>
-  > {
+  private async cgpaByStudent(
+    studentIds: number[],
+  ): Promise<Map<number, { cgpa: number | null; arrear_count: number }>> {
     if (studentIds.length === 0) return new Map();
-    const [bands, marks] = await Promise.all([
-      this.prisma.grade_bands.findMany({ orderBy: { display_order: 'asc' } }),
-      this.prisma.exam_marks.findMany({
-        where: { student_id: { in: studentIds }, is_absent: false },
-        select: { student_id: true, marks_obtained: true, max_marks: true },
-      }),
-    ]);
-    const bandFor = (pct: number) => {
-      for (const b of bands) {
-        if (pct >= Number(b.min_percentage)) return b;
-      }
-      return bands[bands.length - 1];
-    };
+    const rows = await this.prisma.$queryRaw<
+      { student_id: number; cgpa: string | null; arrears: bigint }[]
+    >(Prisma.sql`
+      WITH subject_grades AS (
+        SELECT em.student_id, COALESCE(sub.credits, 1) AS credits, gb.grade_point, gb.is_pass
+        FROM exam_marks em
+        JOIN exam_subject_mapping esm ON esm.id = em.exam_subject_mapping_id
+        JOIN exams e ON e.id = esm.exam_id
+        JOIN subjects sub ON sub.id = esm.subject_id
+        ${GRADE_LOOKUP}
+        WHERE e.status = 'results_published' AND em.is_absent = false AND em.marks_obtained IS NOT NULL
+          AND em.student_id IN (${Prisma.join(studentIds)})
+      )
+      SELECT student_id,
+        (SUM(grade_point * credits) FILTER (WHERE grade_point IS NOT NULL)
+          / NULLIF(SUM(credits) FILTER (WHERE grade_point IS NOT NULL), 0))::text AS cgpa,
+        COUNT(*) FILTER (WHERE is_pass = false)::bigint AS arrears
+      FROM subject_grades
+      GROUP BY student_id
+    `);
 
-    const byStudent = new Map<
-      number,
-      { hasArrears: boolean; gpSum: number; gpCount: number }
-    >();
-    for (const mk of marks) {
-      if (mk.marks_obtained == null) continue;
-      const pct = (Number(mk.marks_obtained) / Number(mk.max_marks)) * 100;
-      const band = bandFor(pct);
-      const entry = byStudent.get(mk.student_id) ?? {
-        hasArrears: false,
-        gpSum: 0,
-        gpCount: 0,
-      };
-      if (!band?.is_pass) entry.hasArrears = true;
-      if (band?.grade_point != null) {
-        entry.gpSum += Number(band.grade_point);
-        entry.gpCount += 1;
-      }
-      byStudent.set(mk.student_id, entry);
-    }
-
-    const result = new Map<
-      number,
-      { has_arrears: boolean; mean_grade_point: number | null }
-    >();
-    for (const [studentId, e] of byStudent.entries()) {
-      result.set(studentId, {
-        has_arrears: e.hasArrears,
-        mean_grade_point:
-          e.gpCount > 0 ? Math.round((e.gpSum / e.gpCount) * 100) / 100 : null,
+    const result = new Map<number, { cgpa: number | null; arrear_count: number }>();
+    for (const row of rows) {
+      result.set(row.student_id, {
+        cgpa: row.cgpa != null ? Math.round(Number(row.cgpa) * 100) / 100 : null,
+        arrear_count: Number(row.arrears ?? 0),
       });
     }
     return result;

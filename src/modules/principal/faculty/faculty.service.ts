@@ -38,6 +38,8 @@ function currentAcademicYearCandidates(today: Date): string[] {
   return [`${start}-${end}`, `${start}-${String(end).slice(-2)}`];
 }
 
+const DEFAULT_PAGE_SIZE = 15;
+
 const MONTH_NAMES = [
   'January',
   'February',
@@ -160,8 +162,11 @@ export class PrincipalFacultyService {
   /**
    * GET /me/principal/faculty
    *
-   * Only 18 real faculty exist in this environment — fetches every matching
-   * row (no server pagination), same tradeoff as the Students list.
+   * Only 18 real faculty exist in this environment, so — same tradeoff as
+   * the Students list — this fetches every matching row and computes
+   * classes/attendance/publications for exactly that set, then sorts
+   * department-wise (department name/code ascending, then faculty name)
+   * and paginates in memory rather than at the SQL level.
    */
   async list(query: ListPrincipalFacultyQueryDto) {
     const where: NonNullable<
@@ -207,7 +212,7 @@ export class PrincipalFacultyService {
         this.publicationsByFaculty(ids),
       ]);
 
-    const faculty = rows.map((row) => ({
+    let faculty = rows.map((row) => ({
       id: row.id,
       name: [row.prefix, row.first_name, row.last_name]
         .filter(Boolean)
@@ -231,7 +236,29 @@ export class PrincipalFacultyService {
       phone: row.users.phone,
     }));
 
-    return { total: faculty.length, faculty };
+    // Department-wise register order: department name ascending, then
+    // faculty name within it — matches how a paper staff register is
+    // actually filed, not an arbitrary id sort.
+    faculty = faculty.sort((a, b) => {
+      const deptA = a.department?.name ?? '';
+      const deptB = b.department?.name ?? '';
+      if (deptA !== deptB) return deptA.localeCompare(deptB);
+      return a.name.localeCompare(b.name);
+    });
+
+    const total = faculty.length;
+    const limit = query.limit ?? DEFAULT_PAGE_SIZE;
+    const page = query.page ?? 1;
+    const offset = (page - 1) * limit;
+    const pageFaculty = faculty.slice(offset, offset + limit);
+
+    return {
+      total,
+      page,
+      limit,
+      total_pages: Math.max(Math.ceil(total / limit), 1),
+      faculty: pageFaculty,
+    };
   }
 
   /** Tenure since date_of_joining, plus any prior-institution experience on file. Null when date_of_joining is unset — there is no stored total-experience figure to fall back on. */

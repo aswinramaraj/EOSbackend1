@@ -195,7 +195,44 @@ export class FacultyLeavesService {
       }
     }
 
+    // Principal's approval stage (faculty_leaves.principal_approval_status)
+    // is independent of the HoD/HR stages above - it's already "pending"
+    // for the Principal Approvals queue from the moment the request is
+    // created, not once HoD/HR have acted - so the Principal is notified
+    // right here too, same as the HoD is.
+    await this.notifyPrincipals(
+      'New leave request to review',
+      `${faculty.first_name} ${faculty.last_name} requested leave from ${dto.from_date} to ${dto.to_date}.`,
+      'faculty_leave',
+      leave.id,
+    );
+
     return toResponse(leave);
+  }
+
+  /** Every active user with the Principal role - not assumed to be exactly one, so an officiating/second Principal account (if one exists) is notified too. */
+  private async notifyPrincipals(
+    title: string,
+    message: string,
+    relatedEntityType: string,
+    relatedEntityId: number,
+  ): Promise<void> {
+    const principals = await this.prisma.users.findMany({
+      where: { roles: { name: ROLES.PRINCIPAL }, status: 'active' },
+      select: { id: true },
+    });
+    await Promise.all(
+      principals.map((p) =>
+        this.notifications.notify({
+          user_id: p.id,
+          title,
+          message,
+          type: 'approval_request_pending',
+          related_entity_type: relatedEntityType,
+          related_entity_id: relatedEntityId,
+        }),
+      ),
+    );
   }
 
   /**
