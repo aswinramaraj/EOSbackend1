@@ -136,6 +136,7 @@ model announcements {
   priority                   String?                      @db.VarChar(20)
   announcement_class_mapping announcement_class_mapping[]
   announcement_comments      announcement_comments[]
+  announcement_media         announcement_media[]
   announcement_role_mapping  announcement_role_mapping[]
   batches                    batches?                     @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   departments                departments?                 @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -841,6 +842,7 @@ model faculty {
   lms_notes                                                                                  lms_notes[]
   malpractice_incidents                                                                      malpractice_incidents[]
   media_requests                                                                             media_requests[]
+  medical_appointments                                                                       medical_appointments[]
   medical_camp_registrations                                                                 medical_camp_registrations[]
   medical_visits                                                                             medical_visits[]
   od_requests                                                                                od_requests[]
@@ -1460,18 +1462,20 @@ model media_requests {
 }
 
 model non_teaching_staff {
-  id              Int                 @id @default(autoincrement())
-  user_id         Int?
-  first_name      String              @db.VarChar(100)
-  last_name       String?             @db.VarChar(100)
-  category        staff_category_enum
-  department_id   Int?
-  date_of_joining DateTime?           @db.Date
-  status          user_status_enum    @default(active)
-  created_at      DateTime            @default(now()) @db.Timestamptz(6)
-  departments     departments?        @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users           users?              @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  salary_payments salary_payments[]
+  id                   Int                    @id @default(autoincrement())
+  user_id              Int?
+  first_name           String                 @db.VarChar(100)
+  last_name            String?                @db.VarChar(100)
+  category             staff_category_enum
+  department_id        Int?
+  date_of_joining      DateTime?              @db.Date
+  status               user_status_enum       @default(active)
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  medical_appointments medical_appointments[]
+  medical_visits       medical_visits[]
+  departments          departments?           @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                users?                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  salary_payments      salary_payments[]
 }
 
 model notifications {
@@ -2232,6 +2236,7 @@ model students {
   main_gate_in_out_ledger                                           main_gate_in_out_ledger[]
   malpractice_incidents                                             malpractice_incidents[]
   marksheets                                                        marksheets[]
+  medical_appointments                                              medical_appointments[]
   medical_camp_registrations                                        medical_camp_registrations[]
   medical_visits                                                    medical_visits[]
   od_request_hod_approvals                                          od_request_hod_approvals[]
@@ -2489,6 +2494,9 @@ model users {
   media_scorecard_targets                                                           media_scorecard_targets[]
   media_shoot_assignments                                                           media_shoot_assignments[]
   media_team_members                                                                media_team_members[]
+  medical_appointment_windows                                                       medical_appointment_windows[]
+  medical_appointments_medical_appointments_booked_by_user_idTousers                medical_appointments[]                  @relation("medical_appointments_booked_by_user_idTousers")
+  medical_appointments_medical_appointments_decided_by_user_idTousers               medical_appointments[]                  @relation("medical_appointments_decided_by_user_idTousers")
   medical_camp_registrations                                                        medical_camp_registrations[]
   medical_staff                                                                     medical_staff[]
   nba_evidence_items                                                                nba_evidence_items[]
@@ -2709,6 +2717,7 @@ model faculty_daily_attendance {
   users           users?                         @relation(fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([faculty_id, attendance_date])
+  @@unique([staff_user_id, attendance_date], map: "uq_faculty_daily_attendance_staff_date", where: raw("(staff_user_id IS NOT NULL)"))
   @@index([faculty_id, attendance_date], map: "idx_faculty_daily_attendance_faculty_date")
 }
 
@@ -3034,27 +3043,31 @@ model medical_staff {
 }
 
 model medical_visits {
-  id                   Int                @id @default(autoincrement())
+  id                   Int                    @id @default(autoincrement())
   visitor_type         borrower_type_enum
   student_id           Int?
   faculty_id           Int?
-  visit_date           DateTime           @default(dbgenerated("CURRENT_DATE")) @db.Date
-  reason               String?            @db.VarChar(255)
+  visit_date           DateTime               @default(dbgenerated("CURRENT_DATE")) @db.Date
+  reason               String?                @db.VarChar(255)
   diagnosis            String?
   treatment_given      String?
-  referred_to_hospital Boolean            @default(false)
+  referred_to_hospital Boolean                @default(false)
   attended_by_staff_id Int?
-  created_at           DateTime           @default(now()) @db.Timestamptz(6)
-  status               String             @default("done") @db.VarChar(20)
-  queued_at            DateTime           @default(now()) @db.Timestamptz(6)
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  status               String                 @default("done") @db.VarChar(20)
+  queued_at            DateTime               @default(now()) @db.Timestamptz(6)
+  staff_id             Int?
+  medical_appointments medical_appointments[]
   medical_bills        medical_bills[]
-  medical_staff        medical_staff?     @relation(fields: [attended_by_staff_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  faculty              faculty?           @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students             students?          @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  medical_staff        medical_staff?         @relation(fields: [attended_by_staff_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty              faculty?               @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  non_teaching_staff   non_teaching_staff?    @relation(fields: [staff_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students             students?              @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   sick_room_stays      sick_room_stays[]
   sports_injuries      sports_injuries[]
 
   @@index([student_id], map: "idx_medical_visits_student")
+  @@index([staff_id], map: "idx_medical_visits_staff")
 }
 
 model sports_teams {
@@ -5657,6 +5670,83 @@ model student_certifications {
   students        students  @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([student_id], map: "idx_student_certifications_student")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model announcement_media {
+  id               Int                         @id @default(autoincrement())
+  announcement_id  Int
+  media_type       achievement_media_type_enum
+  storage_key      String                      @db.VarChar(500)
+  thumbnail_key    String?                     @db.VarChar(500)
+  width            Int?
+  height           Int?
+  duration_seconds Int?
+  sequence_no      Int                         @default(1) @db.SmallInt
+  created_at       DateTime                    @default(now()) @db.Timestamptz(6)
+  announcements    announcements               @relation(fields: [announcement_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([announcement_id, sequence_no], map: "announcement_media_unique_seq")
+  @@index([announcement_id, sequence_no], map: "idx_announcement_media_announcement")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model medical_appointment_windows {
+  id                   Int                    @id @default(autoincrement())
+  slot_date            DateTime               @db.Date
+  start_time           DateTime               @db.Time(6)
+  end_time             DateTime               @db.Time(6)
+  slot_minutes         Int                    @default(30) @db.SmallInt
+  capacity_per_slot    Int                    @default(10) @db.SmallInt
+  status               String                 @default("open") @db.VarChar(20)
+  created_by_user_id   Int
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  users                users                  @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  medical_appointments medical_appointments[]
+
+  @@unique([slot_date, start_time, end_time], map: "medical_appointment_windows_unique")
+  @@index([slot_date], map: "idx_medical_appointment_windows_date")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model medical_appointments {
+  id                                                   Int                         @id @default(autoincrement())
+  window_id                                            Int
+  slot_date                                            DateTime                    @db.Date
+  slot_start                                           DateTime                    @db.Time(6)
+  slot_end                                             DateTime                    @db.Time(6)
+  booked_by_user_id                                    Int
+  patient_kind                                         borrower_type_enum
+  student_id                                           Int?
+  faculty_id                                           Int?
+  staff_id                                             Int?
+  reason                                               String?                     @db.VarChar(255)
+  status                                               String                      @default("pending") @db.VarChar(20)
+  decided_by_user_id                                   Int?
+  decided_at                                           DateTime?                   @db.Timestamptz(6)
+  decision_note                                        String?                     @db.VarChar(255)
+  visit_id                                             Int?
+  created_at                                           DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                                           DateTime                    @default(now()) @db.Timestamptz(6)
+  users_medical_appointments_booked_by_user_idTousers  users                       @relation("medical_appointments_booked_by_user_idTousers", fields: [booked_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_medical_appointments_decided_by_user_idTousers users?                      @relation("medical_appointments_decided_by_user_idTousers", fields: [decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty                                              faculty?                    @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  non_teaching_staff                                   non_teaching_staff?         @relation(fields: [staff_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students                                             students?                   @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  medical_visits                                       medical_visits?             @relation(fields: [visit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  medical_appointment_windows                          medical_appointment_windows @relation(fields: [window_id], references: [id], onUpdate: NoAction)
+
+  @@unique([slot_date, slot_start, booked_by_user_id], map: "uq_medical_appointments_active_per_user_slot", where: raw("((status)::text = ANY ((ARRAY['pending'::character varying, 'approved'::character varying])::text[]))"))
+  @@index([booked_by_user_id, slot_date(sort: Desc)], map: "idx_medical_appointments_booker")
+  @@index([slot_date, slot_start, status], map: "idx_medical_appointments_slot_status")
+  @@index([window_id], map: "idx_medical_appointments_window")
 }
 
 enum achievement_media_type_enum {

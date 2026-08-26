@@ -43,7 +43,10 @@ export class PrincipalSearchService {
   }
 
   private async searchStudents(q: string) {
-    const { students } = await this.studentsService.list({ q });
+    // list() now paginates (default 15/page) — this search slices to the
+    // top 5 itself, so the full, unpaginated candidate pool is requested
+    // here to keep this fan-out's existing behavior unchanged.
+    const { students } = await this.studentsService.list({ q, limit: 100 });
     return students.slice(0, RESULTS_PER_CATEGORY).map((r) => ({
       id: r.id,
       name: r.name,
@@ -53,7 +56,8 @@ export class PrincipalSearchService {
   }
 
   private async searchFaculty(q: string) {
-    const { faculty } = await this.facultyService.list({ q });
+    // Same reasoning as searchStudents() above — list() now paginates.
+    const { faculty } = await this.facultyService.list({ q, limit: 100 });
     return faculty.slice(0, RESULTS_PER_CATEGORY).map((f) => ({
       id: f.id,
       name: f.name,

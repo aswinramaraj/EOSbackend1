@@ -1,6 +1,32 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
+import { renderCsv, renderExcel, renderPdf, type ReportTable } from 'src/common/utils/report-export.util';
+
+function fmtDateForExport(d: Date | string | null): string {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/** Tenure since date_of_joining, plus any prior-institution years on file — same formula PrincipalFacultyService (the wired /me/principal/faculty list) already uses for this exact "Total experience" figure, duplicated here rather than imported across modules. */
+function totalExperienceYears(dateOfJoining: Date | null, previousExperienceYears: number | null): number | null {
+  if (!dateOfJoining) return previousExperienceYears ?? null;
+  const tenureYears = (Date.now() - dateOfJoining.getTime()) / (365.25 * 24 * 3600 * 1000);
+  return Math.round((tenureYears + (previousExperienceYears ?? 0)) * 10) / 10;
+}
+
+/** Standard h-index: the largest h such that h of the faculty's papers have at least h citations each — computed from real per-paper citation_count rows, not a stored/fabricated figure. */
+function computeHIndex(citationCounts: number[]): number {
+  const sorted = [...citationCounts].sort((a, b) => b - a);
+  let h = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i] >= i + 1) h = i + 1;
+    else break;
+  }
+  return h;
+}
 
 /**
  * Principal-only, institution-wide faculty & staff overview. Everything is
@@ -14,7 +40,29 @@ export class PrincipalFacultyService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async getOverview() {
+  /** Secretary is always forced to her own department; Principal/Admin stay institution-wide (undefined = unscoped). */
+  private async resolveEffectiveDepartmentId(
+    user: JwtPayload,
+    requested?: number,
+  ): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return requested;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
+
+  async getOverview(user: JwtPayload) {
+    const departmentId = await this.resolveEffectiveDepartmentId(user);
+    const facultyDeptFilter = departmentId !== undefined ? Prisma.sql`AND f.department_id = ${departmentId}` : Prisma.empty;
+    const deptRowFilter = departmentId !== undefined ? Prisma.sql`WHERE d.id = ${departmentId}` : Prisma.empty;
     try {
       // Run sequentially rather than via Promise.all - Supabase's session-mode
       // pooler caps concurrent connections quite low (pool_size: 15, shared
@@ -22,8 +70,12 @@ export class PrincipalFacultyService {
       // single dashboard load risks tipping it over under any concurrent
       // load. This endpoint isn't latency-critical enough to be worth that
       // fragility.
-      const teachingCount = await this.prisma.faculty.count({ where: { status: 'active' } });
-      const nonTeachingCount = await this.prisma.non_teaching_staff.count({ where: { status: 'active' } });
+      const teachingCount = await this.prisma.faculty.count({
+        where: { status: 'active', department_id: departmentId },
+      });
+      const nonTeachingCount = await this.prisma.non_teaching_staff.count({
+        where: { status: 'active', department_id: departmentId },
+      });
       const dutyRows = await this.prisma.$queryRaw<{ present: bigint; on_duty: bigint; on_leave: bigint }[]>(Prisma.sql`
         SELECT
           COUNT(*) FILTER (WHERE fda.status IN ('full_day', 'half_day'))::bigint AS present,
@@ -32,6 +84,7 @@ export class PrincipalFacultyService {
         FROM faculty_daily_attendance fda
         JOIN faculty f ON f.id = fda.faculty_id AND f.status = 'active'
         WHERE fda.attendance_date = CURRENT_DATE
+        ${facultyDeptFilter}
       `);
       const appraisalRows = await this.prisma.$queryRaw<{ academic_year: string | null; closed: bigint }[]>(Prisma.sql`
         SELECT
@@ -40,14 +93,18 @@ export class PrincipalFacultyService {
         FROM appraisal_requests ar
         JOIN faculty f ON f.id = ar.faculty_id AND f.status = 'active'
         WHERE ar.academic_year = (SELECT MAX(academic_year) FROM appraisal_requests)
+        ${facultyDeptFilter}
       `);
       const payrollRows = await this.prisma.$queryRaw<{ total: string; latest_paid_at: Date | null }[]>(Prisma.sql`
         SELECT
-          COALESCE(SUM(net_amount), 0)::text AS total,
-          MAX(paid_at) AS latest_paid_at
-        FROM salary_payments
-        WHERE month = EXTRACT(MONTH FROM CURRENT_DATE)::int
-          AND year = EXTRACT(YEAR FROM CURRENT_DATE)::int
+          COALESCE(SUM(sp.net_amount), 0)::text AS total,
+          MAX(sp.paid_at) AS latest_paid_at
+        FROM salary_payments sp
+        LEFT JOIN faculty f ON f.id = sp.faculty_id
+        LEFT JOIN non_teaching_staff nts ON nts.id = sp.staff_id
+        WHERE sp.month = EXTRACT(MONTH FROM CURRENT_DATE)::int
+          AND sp.year = EXTRACT(YEAR FROM CURRENT_DATE)::int
+          ${departmentId !== undefined ? Prisma.sql`AND (f.department_id = ${departmentId} OR nts.department_id = ${departmentId})` : Prisma.empty}
       `);
       const deptRows = await this.prisma.$queryRaw<
         { code: string; name: string; teaching: bigint; support: bigint; attended: bigint }[]
@@ -60,6 +117,7 @@ export class PrincipalFacultyService {
         LEFT JOIN faculty f ON f.department_id = d.id AND f.status = 'active'
         LEFT JOIN non_teaching_staff nts ON nts.department_id = d.id AND nts.status = 'active'
         LEFT JOIN faculty_daily_attendance fda ON fda.faculty_id = f.id AND fda.attendance_date = CURRENT_DATE
+        ${deptRowFilter}
         GROUP BY d.id, d.code, d.name
         HAVING COUNT(DISTINCT f.id) > 0 OR COUNT(DISTINCT nts.id) > 0
         ORDER BY d.name ASC
@@ -108,7 +166,8 @@ export class PrincipalFacultyService {
    * (service record, qualification/specialisation, subjects handled,
    * timetable load, leave balances/history, OD, appraisal) is real.
    */
-  async getFacultyProfile(id: number) {
+  async getFacultyProfile(id: number, user: JwtPayload) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user);
     const faculty = await this.prisma.faculty.findUnique({
       where: { id },
       select: {
@@ -128,16 +187,24 @@ export class PrincipalFacultyService {
         specialization: true,
         previous_institution: true,
         previous_experience_years: true,
+        staff_code: true,
         office_room: true,
         work_location: true,
         employment_status: true,
         employment_type: true,
+        profile_url: true,
         users: { select: { email: true } },
         departments: { select: { id: true, name: true, code: true } },
       },
     });
     if (!faculty) {
       throw new InternalServerErrorException({ message: 'Faculty not found', errorCode: 'FACULTY_NOT_FOUND' });
+    }
+    if (effectiveDepartmentId !== undefined && faculty.departments?.id !== effectiveDepartmentId) {
+      throw new ForbiddenException({
+        message: 'You may only view faculty from your own department',
+        errorCode: 'FORBIDDEN_DEPARTMENT',
+      });
     }
 
     const [subjectMappings, leaveBalances, leaveHistory, odHistory, appraisal, allTimetableSlots, classAdvisorOf, publications, awards, committeeRoles] = await Promise.all([
@@ -210,13 +277,29 @@ export class PrincipalFacultyService {
     const present = attendanceRows.filter((r) => r.status === 'full_day' || r.status === 'half_day').length;
     const attendancePct = attendanceRows.length ? Math.round((present / attendanceRows.length) * 1000) / 10 : null;
 
+    // Publication rollup — total citations and h-index are computed live
+    // from every real faculty_publications.citation_count row on file, not
+    // stored/fabricated figures. type is free-text, so the journal/
+    // conference/book buckets match by substring against the real values
+    // on file (same defensive-match approach as the has_doctorate check
+    // in the /me/principal/faculty list, PrincipalFacultyService.list()).
+    const journalsCount = publications.filter((p) => p.type.toLowerCase().includes('journal')).length;
+    const conferencesCount = publications.filter((p) => p.type.toLowerCase().includes('conf')).length;
+    const booksCount = publications.filter((p) => p.type.toLowerCase().includes('book')).length;
+    const totalCitations = publications.reduce((sum, p) => sum + p.citation_count, 0);
+    const hIndex = computeHIndex(publications.map((p) => p.citation_count));
+
     return {
       id: faculty.id,
+      staff_code: faculty.staff_code,
       name: `${faculty.prefix ?? ''} ${faculty.first_name} ${faculty.last_name}`.trim(),
       designation: faculty.designation,
       department: faculty.departments,
+      // Same faculty.profile_url column /me/my-profile reads as photo_url —
+      // no getPublicUrl() wrapping there either, so it's already a usable URL.
+      photo_url: faculty.profile_url,
       date_of_joining: faculty.date_of_joining,
-      experience_years: faculty.previous_experience_years,
+      experience_years: totalExperienceYears(faculty.date_of_joining, faculty.previous_experience_years),
       status: faculty.status,
       gender: faculty.gender,
       date_of_birth: faculty.date_of_birth,
@@ -274,9 +357,104 @@ export class PrincipalFacultyService {
           }
         : null,
       publications: publications.map((p) => ({ title: p.title, type: p.type, year: p.year, citation_count: p.citation_count })),
+      publications_summary: {
+        total: publications.length,
+        journals: journalsCount,
+        conferences: conferencesCount,
+        books: booksCount,
+        total_citations: totalCitations,
+        h_index: hIndex,
+      },
       awards: awards.map((a) => ({ title: a.title, year: a.year, awarded_by: a.awarded_by })),
       responsibilities: committeeRoles.map((c) => ({ title: c.role ? `${c.role}, ${c.committee_name}` : c.committee_name, academic_year: c.academic_year })),
     };
+  }
+
+  /**
+   * GET /principal-faculty/:id/profile/export?format=csv|excel|pdf
+   *
+   * Same shared renderCsv/renderExcel/renderPdf pipeline
+   * (src/common/utils/report-export.util.ts) the Reports page's export
+   * buttons and the Student Profile's export already use — the whole
+   * faculty profile flattened into one Field/Value table. Secretary's
+   * own department-ownership check is inherited for free via
+   * getFacultyProfile(id, user) below.
+   */
+  async exportFacultyProfile(
+    id: number,
+    user: JwtPayload,
+    format: 'csv' | 'excel' | 'pdf',
+  ): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+    const f = await this.getFacultyProfile(id, user);
+
+    const rows: Record<string, unknown>[] = [];
+    const add = (field: string, value: unknown) =>
+      rows.push({ field, value: value === null || value === undefined || value === '' ? '—' : value });
+
+    add('Employee ID', f.staff_code);
+    add('Name', f.name);
+    add('Designation', f.designation);
+    add('Department', f.department?.name);
+    add('Status', f.status);
+    add('Date of Joining', fmtDateForExport(f.date_of_joining));
+    add('Total Experience (yrs)', f.experience_years);
+    add('Gender', f.gender);
+    add('Date of Birth', fmtDateForExport(f.date_of_birth));
+    add('Institute Email', f.institute_email);
+    add('Personal Email', f.personal_email);
+    add('Phone', f.phone);
+    add('Qualification', f.qualification);
+    add('Specialization', f.specialization);
+    add('Previous Institution', f.previous_institution);
+    add('Office Room', f.office_room);
+    add('Work Location', f.work_location);
+    add('Employment Status', f.employment_status);
+    add('Employment Type', f.employment_type);
+    add('Attendance This Term', f.attendance_pct_this_term != null ? `${f.attendance_pct_this_term}%` : null);
+    add('Periods / Week', f.periods_per_week);
+    add('Class Advisor Of', f.class_advisor_of);
+    add(
+      'Subjects Handled',
+      f.subjects_handled.map((s) => `${s.name} (${s.code}), Sem ${s.semester ?? '—'}, Sec ${s.section}`).join('; '),
+    );
+    add(
+      'Leave Balances',
+      f.leave_balances.map((b) => `${b.leave_type}: ${b.used}/${b.allocated} used (${b.academic_year})`).join('; '),
+    );
+    add('Publications', f.publications_summary.total);
+    add('Journals', f.publications_summary.journals);
+    add('Conferences', f.publications_summary.conferences);
+    add('Books / Chapters', f.publications_summary.books);
+    add('h-index', f.publications_summary.h_index);
+    add('Total Citations', f.publications_summary.total_citations);
+    add('Awards', f.awards.map((a) => `${a.title}${a.awarded_by ? ` (${a.awarded_by})` : ''}, ${a.year}`).join('; '));
+    add('Responsibilities', f.responsibilities.map((r) => r.title).join('; '));
+    if (f.appraisal) {
+      add('Appraisal Status', f.appraisal.status);
+      add('Appraisal Academic Year', f.appraisal.academic_year);
+    }
+
+    const table: ReportTable = {
+      title: `${f.name} - Faculty Profile`,
+      columns: [
+        { header: 'Field', key: 'field', width: 28 },
+        { header: 'Value', key: 'value', width: 60 },
+      ],
+      rows,
+    };
+
+    const slug = (f.staff_code ?? String(f.id)).replace(/[^a-zA-Z0-9-]+/g, '-');
+    if (format === 'excel') {
+      return {
+        buffer: await renderExcel(table),
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        filename: `faculty-${slug}.xlsx`,
+      };
+    }
+    if (format === 'pdf') {
+      return { buffer: await renderPdf(table), contentType: 'application/pdf', filename: `faculty-${slug}.pdf` };
+    }
+    return { buffer: renderCsv(table), contentType: 'text/csv', filename: `faculty-${slug}.csv` };
   }
 
   /**
@@ -291,9 +469,10 @@ export class PrincipalFacultyService {
    *  - next: nearest real upcoming invigilation_duties row (the only real
    *    "scheduled duty" concept in the schema) — null if none scheduled
    */
-  async getCoordination(departmentId?: number) {
+  async getCoordination(user: JwtPayload, departmentId?: number) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, departmentId);
     const faculty = await this.prisma.faculty.findMany({
-      where: { status: 'active', department_id: departmentId },
+      where: { status: 'active', department_id: effectiveDepartmentId },
       select: { id: true, first_name: true, last_name: true, designation: true, department_id: true, departments: { select: { code: true } } },
       orderBy: { first_name: 'asc' },
     });
@@ -399,7 +578,17 @@ export class PrincipalFacultyService {
   }
 
   /** POST /principal-faculty/:id/assign-duty — real write into faculty_committee_roles. */
-  async assignDuty(id: number, committeeName: string, role?: string) {
+  async assignDuty(id: number, committeeName: string, user: JwtPayload, role?: string) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user);
+    if (effectiveDepartmentId !== undefined) {
+      const faculty = await this.prisma.faculty.findUnique({ where: { id }, select: { department_id: true } });
+      if (!faculty || faculty.department_id !== effectiveDepartmentId) {
+        throw new ForbiddenException({
+          message: 'You may only assign duties to faculty from your own department',
+          errorCode: 'FORBIDDEN_DEPARTMENT',
+        });
+      }
+    }
     const academicYear = new Date().getFullYear() + '-' + (new Date().getFullYear() + 1);
     return this.prisma.faculty_committee_roles.create({
       data: { faculty_id: id, committee_name: committeeName, role, academic_year: academicYear },

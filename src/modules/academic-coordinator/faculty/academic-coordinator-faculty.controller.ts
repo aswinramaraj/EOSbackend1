@@ -17,10 +17,14 @@ export class AcademicCoordinatorFacultyController {
     private readonly facultyService: AcademicCoordinatorFacultyService,
   ) {}
 
-  /** Reuses the exact same cross-department directory the Principal module already exposes — no reason to duplicate it. */
+  // Reuses the exact same cross-department directory the Principal module
+  // already exposes — no reason to duplicate it. PrincipalFacultyService.
+  // list() now defaults to a 15-row page; this screen has no pagination UI
+  // and expects every matching row, so the max allowed limit is forced to
+  // keep this controller's existing unbounded behavior unchanged.
   @Get()
   list(@Query() query: ListPrincipalFacultyQueryDto) {
-    return this.principalFacultyService.list(query);
+    return this.principalFacultyService.list({ ...query, limit: query.limit ?? 100 });
   }
 
   @Get('workload')

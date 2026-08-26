@@ -25,8 +25,12 @@ export class IqacStudentsController {
     return this.studentsService.filters();
   }
 
+  // IQAC's own screen has no pagination UI and expects every matching row
+  // in one response — PrincipalStudentsService.list() now defaults to a
+  // 15-row page (see that service's own doc comment), so this forces the
+  // max allowed limit to keep IQAC's existing unbounded behavior unchanged.
   @Get()
   list(@Query() query: ListPrincipalStudentsQueryDto) {
-    return this.studentsService.list(query);
+    return this.studentsService.list({ ...query, limit: query.limit ?? 100 });
   }
 }

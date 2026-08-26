@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -8,6 +9,7 @@ import {
 } from '@nestjs/common';
 import crypto from 'node:crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type {
@@ -86,6 +88,25 @@ export class FacultyService {
   private readonly logger = new Logger(FacultyService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Secretary is always forced to her own department; other roles keep whatever was requested. */
+  private async resolveEffectiveDepartmentId(
+    user: JwtPayload,
+    requested?: number,
+  ): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return requested;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
 
   /**
    * POST /faculty (Admin only)
@@ -198,10 +219,11 @@ export class FacultyService {
     };
   }
 
-  /** GET /faculty (Admin/HoD) — paginated list, filterable by department_id, status, designation, joining year, and a name/email search. */
-  async findAll(query: ListFacultyQueryDto) {
+  /** GET /faculty (Admin/HoD/Secretary) — paginated list, filterable by department_id, status, designation, joining year, and a name/email search. Secretary is always forced to her own department, ignoring any client-supplied department_id. */
+  async findAll(query: ListFacultyQueryDto, user: JwtPayload) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, query.department_id);
     const where = {
-      department_id: query.department_id,
+      department_id: effectiveDepartmentId,
       status: query.status,
       designation: query.designation,
       employment_status: query.employment_status as
