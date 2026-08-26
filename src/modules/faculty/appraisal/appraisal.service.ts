@@ -192,15 +192,27 @@ export class AppraisalService {
    * scoring - same "goes directly to HR" treatment as Leave/OD.
    */
   async create(dto: CreateAppraisalDto, currentUser: JwtPayload) {
-    const isSecretary = currentUser.role === ROLES.SECRETARY;
-    const faculty = isSecretary
-      ? null
-      : await this.resolveFacultyByUserId(currentUser.sub);
+    // "Non-teaching staff" = has no faculty row (Secretary, HR Payroll,
+    // warden). Determined by whether the row EXISTS, not by role name: this
+    // was `role === SECRETARY`, so every other non-teaching role fell into
+    // the faculty path below and got a FACULTY_NOT_FOUND 404 on its own
+    // appraisal. Same fix as faculty-leaves/faculty-od/payslip-requests.
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { user_id: currentUser.sub },
+    });
+    const isStaffAccount = faculty === null;
+    if (isStaffAccount) {
+      // No non_teaching_staff membership check: the row this writes is keyed
+      // on staff_user_id, whose FK is to `users` — which the authenticated
+      // caller demonstrably has. Demanding a personnel row as well added no
+      // integrity and 404d real employees whose non_teaching_staff row was
+      // never created.
+    }
 
     const existing = await this.prisma.appraisal_requests.findFirst({
-      where: isSecretary
+      where: isStaffAccount
         ? { staff_user_id: currentUser.sub, academic_year: dto.academic_year }
-        : { faculty_id: faculty!.id, academic_year: dto.academic_year },
+        : { faculty_id: faculty.id, academic_year: dto.academic_year },
     });
     if (existing) {
       throw new ConflictException(
@@ -241,9 +253,9 @@ export class AppraisalService {
     const request = await this.prisma.$transaction(async (tx) => {
       const header = await tx.appraisal_requests.create({
         data: {
-          ...(isSecretary
+          ...(isStaffAccount
             ? { staff_user_id: currentUser.sub }
-            : { faculty_id: faculty!.id }),
+            : { faculty_id: faculty.id }),
           academic_year: dto.academic_year,
           ...(isHodSelfSubmission
             ? {
@@ -256,7 +268,7 @@ export class AppraisalService {
           // to review it, so this goes straight to the HR scoring stage,
           // same skip-the-HoD-stage treatment as an HoD's own submission
           // above, just with no hod_reviewed_by (there was no reviewer).
-          ...(isSecretary ? { status: 'hod_reviewed' as const } : {}),
+          ...(isStaffAccount ? { status: 'hod_reviewed' as const } : {}),
         },
       });
 
@@ -276,18 +288,22 @@ export class AppraisalService {
 
     this.logger.log(
       `Appraisal request created: id=${request.id}` +
-        (isSecretary ? ` staff_user=${currentUser.sub}` : ` faculty=${faculty!.id}`),
+        (isStaffAccount
+          ? ` staff_user=${currentUser.sub}`
+          : ` faculty=${faculty.id}`),
     );
 
     // An HoD's own self-submission (or a Secretary's, with no department at
     // all) skips the HoD stage entirely and has no one department-level to
     // notify.
-    if (!isHodSelfSubmission && !isSecretary) {
-      const hodUserId = await this.resolveDepartmentHodUserId(faculty!.department_id);
+    if (!isHodSelfSubmission && !isStaffAccount) {
+      const hodUserId = await this.resolveDepartmentHodUserId(
+        faculty.department_id,
+      );
       if (hodUserId) {
         await this.notifyAppraisal(hodUserId, {
           title: 'New appraisal request to review',
-          message: `${faculty!.first_name} ${faculty!.last_name} submitted an appraisal for ${dto.academic_year}.`,
+          message: `${faculty.first_name} ${faculty.last_name} submitted an appraisal for ${dto.academic_year}.`,
           type: 'approval_request_pending',
           related_entity_id: request.id,
         });
@@ -559,8 +575,10 @@ export class AppraisalService {
     // Secretary submissions have no `faculty` row (see create()'s
     // `staff_user_id` branch) — own-request ownership is checked against
     // that column instead of resolving a faculty profile that doesn't exist.
-    const isSecretary = role === ROLES.SECRETARY;
-    const faculty = isSecretary ? null : await this.resolveFacultyByUserId(userId);
+    const isStaffAccount = role === ROLES.SECRETARY;
+    const faculty = isStaffAccount
+      ? null
+      : await this.resolveFacultyByUserId(userId);
 
     const existing = await this.prisma.appraisal_requests.findUnique({
       where: { id: requestId },
@@ -568,7 +586,12 @@ export class AppraisalService {
     if (!existing) {
       throw new NotFoundException('Appraisal request not found');
     }
-    const owns = isSecretary ? existing.staff_user_id === userId : existing.faculty_id === faculty!.id;
+    // Narrowed on `faculty === null` rather than the isStaffAccount alias so
+    // TypeScript can follow it without a non-null assertion.
+    const owns =
+      faculty === null
+        ? existing.staff_user_id === userId
+        : existing.faculty_id === faculty.id;
     if (!owns) {
       throw new ForbiddenException(
         'You may only attach files to your own appraisal requests',
@@ -631,8 +654,10 @@ export class AppraisalService {
     userId: number,
     role?: string,
   ) {
-    const isSecretary = role === ROLES.SECRETARY;
-    const faculty = isSecretary ? null : await this.resolveFacultyByUserId(userId);
+    const isStaffAccount = role === ROLES.SECRETARY;
+    const faculty = isStaffAccount
+      ? null
+      : await this.resolveFacultyByUserId(userId);
 
     const request = await this.prisma.appraisal_requests.findUnique({
       where: { id: requestId },
@@ -640,7 +665,10 @@ export class AppraisalService {
     if (!request) {
       throw new NotFoundException('Appraisal request not found');
     }
-    const owns = isSecretary ? request.staff_user_id === userId : request.faculty_id === faculty!.id;
+    const owns =
+      faculty === null
+        ? request.staff_user_id === userId
+        : request.faculty_id === faculty.id;
     if (!owns) {
       throw new ForbiddenException(
         'You may only remove attachments from your own appraisal requests',

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -244,11 +245,13 @@ export class ProfileService {
       },
     });
 
+    // Non-teaching staff (HR Payroll, Secretary, warden) have no faculty row.
+    // This used to 404 outright, so the Profile screen was permanently broken
+    // for every such account. Their real identity lives in
+    // non_teaching_staff, so it is served from there in the SAME response
+    // shape — the client needs no branch of its own.
     if (!faculty) {
-      throw new NotFoundException({
-        message: 'Faculty profile not found for this account',
-        errorCode: 'FACULTY_NOT_FOUND',
-      });
+      return this.getStaffProfile(userId, socialLinks);
     }
 
     return {
@@ -264,6 +267,76 @@ export class ProfileService {
       reporting_to: faculty.faculty
         ? fullName(faculty.faculty.first_name, faculty.faculty.last_name)
         : null,
+      social_links: socialLinks,
+    };
+  }
+
+  /**
+   * Profile for a non-teaching staff account (HR Payroll, Secretary, warden).
+   *
+   * Returns the SAME shape as getFacultyProfile so the client has one contract
+   * for every employee. Fields non_teaching_staff genuinely does not have
+   * (profile photo, resume, reporting line) come back null rather than being
+   * faked — the row has first_name/last_name/category/department/date_of_joining
+   * and nothing else.
+   *
+   * If the account is in neither register the response still succeeds, carrying
+   * the email and role from `users`. A 404 here just breaks the screen; it does
+   * not make the missing staff row appear, and an employee who can log in
+   * should still be able to see who the system thinks they are.
+   */
+  private async getStaffProfile(
+    userId: number,
+    socialLinks: { id: number; title: string; url: string }[],
+  ) {
+    const account = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: {
+        email: true,
+        roles: { select: { name: true } },
+        non_teaching_staff: {
+          select: {
+            id: true,
+            first_name: true,
+            last_name: true,
+            category: true,
+            date_of_joining: true,
+            departments: { select: { name: true, code: true } },
+          },
+        },
+      },
+    });
+
+    if (!account) {
+      throw new NotFoundException({
+        message: 'Account not found',
+        errorCode: 'USER_NOT_FOUND',
+      });
+    }
+
+    // non_teaching_staff.user_id is nullable, so Prisma models it as a list.
+    const staff = account.non_teaching_staff?.[0];
+
+    return {
+      role: 'staff' as const,
+      name: staff
+        ? fullName(staff.first_name, staff.last_name ?? '')
+        : account.email,
+      // Staff have no employee-code column; the department code + row id is the
+      // same construction getFacultyProfile uses for faculty.
+      id_no: staff
+        ? `STF-${staff.departments?.code ?? 'GEN'}-${staff.id}`
+        : null,
+      // `category` is this register's equivalent of a designation.
+      designation: staff ? staff.category : (account.roles?.name ?? null),
+      department: staff?.departments?.name ?? null,
+      photo_url: null,
+      resume_url: null,
+      work_email: account.email,
+      date_of_joining: staff?.date_of_joining
+        ? toDateOnly(staff.date_of_joining)
+        : null,
+      reporting_to: null,
       social_links: socialLinks,
     };
   }
@@ -307,9 +380,13 @@ export class ProfileService {
         select: { id: true },
       });
       if (!faculty) {
-        throw new NotFoundException({
-          message: 'Faculty profile not found for this account',
-          errorCode: 'FACULTY_NOT_FOUND',
+        // non_teaching_staff has no resume_url column, so there is genuinely
+        // nowhere to store this. Says so plainly instead of the old
+        // "Faculty profile not found", which read like a broken account.
+        throw new BadRequestException({
+          message:
+            'Resume upload is not available for non-teaching staff accounts.',
+          errorCode: 'RESUME_NOT_SUPPORTED_FOR_ROLE',
         });
       }
       await this.prisma.faculty.update({
@@ -469,11 +546,11 @@ export class ProfileService {
       },
     });
 
+    // Non-teaching staff (HR Payroll, Secretary, warden) get the SAME card,
+    // built from non_teaching_staff instead. This used to 404, so the ID card
+    // was permanently unavailable to them.
     if (!faculty) {
-      throw new NotFoundException({
-        message: 'Faculty profile not found for this account',
-        errorCode: 'FACULTY_NOT_FOUND',
-      });
+      return this.getStaffIdCard(user);
     }
 
     return {
@@ -505,11 +582,80 @@ export class ProfileService {
   }
 
   /**
+   * The ID card for a non-teaching staff account.
+   *
+   * Returns the exact same field shape as the faculty card so the client
+   * renders one component for both — nothing branches in the app.
+   *
+   * non_teaching_staff is a much thinner register than faculty: it has
+   * first_name/last_name/category/department/date_of_joining and nothing else.
+   * Every field it genuinely lacks (photo, date of birth, personal contact,
+   * address) comes back null rather than invented, which is the same choice
+   * already made for faculty blood_group.
+   */
+  private async getStaffIdCard(user: JwtPayload) {
+    const account = await this.prisma.users.findUnique({
+      where: { id: user.sub },
+      select: {
+        email: true,
+        phone: true,
+        roles: { select: { name: true } },
+        non_teaching_staff: {
+          select: {
+            id: true,
+            first_name: true,
+            last_name: true,
+            category: true,
+            departments: { select: { name: true, code: true } },
+          },
+        },
+      },
+    });
+
+    if (!account) {
+      throw new NotFoundException({
+        message: 'Account not found',
+        errorCode: 'USER_NOT_FOUND',
+      });
+    }
+
+    // non_teaching_staff.user_id is nullable, so Prisma models it as a list.
+    const staff = account.non_teaching_staff?.[0];
+
+    return {
+      role: 'staff' as const,
+      name: staff
+        ? fullName(staff.first_name, staff.last_name ?? '')
+        : account.email,
+      photo_url: null,
+      secondary_id_label: 'Employee ID',
+      secondary_id: staff
+        ? `STF-${staff.departments?.code ?? 'GEN'}-${staff.id}`
+        : null,
+      // `category` is this register's equivalent of a designation.
+      degree_dept_label: staff?.category ?? account.roles?.name ?? null,
+      batch_label: staff?.departments?.name ?? null,
+      // faculty_id_card_issuances.faculty_id is NOT NULL with an FK to faculty,
+      // so a staff issuance cannot be recorded without a schema change. Left
+      // null and the card reflects live data instead — the same treatment
+      // students already get.
+      issued_at: null,
+      blood_group: null,
+      date_of_birth: null,
+      // Mirrors the faculty card, where this row carries the nearest real
+      // contact field rather than a meaningless "Parent Name".
+      parent_name: account.email,
+      resi_tel_no: account.phone,
+      address: null,
+    };
+  }
+
+  /**
    * POST /me/profile/id-card/issue — call once when the user taps "Generate
-   * ID Card" (not on every preview render). Only faculty/HoD/HR Payroll rows
-   * have an issuance audit table (faculty_id_card_issuances) - students have
-   * no equivalent table in the schema, so this is a no-op for them and the
-   * preview simply reflects live data instead.
+   * ID Card" (not on every preview render). Only faculty/HoD rows have an
+   * issuance audit table (faculty_id_card_issuances, whose faculty_id is NOT
+   * NULL) - students and non-teaching staff have no equivalent, so this is a
+   * no-op for them and the preview simply reflects live data instead.
    */
   async issueIdCard(user: JwtPayload) {
     if (user.role === ROLES.STUDENT) {
@@ -521,10 +667,10 @@ export class ProfileService {
       select: { id: true },
     });
     if (!faculty) {
-      throw new NotFoundException({
-        message: 'Faculty profile not found for this account',
-        errorCode: 'FACULTY_NOT_FOUND',
-      });
+      // Non-teaching staff: no issuance row is possible (see getStaffIdCard),
+      // so this succeeds without persisting, exactly as it does for students.
+      // Returning 404 here only broke the "Generate ID Card" button for them.
+      return { issued_at: new Date().toISOString() };
     }
 
     try {

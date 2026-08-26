@@ -6,9 +6,15 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/common/storage/storage.service';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import {
+  announcementMediaKeys,
+  insertAnnouncementMedia,
+  loadAnnouncementMedia,
+} from './announcement-media.util';
 import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import {
@@ -70,6 +76,19 @@ const ANNOUNCEMENT_RESPONSE_INCLUDE = {
     select: {
       email: true,
       roles: { select: { name: true } },
+      // Media Room / Secretary / warden accounts are non_teaching_staff rows,
+      // not faculty rows. Without this relation their posts fell back to
+      // showing the poster's raw EMAIL ADDRESS as the author name to every
+      // student who saw the post. Same faculty -> non_teaching_staff -> email
+      // order the rest of the codebase uses (see resolveRequesterName in
+      // media-requests.service.ts and resolveMarkerName in attendance).
+      non_teaching_staff: {
+        select: {
+          first_name: true,
+          last_name: true,
+          departments: { select: { code: true } },
+        },
+      },
       faculty: {
         select: {
           first_name: true,
@@ -229,10 +248,12 @@ export class AnnouncementsService {
               priority: dto.priority,
               // Real column that nothing was writing, so a scheduled post kept
               // no record of when it was meant to go out.
-              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
-            // Real column that was never written; a scheduled post kept no
-            // record of when it was meant to go out.
-              },
+              scheduled_at: dto.scheduled_at
+                ? new Date(dto.scheduled_at)
+                : null,
+              // Real column that was never written; a scheduled post kept no
+              // record of when it was meant to go out.
+            },
           });
 
           // Social post details live in their own 1:1 table. Written inside
@@ -250,6 +271,9 @@ export class AnnouncementsService {
                 allow_comments: dto.allow_comments ?? true,
               },
             });
+            // Carousel media, written in the same transaction as the post so a
+            // post can never appear without the photos it was published with.
+            await insertAnnouncementMedia(tx, announcement.id, dto.media ?? []);
           }
 
           // Posted inside the same transaction as the announcement, so a
@@ -338,10 +362,12 @@ export class AnnouncementsService {
               priority: dto.priority,
               // Real column that nothing was writing, so a scheduled post kept
               // no record of when it was meant to go out.
-              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
-            // Real column that was never written; a scheduled post kept no
-            // record of when it was meant to go out.
-              },
+              scheduled_at: dto.scheduled_at
+                ? new Date(dto.scheduled_at)
+                : null,
+              // Real column that was never written; a scheduled post kept no
+              // record of when it was meant to go out.
+            },
           });
 
           await tx.announcement_role_mapping.createMany({
@@ -416,7 +442,7 @@ export class AnnouncementsService {
             scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
             // Real column that was never written; a scheduled post kept no
             // record of when it was meant to go out.
-            },
+          },
         });
       } catch (err) {
         this.logger.error('DB error while creating announcement', err);
@@ -446,7 +472,10 @@ export class AnnouncementsService {
       dto.target_audience === 'edc_inside_college' ||
       dto.target_audience === 'edc_all_entrepreneurs'
     ) {
-      if (context.role !== ROLES.EDC_COORDINATOR && context.role !== ROLES.ADMIN) {
+      if (
+        context.role !== ROLES.EDC_COORDINATOR &&
+        context.role !== ROLES.ADMIN
+      ) {
         throw new ForbiddenException({
           message: 'You are not permitted to post EDC announcements',
           errorCode: 'ROLE_NOT_PERMITTED',
@@ -470,7 +499,7 @@ export class AnnouncementsService {
             scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
             // Real column that was never written; a scheduled post kept no
             // record of when it was meant to go out.
-              category: dto.category,
+            category: dto.category,
           },
         });
       } catch (err) {
@@ -481,7 +510,10 @@ export class AnnouncementsService {
         });
       }
 
-      return this.toResponseShape({ ...announcement, announcement_class_mapping: [] });
+      return this.toResponseShape({
+        ...announcement,
+        announcement_class_mapping: [],
+      });
     }
 
     await this.assertClassesValid(dto.class_ids!, context);
@@ -505,7 +537,7 @@ export class AnnouncementsService {
             scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
             // Real column that was never written; a scheduled post kept no
             // record of when it was meant to go out.
-            },
+          },
         });
 
         await tx.announcement_class_mapping.createMany({
@@ -528,6 +560,9 @@ export class AnnouncementsService {
               allow_comments: dto.allow_comments ?? true,
             },
           });
+          // Carousel media, written in the same transaction as the post so a
+          // post can never appear without the photos it was published with.
+          await insertAnnouncementMedia(tx, announcement.id, dto.media ?? []);
         }
 
         // Same transaction as the post: this is the branch the social
@@ -642,10 +677,106 @@ export class AnnouncementsService {
   }
 
   /**
+   * Publishes scheduled posts once their time arrives.
+   *
+   * A scheduled post is stored as `status = 'draft'` with a `scheduled_at`
+   * (announcement_status_enum has only draft/published, so there is no third
+   * "scheduled" state to sit in). Until this existed, `scheduled_at` was
+   * written and then nothing ever acted on it: the post sat as a draft forever
+   * and somebody had to remember to press Publish by hand. Scheduling that
+   * silently does not fire is worse than no scheduling at all, because the
+   * author believes the post went out.
+   *
+   * `scheduled_at: { not: null }` is essential — without it this would publish
+   * every ordinary draft in the system on the next tick.
+   *
+   * Idempotent across app instances: the flip is a conditional UPDATE on
+   * `status = 'draft'`, so if a second instance's cron (or somebody pressing
+   * Publish manually) got there first, `count` is 0 and this run does NOT
+   * notify again. That is what stops recipients getting duplicate pushes when
+   * more than one instance is running.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async publishDueScheduledAnnouncements(): Promise<void> {
+    let due: {
+      id: number;
+      title: string;
+      target_audience: target_audience_enum;
+      department_id: number | null;
+      announcement_class_mapping: { class_id: number }[];
+      announcement_role_mapping: { role_id: number }[];
+    }[];
+
+    try {
+      due = await this.prisma.announcements.findMany({
+        where: {
+          status: 'draft',
+          scheduled_at: { not: null, lte: new Date() },
+        },
+        select: {
+          id: true,
+          title: true,
+          target_audience: true,
+          department_id: true,
+          announcement_class_mapping: { select: { class_id: true } },
+          announcement_role_mapping: { select: { role_id: true } },
+        },
+        orderBy: { scheduled_at: 'asc' },
+        // Bounded so a backlog (e.g. after downtime) cannot turn one tick into
+        // an unbounded notification storm; the rest go out next minute.
+        take: 200,
+      });
+    } catch (err) {
+      this.logger.error('Failed to read due scheduled announcements', err);
+      return;
+    }
+
+    for (const announcement of due) {
+      try {
+        const { count } = await this.prisma.announcements.updateMany({
+          where: { id: announcement.id, status: 'draft' },
+          data: { status: 'published' },
+        });
+        if (count !== 1) continue;
+
+        this.logger.log(
+          `Published scheduled announcement ${announcement.id} ("${announcement.title}")`,
+        );
+
+        // Same fan-out the manual publish paths use, and fire-and-forget for
+        // the same reason (see notifyNewAnnouncement) — a large audience must
+        // not hold the cron tick open.
+        void this.notifyNewAnnouncement(
+          announcement.id,
+          announcement.title,
+          announcement.target_audience,
+          {
+            classIds: announcement.announcement_class_mapping.map(
+              (m) => m.class_id,
+            ),
+            departmentId: announcement.department_id,
+            roleIds: announcement.announcement_role_mapping.map(
+              (m) => m.role_id,
+            ),
+          },
+        );
+      } catch (err) {
+        // One bad row must not stop the rest of the batch going out.
+        this.logger.error(
+          `Failed to publish scheduled announcement ${announcement.id}`,
+          err,
+        );
+      }
+    }
+  }
+
+  /**
    * Fans out "new announcement" notifications to every actual recipient of
    * a just-published announcement. Only called from create() branches that
    * have already resolved status === 'published' (a draft is never
-   * announced - it isn't addressed to anyone yet). Never throws - a
+   * announced - it isn't addressed to anyone yet), and from
+   * publishDueScheduledAnnouncements above once a scheduled post goes out.
+   * Never throws - a
    * failure here must not roll back or fail the announcement's own
    * creation, which has already committed by the time this runs.
    *
@@ -774,8 +905,20 @@ export class AnnouncementsService {
       });
     }
 
+    // One batched query for every post's carousel, attached in memory. A
+    // per-post lookup here would turn one feed request into N+1 round trips
+    // against a pooled connection.
+    const mediaByAnnouncement = await loadAnnouncementMedia(
+      this.prisma,
+      this.storage,
+      announcements.map((a) => a.id),
+    );
+
     return announcements.map((announcement) =>
-      this.toResponseShape(announcement),
+      this.toResponseShape({
+        ...announcement,
+        media: mediaByAnnouncement.get(announcement.id) ?? [],
+      }),
     );
   }
 
@@ -814,7 +957,14 @@ export class AnnouncementsService {
       });
     }
 
-    return this.toResponseShape(announcement);
+    const media = await loadAnnouncementMedia(this.prisma, this.storage, [
+      announcement.id,
+    ]);
+
+    return this.toResponseShape({
+      ...announcement,
+      media: media.get(announcement.id) ?? [],
+    });
   }
 
   /**
@@ -947,10 +1097,12 @@ export class AnnouncementsService {
               priority: dto.priority,
               // Real column that nothing was writing, so a scheduled post kept
               // no record of when it was meant to go out.
-              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
-            // Real column that was never written; a scheduled post kept no
-            // record of when it was meant to go out.
-              },
+              scheduled_at: dto.scheduled_at
+                ? new Date(dto.scheduled_at)
+                : null,
+              // Real column that was never written; a scheduled post kept no
+              // record of when it was meant to go out.
+            },
           });
         }
 
@@ -1034,8 +1186,29 @@ export class AnnouncementsService {
 
     this.assertOwnership(existing, user, context);
 
+    // Collected BEFORE the row goes: announcement_media is ON DELETE CASCADE,
+    // so once the announcement is deleted there is nothing left to tell us
+    // which files in the bucket belonged to it.
+    const mediaKeys = await announcementMediaKeys(this.prisma, id);
+
     try {
-      return await this.prisma.announcements.delete({ where: { id } });
+      const deleted = await this.prisma.announcements.delete({ where: { id } });
+
+      // Storage cleanup is best-effort and deliberately AFTER the row is gone:
+      // an orphaned file is harmless, whereas failing the delete because the
+      // bucket was unreachable would leave the post visible to everyone.
+      await Promise.all(
+        mediaKeys.map((key) =>
+          this.storage.delete(key).catch((err: unknown) => {
+            this.logger.warn(
+              `Announcement ${id} deleted but its media file ${key} could not be removed from storage`,
+              err as Error,
+            );
+          }),
+        ),
+      );
+
+      return deleted;
     } catch (err) {
       this.logger.error('DB error while deleting announcement', err);
       throw new InternalServerErrorException({
@@ -1056,7 +1229,11 @@ export class AnnouncementsService {
         return { role: ROLES.PRINCIPAL, userId: user.sub, roleId: user.roleId };
 
       case ROLES.EDC_COORDINATOR:
-        return { role: ROLES.EDC_COORDINATOR, userId: user.sub, roleId: user.roleId };
+        return {
+          role: ROLES.EDC_COORDINATOR,
+          userId: user.sub,
+          roleId: user.roleId,
+        };
 
       // No secretary→department linkage exists anywhere in the schema
       // (checked: no such column on any table) — treated as institution-wide,
@@ -1174,12 +1351,30 @@ export class AnnouncementsService {
   private buildVisibilityQuery(
     context: UserContext,
   ): Prisma.announcementsWhereInput {
+    const publishedOrMine: Prisma.announcementsWhereInput = {
+      OR: [{ status: 'published' }, { posted_by_user_id: context.userId }],
+    };
+
     return {
       AND: [
-        this.buildRoleVisibilityQuery(context),
         {
-          OR: [{ status: 'published' }, { posted_by_user_id: context.userId }],
+          OR: [
+            // Normal role/class/department scoping.
+            this.buildRoleVisibilityQuery(context),
+            // A social post is Explore-feed content: institution-wide by
+            // nature, addressed to everyone who opens the app.
+            //
+            // The Media Room publishes with target_audience 'students' plus
+            // every class id, because that is the only shape the composer has.
+            // Under role scoping alone that made a post invisible to faculty,
+            // HoD, HR and parents — a "college feed" only students could see.
+            // Keyed on social_post_details (present only for posts published
+            // through the social composer), so ordinary notices keep their
+            // existing, deliberately narrow targeting.
+            { social_post_details: { isNot: null } },
+          ],
         },
+        publishedOrMine,
       ],
     };
   }
@@ -1831,6 +2026,30 @@ export class AnnouncementsService {
    * row that exists but is not visible to this caller is indistinguishable
    * from a row that does not exist at all — avoids leaking existence.
    */
+  /**
+   * Throws 404 unless this user may actually see the announcement.
+   *
+   * Public so the comments service can gate on it. Comments were previously
+   * guarded by a role list alone, which is the wrong control: it let some roles
+   * in regardless of whether the post was addressed to them, while locking out
+   * students and non-teaching staff who could plainly see the post in their
+   * feed. Reachability of the POST, not membership of a role list, is what
+   * should decide who can comment.
+   *
+   * 404 rather than 403 on purpose, matching the rest of this service: a post
+   * you cannot see must not be distinguishable from one that does not exist.
+   */
+  async assertAnnouncementVisible(id: number, user: JwtPayload): Promise<void> {
+    const context = await this.resolveUserContext(user);
+    const found = await this.findVisibleById(id, context);
+    if (!found) {
+      throw new NotFoundException({
+        message: 'Announcement not found',
+        errorCode: 'ANNOUNCEMENT_NOT_FOUND',
+      });
+    }
+  }
+
   private async findVisibleById(id: number, context: UserContext) {
     const where = this.buildVisibilityQuery(context);
 
@@ -1869,9 +2088,16 @@ export class AnnouncementsService {
             designation: string;
             departments: { code: string } | null;
           } | null;
+          non_teaching_staff: {
+            first_name: string;
+            last_name: string | null;
+            departments: { code: string } | null;
+          }[];
         }
       | null
       | undefined;
+    // non_teaching_staff.user_id is nullable, so Prisma models it as a list.
+    const posterStaff = poster?.non_teaching_staff?.[0];
 
     // Built via omit rather than destructure-to-omit so the excluded keys
     // don't trip no-unused-vars.
@@ -1907,7 +2133,9 @@ export class AnnouncementsService {
         ? {
             format: socialRow.format,
             link_url: socialRow.link_url,
-            expires_at: socialRow.expires_at ? socialRow.expires_at.toISOString() : null,
+            expires_at: socialRow.expires_at
+              ? socialRow.expires_at.toISOString()
+              : null,
             is_pinned: socialRow.is_pinned ?? false,
             allow_comments: socialRow.allow_comments ?? true,
           }
@@ -1930,12 +2158,22 @@ export class AnnouncementsService {
       // undefined there and JSON.stringify drops it.
       posted_by: poster
         ? {
+            // faculty -> non_teaching_staff -> email. The email fallback is
+            // last resort only (an account in neither register); it is not the
+            // normal path for a Media Room post any more.
             name: poster.faculty
               ? `${poster.faculty.first_name} ${poster.faculty.last_name}`
-              : poster.email,
+              : posterStaff
+                ? [posterStaff.first_name, posterStaff.last_name]
+                    .filter(Boolean)
+                    .join(' ')
+                : poster.email,
             role: poster.roles?.name ?? 'unknown',
             designation: poster.faculty?.designation ?? null,
-            department: poster.faculty?.departments?.code ?? null,
+            department:
+              poster.faculty?.departments?.code ??
+              posterStaff?.departments?.code ??
+              null,
           }
         : undefined,
     };

@@ -35,7 +35,15 @@ export class FacultyLeavesController {
    * FacultyLeavesService.create) since they can't review their own leave.
    */
   @Post('create-leaves')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.SECRETARY,
+    // Non-teaching staff raise their own requests through the same route;
+    // the service branches on whether a faculty row exists, not on role.
+    ROLES.HR_PAYROLL,
+    ROLES.WARDEN,
+  )
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateFacultyLeafDto, @CurrentUser() user: JwtPayload) {
     return this.facultyLeavesService.create(dto, user);

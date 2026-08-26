@@ -19,6 +19,34 @@ import { CreateHrQueryDto } from './dto/create-hr-query.dto';
  * Real status values, confirmed directly from the live CHECK constraint
  * (hr_payroll_requests_status_check): 'submitted' | 'under_review' | 'resolved'.
  */
+/**
+ * Display name for the HR person a ticket is assigned to.
+ *
+ * faculty -> non_teaching_staff -> email, the order used across this codebase
+ * (resolveRequesterName in media-requests.service.ts, resolveMarkerName in
+ * attendance.service.ts). HR Payroll accounts are non_teaching_staff rows, so
+ * without the middle step this fell straight through to showing the assignee's
+ * raw email address to whoever raised the ticket.
+ */
+function resolveAssigneeName(
+  assignee: {
+    email: string;
+    faculty: { first_name: string; last_name: string } | null;
+    non_teaching_staff: { first_name: string; last_name: string | null }[];
+  } | null,
+): string | null {
+  if (!assignee) return null;
+  if (assignee.faculty) {
+    return `${assignee.faculty.first_name} ${assignee.faculty.last_name}`;
+  }
+  // non_teaching_staff.user_id is nullable, so Prisma models it as a list.
+  const staff = assignee.non_teaching_staff?.[0];
+  if (staff) {
+    return [staff.first_name, staff.last_name].filter(Boolean).join(' ');
+  }
+  return assignee.email;
+}
+
 @Injectable()
 export class HrQueriesService {
   private readonly logger = new Logger(HrQueriesService.name);
@@ -42,7 +70,11 @@ export class HrQueriesService {
     resolution_note: string | null;
     resolved_at: Date | null;
     created_at: Date;
-    users_hr_payroll_requests_assigned_hr_user_idTousers: { email: string } | null;
+    users_hr_payroll_requests_assigned_hr_user_idTousers: {
+      email: string;
+      faculty: { first_name: string; last_name: string } | null;
+      non_teaching_staff: { first_name: string; last_name: string | null }[];
+    } | null;
   }) {
     return {
       id: row.id,
@@ -52,7 +84,9 @@ export class HrQueriesService {
       description: row.description,
       file_url: row.attachment_url,
       status: row.status,
-      assigned_to_name: row.users_hr_payroll_requests_assigned_hr_user_idTousers?.email ?? null,
+      assigned_to_name: resolveAssigneeName(
+        row.users_hr_payroll_requests_assigned_hr_user_idTousers,
+      ),
       resolved_at: row.resolved_at,
       resolution_note: row.resolution_note,
       created_at: row.created_at,
@@ -60,10 +94,19 @@ export class HrQueriesService {
   }
 
   /** POST /me/hr-queries (Faculty only) — multipart, file is optional. */
-  async create(dto: CreateHrQueryDto, userId: number, file?: Express.Multer.File) {
+  async create(
+    dto: CreateHrQueryDto,
+    userId: number,
+    file?: Express.Multer.File,
+  ) {
     let attachmentUrl: string | null = null;
     if (file) {
-      const { key } = await this.storage.upload('hr-payroll-requests', file.originalname, file.buffer, file.mimetype);
+      const { key } = await this.storage.upload(
+        'hr-payroll-requests',
+        file.originalname,
+        file.buffer,
+        file.mimetype,
+      );
       attachmentUrl = this.storage.getPublicUrl(key);
     }
 
@@ -78,7 +121,9 @@ export class HrQueriesService {
       },
     });
 
-    this.logger.log(`HR payroll request submitted: id=${row.id} user=${userId}`);
+    this.logger.log(
+      `HR payroll request submitted: id=${row.id} user=${userId}`,
+    );
 
     return {
       id: row.id,
@@ -92,7 +137,17 @@ export class HrQueriesService {
     const rows = await this.prisma.hr_payroll_requests.findMany({
       where: { requested_by_user_id: userId },
       include: {
-        users_hr_payroll_requests_assigned_hr_user_idTousers: { select: { email: true } },
+        users_hr_payroll_requests_assigned_hr_user_idTousers: {
+          select: {
+            email: true,
+            // Without these the assignee's raw EMAIL ADDRESS was shown to
+            // the requester as the assigned HR person's name.
+            faculty: { select: { first_name: true, last_name: true } },
+            non_teaching_staff: {
+              select: { first_name: true, last_name: true },
+            },
+          },
+        },
       },
       orderBy: { created_at: 'desc' },
     });
