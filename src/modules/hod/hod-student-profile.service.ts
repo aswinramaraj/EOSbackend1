@@ -169,6 +169,11 @@ export class HodStudentProfileService {
             },
           },
           student_certificates: {
+            // certificate_type_id is now nullable — student_certificates also
+            // holds IQAC's real skill-certification rows (platform/track/
+            // score, no certificate_type_id). This profile's document list
+            // stays scoped to actual administrative document types.
+            where: { certificate_type_id: { not: null } },
             select: {
               id: true,
               is_available: true,
@@ -572,7 +577,7 @@ export class HodStudentProfileService {
           : null,
         certificates: student.student_certificates.map((c) => ({
           id: c.id,
-          name: c.certificate_types.name,
+          name: c.certificate_types!.name,
           verified: c.is_available,
         })),
         semester_wise_gpa: semesterWiseGpa,

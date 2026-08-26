@@ -4,6 +4,8 @@ import { Prisma } from '../../../generated/prisma/client';
 import { detectHigherEducationSchema } from './higher-education-schema.util';
 import type { ListAspirantsQueryDto } from './dto/list-aspirants-query.dto';
 import type { CreateAspirantDto } from './dto/create-aspirant.dto';
+import type { UpdateAspirantDto } from './dto/update-aspirant.dto';
+import { requireUpdateSet, type UpdateField } from './higher-education-sql.util';
 
 interface AspirantListRow {
   aspirant_id: number;
@@ -254,6 +256,106 @@ export class HigherEducationAspirantsService {
    * an upsert: adding a student who's already on the roster just updates
    * their existing higher-education file rather than erroring.
    */
+  /**
+   * PATCH /me/higher-education-aspirants/:id
+   *
+   * Edits one aspiration record. The DTO's field names are the HDC screen's
+   * vocabulary; the columns underneath are the admission schema's, hence the
+   * mapping (programme -> preferred_course, stage -> admission_status, ...).
+   *
+   * `is_scholarship` is derived rather than accepted: it must never disagree
+   * with whether a scholarship name or value is actually recorded, so it is
+   * recomputed whenever either of those is touched.
+   */
+  async updateAspirant(id: number, dto: UpdateAspirantDto) {
+    const schema = await detectHigherEducationSchema(this.prisma);
+
+    const touchesScholarship =
+      dto.scholarship_name !== undefined || dto.scholarship_value !== undefined;
+
+    const fields: UpdateField[] = [
+      { column: 'preferred_course', value: dto.programme },
+      { column: 'preferred_country', value: dto.country },
+      { column: 'preferred_university', value: dto.university },
+      { column: 'intake_term', value: dto.intake },
+      { column: 'scholarship_name', value: dto.scholarship_name },
+      { column: 'scholarship_value', value: dto.scholarship_value },
+      { column: 'remarks', value: dto.remarks },
+      {
+        column: 'admission_status',
+        value: dto.stage,
+        cast: 'higher_education_admission_status_enum',
+      },
+      // Only present on databases that have the academics columns.
+      { column: 'cgpa', value: dto.cgpa, allowed: schema.academics },
+      { column: 'percentage', value: dto.percentage, allowed: schema.academics },
+      {
+        column: 'test_scores_summary',
+        value: dto.test_scores_summary,
+        allowed: schema.academics,
+      },
+    ];
+
+    if (touchesScholarship) {
+      const hasScholarship = !!(
+        dto.scholarship_name?.trim() || dto.scholarship_value != null
+      );
+      fields.push({ column: 'is_scholarship', value: hasScholarship });
+    }
+
+    const set = requireUpdateSet(fields);
+
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+        UPDATE student_higher_education SET ${set} WHERE id = ${id} RETURNING id
+      `);
+      if (rows.length === 0) {
+        throw new NotFoundException({
+          message: 'Aspirant record not found',
+          errorCode: 'ASPIRANT_NOT_FOUND',
+        });
+      }
+      this.logger.log(`Aspirant record updated: id=${id}`);
+      return this.findOne(id);
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      this.logger.error('DB error updating aspirant record', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * DELETE /me/higher-education-aspirants/:id
+   *
+   * Removes the aspiration record only. The student, and anything else hanging
+   * off them, is untouched — this table records an intention, not a person.
+   */
+  async deleteAspirant(id: number) {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+        DELETE FROM student_higher_education WHERE id = ${id} RETURNING id
+      `);
+      if (rows.length === 0) {
+        throw new NotFoundException({
+          message: 'Aspirant record not found',
+          errorCode: 'ASPIRANT_NOT_FOUND',
+        });
+      }
+      this.logger.log(`Aspirant record deleted: id=${id}`);
+      return { id, message: 'Aspirant record deleted successfully' };
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      this.logger.error('DB error deleting aspirant record', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
   async createAspirant(dto: CreateAspirantDto) {
     try {
       const student = await this.prisma.students.findFirst({

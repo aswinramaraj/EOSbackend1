@@ -30,4 +30,9 @@ export class ListPrincipalStudentsQueryDto {
   @IsOptional()
   @IsIn(PRINCIPAL_STUDENT_FILTERS)
   filter?: PrincipalStudentFilter;
+
+  /** Defaults to 'active' (the Principal page's original, unchanged behaviour) when omitted — 'all'/'inactive' are opt-in for callers (e.g. IQAC's Status filter) that actually want to see inactive students too. */
+  @IsOptional()
+  @IsIn(['active', 'inactive', 'all'])
+  status?: 'active' | 'inactive' | 'all';
 }

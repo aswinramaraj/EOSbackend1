@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
+import { TransientDbRetryInterceptor } from './common/interceptors/transient-db-retry.interceptor';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 
@@ -56,6 +57,8 @@ import { PrincipalLibraryModule } from './modules/principal-library/principal-li
 import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
 import { SportsAdminModule } from './modules/sports-admin/sports-admin.module';
+import { FinanceModule } from './modules/finance/finance.module';
+import { MediaRoomModule } from './modules/media-room/media-room.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { TransportModule } from './modules/transport/transport.module';
 import { HigherEducationModule } from './modules/higher-education/higher-education.module';
@@ -74,6 +77,32 @@ import { MarksheetsModule } from './modules/exams/marksheets/marksheets.module';
 import { ResultsModule } from './modules/exams/results/results.module';
 import { RevaluationModule } from './modules/exams/revaluation/revaluation.module';
 import { SeatingArrangementsModule } from './modules/exams/seating-arrangements/seating-arrangements.module';
+
+// COE module — added onto exams' existing feature set, nothing above changed.
+import { AttendanceEligibilityModule } from './modules/exams/attendance-eligibility/attendance-eligibility.module';
+import { CertificateRequestsModule } from './modules/exams/certificate-requests/certificate-requests.module';
+import { CoeProfileModule } from './modules/exams/coe-profile/coe-profile.module';
+import { StudentExamRecordModule } from './modules/exams/student-exam-record/student-exam-record.module';
+import { ConfidentialAccessLogModule } from './modules/exams/confidential-access-log/confidential-access-log.module';
+import { ConvocationModule } from './modules/exams/convocation/convocation.module';
+import { CourseResultsModule } from './modules/exams/course-results/course-results.module';
+import { ExamFeeTransactionsModule } from './modules/exams/exam-fee-transactions/exam-fee-transactions.module';
+import { ExamRegistrationsModule } from './modules/exams/exam-registrations/exam-registrations.module';
+import { FacultyDirectoryModule } from './modules/exams/faculty-directory/faculty-directory.module';
+import { MalpracticeModule } from './modules/exams/malpractice/malpractice.module';
+import { MarksEntryLocksModule } from './modules/exams/marks-entry-locks/marks-entry-locks.module';
+import { MarksRosterModule } from './modules/exams/marks-roster/marks-roster.module';
+import { PassBoardModule } from './modules/exams/pass-board/pass-board.module';
+import { PassRulesModule } from './modules/exams/pass-rules/pass-rules.module';
+import { PhotocopyRequestsModule } from './modules/exams/photocopy-requests/photocopy-requests.module';
+import { QuestionPapersModule } from './modules/exams/question-papers/question-papers.module';
+import { RegulationsModule } from './modules/exams/regulations/regulations.module';
+import { ReportsAnalyticsModule } from './modules/exams/reports-analytics/reports-analytics.module';
+import { RevaluationWindowsModule } from './modules/exams/revaluation-windows/revaluation-windows.module';
+import { ScriptArchiveModule } from './modules/exams/script-archive/script-archive.module';
+import { ScriptBundlesModule } from './modules/exams/script-bundles/script-bundles.module';
+import { SeatingPlansModule } from './modules/exams/seating-plans/seating-plans.module';
+import { SpecialAdmissionsModule } from './modules/exams/special-admissions/special-admissions.module';
 
 import { AppraisalModule } from './modules/faculty/appraisal/appraisal.module';
 import { AppraisalCriteriaModule } from './modules/faculty/appraisal-criteria/appraisal-criteria.module';
@@ -184,6 +213,8 @@ import { PrincipalFacilitiesModule } from './modules/principal/facilities/facili
 import { PrincipalFinanceModule } from './modules/principal/finance/finance.module';
 import { PrincipalSearchModule } from './modules/principal/search/search.module';
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
+import { CoeBroadcastsModule } from './modules/notifications/coe-broadcasts/coe-broadcasts.module';
+import { NotificationsRestModule } from './modules/notifications/notifications-rest/notifications-rest.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { AcademicCoordinatorFacultyModule } from './modules/academic-coordinator/faculty/academic-coordinator-faculty.module';
 import { AcademicCoordinatorAttendanceModule } from './modules/academic-coordinator/attendance/academic-coordinator-attendance.module';
@@ -193,6 +224,18 @@ import { AcademicCoordinatorAuditModule } from './modules/academic-coordinator/a
 import { AcademicCoordinatorMappingModule } from './modules/academic-coordinator/mapping/academic-coordinator-mapping.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
 import { IqacReportsModule } from './modules/iqac/reports/iqac-reports.module';
+import { IqacStudentsModule } from './modules/iqac/students/iqac-students.module';
+import { IqacFacultyModule } from './modules/iqac/faculty/iqac-faculty.module';
+import { IqacDepartmentsModule } from './modules/iqac/departments/iqac-departments.module';
+import { IqacHigherEducationModule } from './modules/iqac/higher-education/iqac-higher-education.module';
+import { IqacEdcModule } from './modules/iqac/edc/iqac-edc.module';
+import { IqacAcademicQualityModule } from './modules/iqac/academic-quality/iqac-academic-quality.module';
+import { IqacStudentDevelopmentModule } from './modules/iqac/student-development/iqac-student-development.module';
+import { IqacFacultyDevelopmentModule } from './modules/iqac/faculty-development/iqac-faculty-development.module';
+import { IqacCalendarModule } from './modules/iqac/calendar/iqac-calendar.module';
+import { IqacAccreditationModule } from './modules/iqac/accreditation/iqac-accreditation.module';
+import { IqacDashboardModule } from './modules/iqac/dashboard/iqac-dashboard.module';
+import { IqacApprovalsModule } from './modules/iqac/approvals/iqac-approvals.module';
 
 import { AlumniModule } from './modules/alumni/alumni.module';
 import { AchievementsModule } from './modules/achievements/achievements.module';
@@ -214,6 +257,7 @@ import { NightAttendanceModule } from './modules/hostel/night-attendance/night-a
 import { HrDepartmentsModule } from './modules/hr/hr-departments/hr-departments.module';
 import { HrRequestsModule } from './modules/hr/hr-requests/hr-requests.module';
 import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module';
+import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
 
 @Module({
   imports: [
@@ -261,6 +305,8 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     PrincipalMedicalModule,
     PrincipalSportsModule,
     SportsAdminModule,
+    FinanceModule,
+    MediaRoomModule,
     StudentEntrepreneurshipModule,
     StartupIdeasModule,
     IncubationsModule,
@@ -288,6 +334,31 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     ResultsModule,
     RevaluationModule,
     SeatingArrangementsModule,
+
+    AttendanceEligibilityModule,
+    CertificateRequestsModule,
+    CoeProfileModule,
+    StudentExamRecordModule,
+    ConfidentialAccessLogModule,
+    ConvocationModule,
+    CourseResultsModule,
+    ExamFeeTransactionsModule,
+    ExamRegistrationsModule,
+    FacultyDirectoryModule,
+    MalpracticeModule,
+    MarksEntryLocksModule,
+    MarksRosterModule,
+    PassBoardModule,
+    PassRulesModule,
+    PhotocopyRequestsModule,
+    QuestionPapersModule,
+    RegulationsModule,
+    ReportsAnalyticsModule,
+    RevaluationWindowsModule,
+    ScriptArchiveModule,
+    ScriptBundlesModule,
+    SeatingPlansModule,
+    SpecialAdmissionsModule,
 
     AppraisalModule,
     AppraisalCriteriaModule,
@@ -397,6 +468,8 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     PrincipalFinanceModule,
     PrincipalSearchModule,
     NotificationsModule,
+    CoeBroadcastsModule,
+    NotificationsRestModule,
     FeedbackModule,
     AcademicCoordinatorFacultyModule,
     AcademicCoordinatorAttendanceModule,
@@ -406,6 +479,18 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     AcademicCoordinatorMappingModule,
     HallTicketClearanceModule,
     IqacReportsModule,
+    IqacStudentsModule,
+    IqacFacultyModule,
+    IqacDepartmentsModule,
+    IqacHigherEducationModule,
+    IqacEdcModule,
+    IqacAcademicQualityModule,
+    IqacStudentDevelopmentModule,
+    IqacFacultyDevelopmentModule,
+    IqacCalendarModule,
+    IqacAccreditationModule,
+    IqacDashboardModule,
+    IqacApprovalsModule,
 
     AlumniModule,
     AchievementsModule,
@@ -426,11 +511,19 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
 
     HrDepartmentsModule,
     HrRequestsModule,
+    HrReportsModule,
     HrDashboardModule,
   ],
 
   controllers: [AppController],
 
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Retries reads that failed only because the database was briefly
+    // unreachable (the Supabase pooler drops/refuses connections for a few
+    // seconds at a time). Writes are never retried — see the interceptor.
+    { provide: APP_INTERCEPTOR, useClass: TransientDbRetryInterceptor },
+  ],
 })
 export class AppModule {}

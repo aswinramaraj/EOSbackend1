@@ -2,33 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ListEdcQueryDto } from './dto/list-edc-query.dto';
 
-interface VentureExtrasRow {
-  id: number;
-  registration_type: string | null;
-  is_incubated: boolean | null;
-  role: string | null;
-}
-
 @Injectable()
 export class PrincipalEdcService {
   constructor(private readonly prisma: PrismaService) {}
-
-  /**
-   * `registration_type`/`is_incubated`/`role` are real (query.md #5 ran) —
-   * still read via `$queryRaw` rather than the typed client (predates the
-   * `prisma db pull` that synced these columns into schema.prisma); fine
-   * to convert to typed calls whenever this file is next touched.
-   */
-  private async tryLoadVentureExtras(): Promise<Map<number, VentureExtrasRow>> {
-    try {
-      const rows = await this.prisma.$queryRaw<VentureExtrasRow[]>`
-        SELECT id, registration_type, is_incubated, role FROM student_entrepreneurship
-      `;
-      return new Map(rows.map((r) => [r.id, r]));
-    } catch {
-      return new Map();
-    }
-  }
 
   /** GET /me/principal/edc/filters — real batches/departments only. */
   async filters() {
@@ -51,42 +27,44 @@ export class PrincipalEdcService {
    * "Startups" (beyond idea stage) is a judgment call over the real
    * free-text `stage` column: a null/empty stage or literally "idea"
    * (case-insensitive) counts as idea-stage, anything else on file counts
-   * as having progressed — there's no "still active" signal to layer on
-   * top (no status/closed flag exists), so that part of the reference
-   * design's wording is dropped.
+   * as having progressed.
    *
-   * "Registered ventures" / "Startups inside college" are real once
-   * query.md #5 is run — until then both are null/untracked, not invented.
+   * "Incubated" now comes from the real `incubations` 1:1 relation (a
+   * dedicated table with its own real `status` field, default 'Active')
+   * rather than the plain `is_incubated` boolean — the relation is the
+   * richer, more specific source of truth. "Active" = incubations where
+   * status is literally 'Active' (freeform text column, so other real
+   * values could appear later; never assumed to be the only one).
    */
   async summary() {
-    const [rows, ventureExtras] = await Promise.all([
-      this.prisma.student_entrepreneurship.findMany({
-        select: { id: true, stage: true },
-      }),
-      this.tryLoadVentureExtras(),
-    ]);
+    const rows = await this.prisma.student_entrepreneurship.findMany({
+      select: {
+        id: true,
+        stage: true,
+        registration_type: true,
+        incubations: { select: { status: true } },
+      },
+    });
     const beyondIdea = rows.filter((r) => {
       const stage = r.stage?.trim().toLowerCase();
       return !!stage && stage !== 'idea';
     }).length;
 
-    const extrasTracked = ventureExtras.size > 0;
-    const extraRows = rows
-      .map((r) => ventureExtras.get(r.id))
-      .filter((r): r is VentureExtrasRow => r != null);
-    const registeredVenturesCount = extraRows.filter(
+    const registeredVenturesCount = rows.filter(
       (r) =>
         r.registration_type != null && r.registration_type !== 'unregistered',
     ).length;
-    const incubatedCount = extraRows.filter(
-      (r) => r.is_incubated === true,
+    const incubatedCount = rows.filter((r) => r.incubations != null).length;
+    const activeCount = rows.filter(
+      (r) => r.incubations?.status === 'Active',
     ).length;
 
     return {
       students_in_edc: rows.length,
       startups_beyond_idea: beyondIdea,
-      registered_ventures_count: extrasTracked ? registeredVenturesCount : null,
-      incubated_count: extrasTracked ? incubatedCount : null,
+      registered_ventures_count: registeredVenturesCount,
+      incubated_count: incubatedCount,
+      active_count: activeCount,
     };
   }
 
@@ -99,42 +77,43 @@ export class PrincipalEdcService {
    * query.md #5 is run — until then all null.
    */
   async list(query: ListEdcQueryDto) {
-    const [rows, ventureExtras] = await Promise.all([
-      this.prisma.student_entrepreneurship.findMany({
-        select: {
-          id: true,
-          business_name: true,
-          business_description: true,
-          sector: true,
-          stage: true,
-          funding_required: true,
-          remarks: true,
-          students: {
-            select: {
-              id: true,
-              register_no: true,
-              batches: { select: { id: true, name: true } },
-              classes: {
-                select: {
-                  departments: { select: { id: true, name: true, code: true } },
-                },
+    const rows = await this.prisma.student_entrepreneurship.findMany({
+      select: {
+        id: true,
+        business_name: true,
+        business_description: true,
+        sector: true,
+        stage: true,
+        funding_required: true,
+        remarks: true,
+        registration_type: true,
+        is_incubated: true,
+        role: true,
+        incubations: { select: { status: true } },
+        students: {
+          select: {
+            id: true,
+            register_no: true,
+            batches: { select: { id: true, name: true } },
+            classes: {
+              select: {
+                departments: { select: { id: true, name: true, code: true } },
               },
-              courses: {
-                select: {
-                  departments: { select: { id: true, name: true, code: true } },
-                },
+            },
+            courses: {
+              select: {
+                departments: { select: { id: true, name: true, code: true } },
               },
-              users: { select: { email: true } },
-              soa_applications: {
-                select: { first_name: true, last_name: true },
-              },
+            },
+            users: { select: { email: true } },
+            soa_applications: {
+              select: { first_name: true, last_name: true },
             },
           },
         },
-        orderBy: { id: 'desc' },
-      }),
-      this.tryLoadVentureExtras(),
-    ]);
+      },
+      orderBy: { id: 'desc' },
+    });
 
     const records = rows
       .map((row) => {
@@ -151,7 +130,6 @@ export class PrincipalEdcService {
                 .filter(Boolean)
                 .join(' ')
             : student.users.email;
-        const extras = ventureExtras.get(row.id);
 
         return {
           id: row.id,
@@ -162,9 +140,10 @@ export class PrincipalEdcService {
           description: row.business_description,
           domain: row.sector,
           stage: row.stage,
-          registration_type: extras?.registration_type ?? null,
-          is_incubated: extras?.is_incubated ?? null,
-          role: extras?.role ?? null,
+          registration_type: row.registration_type,
+          is_incubated: row.is_incubated,
+          incubation_status: row.incubations?.status ?? null,
+          role: row.role,
           funding_required:
             row.funding_required != null ? Number(row.funding_required) : null,
           remarks: row.remarks,
@@ -174,6 +153,7 @@ export class PrincipalEdcService {
         if (query.batch_id && r.batch?.id !== query.batch_id) return false;
         if (query.department_id && r.department?.id !== query.department_id)
           return false;
+        if (query.status && r.incubation_status !== query.status) return false;
         if (query.q) {
           const q = query.q.toLowerCase();
           const haystack = [

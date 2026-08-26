@@ -213,16 +213,25 @@ export class MediaRequestsService {
       where.requested_by_user_id = currentUser.sub;
     }
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.media_requests.findMany({
-        where,
-        skip: query.skip,
-        take: query.limit,
-        orderBy: { created_at: 'desc' },
-        select: MEDIA_REQUEST_SELECT,
-      }),
-      this.prisma.media_requests.count({ where }),
-    ]);
+    // The rows and the count must come from one snapshot or a page can show a
+    // total that disagrees with what is on it. Prisma's default maxWait of
+    // 2000ms is too tight against the pooler: the Media Room dashboard fires
+    // several of these at once while long finance queries hold connections,
+    // and the transaction failed to even start. Same allowance the OD and
+    // finance-overview services already use.
+    const [rows, total] = await this.prisma.$transaction(
+      [
+        this.prisma.media_requests.findMany({
+          where,
+          skip: query.skip,
+          take: query.limit,
+          orderBy: { created_at: 'desc' },
+          select: MEDIA_REQUEST_SELECT,
+        }),
+        this.prisma.media_requests.count({ where }),
+      ],
+      { maxWait: 15_000, timeout: 20_000 },
+    );
 
     return paginate(rows.map(toResponse), total, query);
   }

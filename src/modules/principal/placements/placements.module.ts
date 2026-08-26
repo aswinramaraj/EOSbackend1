@@ -7,5 +7,6 @@ import { PrincipalPlacementsService } from './placements.service';
   imports: [PrismaModule],
   controllers: [PrincipalPlacementsController],
   providers: [PrincipalPlacementsService],
+  exports: [PrincipalPlacementsService],
 })
 export class PrincipalPlacementsModule {}

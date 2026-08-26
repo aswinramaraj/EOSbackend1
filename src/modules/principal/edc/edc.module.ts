@@ -7,5 +7,6 @@ import { PrincipalEdcService } from './edc.service';
   imports: [PrismaModule],
   controllers: [PrincipalEdcController],
   providers: [PrincipalEdcService],
+  exports: [PrincipalEdcService],
 })
 export class PrincipalEdcModule {}

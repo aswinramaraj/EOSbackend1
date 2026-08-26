@@ -24,8 +24,13 @@ import { ApiResponse, ROLES } from 'src/common';
 export class MarksController {
   constructor(private readonly marksService: MarksService) {}
 
+  // COE added alongside FACULTY on the two write routes below (create/update)
+  // — the design's Marks entry page has COE typing directly into the
+  // external-marks cell, same @Roles()-guard pattern used everywhere else in
+  // this codebase. DELETE is untouched (FACULTY only) since removing a mark
+  // isn't part of that flow.
   @Post()
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.COE)
   async create(@Body() createMarkDto: CreateMarkDto) {
     const mark = await this.marksService.create(createMarkDto);
     return ApiResponse.created(mark, 'Marks created successfully.');
@@ -36,22 +41,24 @@ export class MarksController {
   // The only real consumer (admin student-profile "Examinations & results"
   // panel) always scopes to one student_id; FACULTY kept alongside ADMIN
   // since they already have write access to marks via this same controller.
+  // COE added read-only, the same @Roles()-guard pattern used everywhere
+  // else in this codebase (e.g. HOD/faculty/HR routes).
   @Get()
-  @Roles(ROLES.ADMIN, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.FACULTY, ROLES.COE)
   async findAll(@Query() query: ListExamMarksQueryDto) {
     const marks = await this.marksService.findAll(query);
     return ApiResponse.ok(marks, 'Marks fetched successfully.');
   }
 
   @Get(':id')
-  @Roles(ROLES.ADMIN, ROLES.FACULTY)
+  @Roles(ROLES.ADMIN, ROLES.FACULTY, ROLES.COE)
   async findOne(@Param('id') id: string) {
     const mark = await this.marksService.findOne(+id);
     return ApiResponse.ok(mark, 'Marks fetched successfully.');
   }
 
   @Patch(':id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.COE)
   async update(@Param('id') id: string, @Body() updateMarkDto: UpdateMarkDto) {
     const mark = await this.marksService.update(+id, updateMarkDto);
     return ApiResponse.ok(mark, 'Marks updated successfully.');

@@ -5203,53 +5203,6 @@ model finance_proposal_assignments {
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model higher_education_application_students {
-  id                                   Int                                  @id @default(autoincrement())
-  window_id                            Int
-  student_id                           Int
-  status                               String                               @default("applied") @db.VarChar(20)
-  applied_on                           DateTime?                            @db.Date
-  decided_on                           DateTime?                            @db.Date
-  remarks                              String?
-  created_at                           DateTime                             @default(now()) @db.Timestamptz(6)
-  created_by_user_id                   Int?
-  users                                users?                               @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students                             students                             @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  higher_education_application_windows higher_education_application_windows @relation(fields: [window_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@unique([window_id, student_id], map: "higher_education_application_students_window_student_key")
-  @@index([student_id], map: "idx_he_application_students_student")
-  @@index([window_id, status], map: "idx_he_application_students_window")
-}
-
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model higher_education_test_students {
-  id                             Int                            @id @default(autoincrement())
-  test_name                      String                         @db.VarChar(50)
-  student_id                     Int
-  enrolled_on                    DateTime?                      @db.Date
-  attempted_on                   DateTime?                      @db.Date
-  cleared_on                     DateTime?                      @db.Date
-  score                          String?                        @db.VarChar(50)
-  remarks                        String?
-  created_at                     DateTime                       @default(now()) @db.Timestamptz(6)
-  created_by_user_id             Int?
-  users                          users?                         @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students                       students                       @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  higher_education_test_register higher_education_test_register @relation(fields: [test_name], references: [test_name], onDelete: Cascade)
-
-  @@unique([test_name, student_id], map: "higher_education_test_students_test_student_key")
-  @@index([test_name], map: "idx_he_test_students_attempted", where: raw("(attempted_on IS NOT NULL)"))
-  @@index([test_name], map: "idx_he_test_students_cleared", where: raw("(cleared_on IS NOT NULL)"))
-  @@index([student_id], map: "idx_he_test_students_student")
-  @@index([test_name], map: "idx_he_test_students_test")
-}
-
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model iqac_accreditation_criteria {
   id                                Int                                 @id @default(autoincrement())
   cycle                             String                              @db.VarChar(10)
@@ -5329,26 +5282,6 @@ model media_scorecard_targets {
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model medical_camp_registrations {
-  id                    Int           @id @default(autoincrement())
-  camp_id               Int
-  student_id            Int?
-  faculty_id            Int?
-  remarks               String?       @db.VarChar(255)
-  registered_by_user_id Int?
-  registered_at         DateTime      @default(now()) @db.Timestamptz(6)
-  medical_camps         medical_camps @relation(fields: [camp_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  faculty               faculty?      @relation(fields: [faculty_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users                 users?        @relation(fields: [registered_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students              students?     @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-
-  @@unique([camp_id, faculty_id], map: "uq_medical_camp_reg_faculty", where: raw("(faculty_id IS NOT NULL)"))
-  @@unique([camp_id, student_id], map: "uq_medical_camp_reg_student", where: raw("(student_id IS NOT NULL)"))
-  @@index([camp_id], map: "idx_medical_camp_reg_camp")
-}
-
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model outcome_attainments {
   id                 Int               @id @default(autoincrement())
   outcome_type       String            @db.VarChar(10)
@@ -5404,30 +5337,6 @@ model pass_board_signoffs {
   pass_board_sheets pass_board_sheets              @relation(fields: [sheet_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([sheet_id, member_name])
-}
-
-/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
-/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
-model placement_interviews {
-  id                 Int              @id @default(autoincrement())
-  student_id         Int
-  drive_id           Int
-  interview_date     DateTime         @db.Date
-  round_label        String           @db.VarChar(100)
-  slot_label         String           @db.VarChar(100)
-  panel_member       String           @db.VarChar(150)
-  status             String           @default("scheduled") @db.VarChar(20)
-  panel_feedback     String?          @db.VarChar(500)
-  created_by_user_id Int?
-  created_at         DateTime         @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime         @default(now()) @db.Timestamptz(6)
-  users              users?           @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  placement_drives   placement_drives @relation(fields: [drive_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students           students         @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([interview_date, status], map: "idx_placement_interviews_date_status")
-  @@index([drive_id], map: "idx_placement_interviews_drive")
-  @@index([student_id], map: "idx_placement_interviews_student")
 }
 
 model program_outcomes {
@@ -5568,6 +5477,136 @@ model social_post_details {
   announcements   announcements @relation(fields: [announcement_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
+model student_competitions {
+  id         Int       @id @default(autoincrement())
+  student_id Int
+  event_name String    @db.VarChar(255)
+  category   String?   @db.VarChar(100)
+  level      String?   @db.VarChar(50)
+  held_on    DateTime? @db.Date
+  result     String?   @db.VarChar(50)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  students   students  @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([student_id], map: "idx_student_competitions_student")
+}
+
+model student_hackathon_participations {
+  id             Int       @id @default(autoincrement())
+  student_id     Int
+  hackathon_name String    @db.VarChar(255)
+  team_name      String?   @db.VarChar(100)
+  host           String?   @db.VarChar(255)
+  held_on        DateTime? @db.Date
+  outcome        String?   @db.VarChar(50)
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  students       students  @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([student_id], map: "idx_student_hackathon_participations_student")
+}
+
+model user_roles {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  role_id    Int
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  roles      roles    @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, role_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model higher_education_application_students {
+  id                                   Int                                  @id @default(autoincrement())
+  window_id                            Int
+  student_id                           Int
+  status                               String                               @default("applied") @db.VarChar(20)
+  applied_on                           DateTime?                            @db.Date
+  decided_on                           DateTime?                            @db.Date
+  remarks                              String?
+  created_at                           DateTime                             @default(now()) @db.Timestamptz(6)
+  created_by_user_id                   Int?
+  users                                users?                               @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students                             students                             @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  higher_education_application_windows higher_education_application_windows @relation(fields: [window_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([window_id, student_id], map: "higher_education_application_students_window_student_key")
+  @@index([student_id], map: "idx_he_application_students_student")
+  @@index([window_id, status], map: "idx_he_application_students_window")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model higher_education_test_students {
+  id                             Int                            @id @default(autoincrement())
+  test_name                      String                         @db.VarChar(50)
+  student_id                     Int
+  enrolled_on                    DateTime?                      @db.Date
+  attempted_on                   DateTime?                      @db.Date
+  cleared_on                     DateTime?                      @db.Date
+  score                          String?                        @db.VarChar(50)
+  remarks                        String?
+  created_at                     DateTime                       @default(now()) @db.Timestamptz(6)
+  created_by_user_id             Int?
+  users                          users?                         @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students                       students                       @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  higher_education_test_register higher_education_test_register @relation(fields: [test_name], references: [test_name], onDelete: Cascade)
+
+  @@unique([test_name, student_id], map: "higher_education_test_students_test_student_key")
+  @@index([test_name], map: "idx_he_test_students_attempted", where: raw("(attempted_on IS NOT NULL)"))
+  @@index([test_name], map: "idx_he_test_students_cleared", where: raw("(cleared_on IS NOT NULL)"))
+  @@index([student_id], map: "idx_he_test_students_student")
+  @@index([test_name], map: "idx_he_test_students_test")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model medical_camp_registrations {
+  id                    Int           @id @default(autoincrement())
+  camp_id               Int
+  student_id            Int?
+  faculty_id            Int?
+  remarks               String?       @db.VarChar(255)
+  registered_by_user_id Int?
+  registered_at         DateTime      @default(now()) @db.Timestamptz(6)
+  medical_camps         medical_camps @relation(fields: [camp_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  faculty               faculty?      @relation(fields: [faculty_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                 users?        @relation(fields: [registered_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students              students?     @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([camp_id, faculty_id], map: "uq_medical_camp_reg_faculty", where: raw("(faculty_id IS NOT NULL)"))
+  @@unique([camp_id, student_id], map: "uq_medical_camp_reg_student", where: raw("(student_id IS NOT NULL)"))
+  @@index([camp_id], map: "idx_medical_camp_reg_camp")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model placement_interviews {
+  id                 Int              @id @default(autoincrement())
+  student_id         Int
+  drive_id           Int
+  interview_date     DateTime         @db.Date
+  round_label        String           @db.VarChar(100)
+  slot_label         String           @db.VarChar(100)
+  panel_member       String           @db.VarChar(150)
+  status             String           @default("scheduled") @db.VarChar(20)
+  panel_feedback     String?          @db.VarChar(500)
+  created_by_user_id Int?
+  created_at         DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime         @default(now()) @db.Timestamptz(6)
+  users              users?           @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  placement_drives   placement_drives @relation(fields: [drive_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students           students         @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([interview_date, status], map: "idx_placement_interviews_date_status")
+  @@index([drive_id], map: "idx_placement_interviews_drive")
+  @@index([student_id], map: "idx_placement_interviews_student")
+}
+
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model sports_od_hod_approvals {
@@ -5618,45 +5657,6 @@ model student_certifications {
   students        students  @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([student_id], map: "idx_student_certifications_student")
-}
-
-model student_competitions {
-  id         Int       @id @default(autoincrement())
-  student_id Int
-  event_name String    @db.VarChar(255)
-  category   String?   @db.VarChar(100)
-  level      String?   @db.VarChar(50)
-  held_on    DateTime? @db.Date
-  result     String?   @db.VarChar(50)
-  created_at DateTime  @default(now()) @db.Timestamptz(6)
-  students   students  @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([student_id], map: "idx_student_competitions_student")
-}
-
-model student_hackathon_participations {
-  id             Int       @id @default(autoincrement())
-  student_id     Int
-  hackathon_name String    @db.VarChar(255)
-  team_name      String?   @db.VarChar(100)
-  host           String?   @db.VarChar(255)
-  held_on        DateTime? @db.Date
-  outcome        String?   @db.VarChar(50)
-  created_at     DateTime  @default(now()) @db.Timestamptz(6)
-  students       students  @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([student_id], map: "idx_student_hackathon_participations_student")
-}
-
-model user_roles {
-  id         Int      @id @default(autoincrement())
-  user_id    Int
-  role_id    Int
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  roles      roles    @relation(fields: [role_id], references: [id], onDelete: Cascade)
-  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@unique([user_id, role_id])
 }
 
 enum achievement_media_type_enum {

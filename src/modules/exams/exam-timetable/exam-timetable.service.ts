@@ -10,6 +10,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateExamTimetableDto } from './dto/create-exam-timetable.dto';
 import { UpdateExamTimetableDto } from './dto/update-exam-timetable.dto';
+import { exam_session_enum } from 'generated/prisma/client';
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -33,6 +34,37 @@ export class ExamTimetableService {
       throw new BadRequestException({
         message: 'start_time must be earlier than end_time.',
         errorCode: 'INVALID_TIME_RANGE',
+      });
+    }
+  }
+
+  /**
+   * A class sitting two papers in the same session (same exam_date + FN/AN)
+   * is a real scheduling impossibility, not just a display warning — so
+   * this blocks the write instead of only flagging it client-side.
+   */
+  private async assertNoSessionConflict(
+    versionId: number,
+    classId: number,
+    examDate: Date,
+    session: exam_session_enum,
+    excludeMappingId: number,
+  ) {
+    const conflict = await this.prisma.exam_timetable.findFirst({
+      where: {
+        version_id: versionId,
+        exam_date: examDate,
+        session,
+        exam_subject_mapping_id: { not: excludeMappingId },
+        exam_subject_mapping: { class_id: classId },
+      },
+      include: { exam_subject_mapping: { include: { subjects: true } } },
+    });
+
+    if (conflict) {
+      throw new ConflictException({
+        message: `Scheduling conflict: this class already has ${conflict.exam_subject_mapping.subjects.subject_code} · ${conflict.exam_subject_mapping.subjects.name} in the ${session} session on ${examDate.toISOString().slice(0, 10)}.`,
+        errorCode: 'EXAM_TIMETABLE_SESSION_CONFLICT',
       });
     }
   }
@@ -69,11 +101,10 @@ export class ExamTimetableService {
   async create(createExamTimetableDto: CreateExamTimetableDto) {
     const {
       exam_subject_mapping_id,
-      version_id,
-      session,
       exam_date,
       start_time,
       end_time,
+      session,
       is_published,
     } = createExamTimetableDto;
 
@@ -88,21 +119,12 @@ export class ExamTimetableService {
       });
     }
 
-    const version = await this.prisma.exam_timetable_versions.findUnique({
-      where: { id: version_id },
-    });
-
-    if (!version) {
-      throw new NotFoundException({
-        message: 'Exam timetable version not found.',
-        errorCode: 'EXAM_TIMETABLE_VERSION_NOT_FOUND',
-      });
-    }
+    const version = await this.getOrCreateDefaultVersion(mapping.exam_id);
 
     const existing = await this.prisma.exam_timetable.findUnique({
       where: {
         version_id_exam_subject_mapping_id: {
-          version_id,
+          version_id: version.id,
           exam_subject_mapping_id,
         },
       },
@@ -119,6 +141,15 @@ export class ExamTimetableService {
     const endTime = this.toTimeDate(end_time);
     this.assertValidTimeRange(startTime, endTime);
 
+    const examDate = new Date(exam_date);
+    await this.assertNoSessionConflict(
+      version.id,
+      mapping.class_id,
+      examDate,
+      session,
+      exam_subject_mapping_id,
+    );
+
     try {
       // Transactional so the timetable row and its mapping's publish flag
       // either both land or neither does — see the compound-unique catch
@@ -128,11 +159,11 @@ export class ExamTimetableService {
         const timetable = await tx.exam_timetable.create({
           data: {
             exam_subject_mapping_id,
-            version_id,
-            session,
-            exam_date: new Date(exam_date),
+            exam_date: examDate,
             start_time: startTime,
             end_time: endTime,
+            session,
+            version_id: version.id,
           },
         });
 
@@ -231,7 +262,8 @@ export class ExamTimetableService {
     const exam_subject_mapping_id =
       updateExamTimetableDto.exam_subject_mapping_id ??
       existing.exam_subject_mapping_id;
-    const version_id = updateExamTimetableDto.version_id ?? existing.version_id;
+
+    let classId: number;
 
     if (
       updateExamTimetableDto.exam_subject_mapping_id !== undefined &&
@@ -248,32 +280,13 @@ export class ExamTimetableService {
           errorCode: 'EXAM_SUBJECT_MAPPING_NOT_FOUND',
         });
       }
-    }
 
-    if (
-      updateExamTimetableDto.version_id !== undefined &&
-      updateExamTimetableDto.version_id !== existing.version_id
-    ) {
-      const version = await this.prisma.exam_timetable_versions.findUnique({
-        where: { id: updateExamTimetableDto.version_id },
-      });
+      classId = mapping.class_id;
 
-      if (!version) {
-        throw new NotFoundException({
-          message: 'Exam timetable version not found.',
-          errorCode: 'EXAM_TIMETABLE_VERSION_NOT_FOUND',
-        });
-      }
-    }
-
-    if (
-      exam_subject_mapping_id !== existing.exam_subject_mapping_id ||
-      version_id !== existing.version_id
-    ) {
       const duplicate = await this.prisma.exam_timetable.findUnique({
         where: {
           version_id_exam_subject_mapping_id: {
-            version_id,
+            version_id: existing.version_id,
             exam_subject_mapping_id,
           },
         },
@@ -285,6 +298,11 @@ export class ExamTimetableService {
           errorCode: 'EXAM_TIMETABLE_EXISTS',
         });
       }
+    } else {
+      const mapping = await this.prisma.exam_subject_mapping.findUnique({
+        where: { id: exam_subject_mapping_id },
+      });
+      classId = mapping!.class_id;
     }
 
     const startTime = updateExamTimetableDto.start_time
@@ -296,6 +314,19 @@ export class ExamTimetableService {
 
     this.assertValidTimeRange(startTime, endTime);
 
+    const examDate = updateExamTimetableDto.exam_date
+      ? new Date(updateExamTimetableDto.exam_date)
+      : existing.exam_date;
+    const session = updateExamTimetableDto.session ?? existing.session;
+
+    await this.assertNoSessionConflict(
+      existing.version_id,
+      classId,
+      examDate,
+      session,
+      exam_subject_mapping_id,
+    );
+
     try {
       return await this.prisma.$transaction(async (tx) => {
         const timetable = await tx.exam_timetable.update({
@@ -303,8 +334,6 @@ export class ExamTimetableService {
           data: {
             exam_subject_mapping_id:
               updateExamTimetableDto.exam_subject_mapping_id,
-            version_id: updateExamTimetableDto.version_id,
-            session: updateExamTimetableDto.session,
             exam_date: updateExamTimetableDto.exam_date
               ? new Date(updateExamTimetableDto.exam_date)
               : undefined,
@@ -312,6 +341,7 @@ export class ExamTimetableService {
               ? startTime
               : undefined,
             end_time: updateExamTimetableDto.end_time ? endTime : undefined,
+            session: updateExamTimetableDto.session,
           },
         });
 

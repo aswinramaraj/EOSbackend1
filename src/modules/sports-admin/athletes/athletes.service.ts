@@ -63,6 +63,7 @@ function toAthleteListResponse(
     name: resolveStudentName(student),
     reg_no: student.register_no,
     dept_code: student.courses?.departments?.code ?? null,
+    dept_name: student.courses?.departments?.name ?? null,
     year_sem: yearSemLabel(student.classes?.current_semester),
     discipline: athlete.sports_disciplines
       ? {

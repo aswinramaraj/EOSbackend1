@@ -49,7 +49,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
    */
   @Get('lookup/roles')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.BILLING)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.BILLING, ROLES.IQAC)
   lookupRoles() {
     return this.announcementsService.lookupRoles();
   }
@@ -62,7 +62,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
    */
   @Get('lookup/departments')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.SECRETARY, ROLES.BILLING)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.SECRETARY, ROLES.BILLING, ROLES.FINANCE)
   lookupDepartments(@Query('batch_id', ParseIntPipe) batchId: number) {
     return this.announcementsService.lookupDepartmentsForBatch(batchId);
   }
@@ -78,7 +78,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 404 HOD_FACULTY_RECORD_NOT_FOUND, 500 INTERNAL_ERROR
    */
   @Get('lookup/classes')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.SECRETARY, ROLES.BILLING)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.HOD, ROLES.SECRETARY, ROLES.BILLING, ROLES.FINANCE)
   lookupClasses(
     @Query('batch_id', ParseIntPipe) batchId: number,
     @Query('department_id', new ParseIntPipe({ optional: true }))
@@ -109,7 +109,7 @@ export class AnnouncementsController {
    * every department) with no department/batch scope to narrow by.
    */
   @Get('lookup/all-classes')
-  @Roles(ROLES.HIGHER_EDUCATION, ROLES.BILLING)
+  @Roles(ROLES.HIGHER_EDUCATION, ROLES.BILLING, ROLES.IQAC, ROLES.MEDIA_ROOM)
   lookupAllClasses() {
     return this.announcementsService.lookupAllClasses();
   }
@@ -151,6 +151,10 @@ export class AnnouncementsController {
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
     ROLES.BILLING,
+    ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
+    ROLES.MEDIA_ROOM,
   )
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }),
@@ -187,6 +191,10 @@ export class AnnouncementsController {
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
     ROLES.BILLING,
+    ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
+    ROLES.MEDIA_ROOM,
   )
   async create(@Body() dto: CreateAnnouncementDto, @CurrentUser() user: JwtPayload) {
     const result = await this.announcementsService.create(dto, user);
@@ -297,6 +305,10 @@ export class AnnouncementsController {
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
     ROLES.BILLING,
+    ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
+    ROLES.MEDIA_ROOM,
   )
   async update(
     @Param('id', ParseIntPipe) id: number,
@@ -333,6 +345,10 @@ export class AnnouncementsController {
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
     ROLES.BILLING,
+    ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
+    ROLES.MEDIA_ROOM,
   )
   async patch(
     @Param('id', ParseIntPipe) id: number,
@@ -370,6 +386,10 @@ export class AnnouncementsController {
     ROLES.EDC_COORDINATOR,
     ROLES.SECRETARY,
     ROLES.BILLING,
+    ROLES.IQAC,
+    // Media Room publishes the college app Explore feed through this
+    // controller. Restored after the hot-fix-krishna merge dropped it.
+    ROLES.MEDIA_ROOM,
   )
   async remove(
     @Param('id', ParseIntPipe) id: number,
