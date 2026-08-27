@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { DocumentsService } from 'src/modules/secretary-portal/documents/documents.service';
 import { ListDocumentsQueryDto } from 'src/modules/secretary-portal/documents/dto/list-documents-query.dto';
 
@@ -6,12 +7,12 @@ import { ListDocumentsQueryDto } from 'src/modules/secretary-portal/documents/dt
 export class IqacApprovalsService {
   constructor(private readonly documents: DocumentsService) {}
 
-  findAll(query: ListDocumentsQueryDto) {
-    return this.documents.findAll(query);
+  findAll(user: JwtPayload, query: ListDocumentsQueryDto) {
+    return this.documents.findAll(user, query);
   }
 
-  toggleVerify(id: number, userId: number) {
-    return this.documents.toggleVerify(id, userId);
+  toggleVerify(user: JwtPayload, id: number, userId: number) {
+    return this.documents.toggleVerify(user, id, userId);
   }
 
   /**
@@ -31,12 +32,12 @@ export class IqacApprovalsService {
    * "criterion" field exists anywhere on this table — that reference-
    * design filter has no real equivalent here either).
    */
-  async stats() {
+  async stats(user: JwtPayload) {
     const bigDto = Object.assign(new ListDocumentsQueryDto(), {
       page: 1,
       limit: 1000,
     });
-    const { data: rows } = await this.documents.findAll(bigDto);
+    const { data: rows } = await this.documents.findAll(user, bigDto);
 
     const departmentsReporting = new Set(rows.map((r) => r.department.id));
     const departmentsPending = new Set(

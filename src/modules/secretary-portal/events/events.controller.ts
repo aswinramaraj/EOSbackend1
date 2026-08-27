@@ -28,21 +28,21 @@ export class EventsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateEventDto, @CurrentUser() user: JwtPayload) {
-    return this.eventsService.create(dto, user.sub);
+    return this.eventsService.create(user, dto, user.sub);
   }
 
   @Get()
-  findAll(@Query('department_id') departmentId?: string) {
-    return this.eventsService.findAll(departmentId ? +departmentId : undefined);
+  findAll(@CurrentUser() user: JwtPayload, @Query('department_id') departmentId?: string) {
+    return this.eventsService.findAll(user, departmentId ? +departmentId : undefined);
   }
 
   @Patch(':id/register')
-  register(@Param('id', ParseIntPipe) id: number, @Body() dto: RegisterDto) {
-    return this.eventsService.register(id, dto.count ?? 25);
+  register(@Param('id', ParseIntPipe) id: number, @Body() dto: RegisterDto, @CurrentUser() user: JwtPayload) {
+    return this.eventsService.register(user, id, dto.count ?? 25);
   }
 
   @Patch(':id/advance')
-  advance(@Param('id', ParseIntPipe) id: number) {
-    return this.eventsService.advance(id);
+  advance(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.eventsService.advance(user, id);
   }
 }

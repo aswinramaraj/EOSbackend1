@@ -1,6 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 
 // Shared LATERAL join picking the highest grade_bands.min_percentage bracket
 // at or below a paper's percentage - same bracket-lookup pattern used by the
@@ -64,7 +66,24 @@ export class PrincipalExamsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async getOverview() {
+  /** Secretary is always forced to her own department; Principal/Admin stay institution-wide (undefined = unscoped). */
+  private async resolveEffectiveDepartmentId(user: JwtPayload): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return undefined;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
+
+  async getOverview(user: JwtPayload) {
+    const departmentId = await this.resolveEffectiveDepartmentId(user);
     try {
       // Sequential, not Promise.all - see principal-faculty/principal-departments
       // services for why (Supabase session-mode pool is small and shared).
@@ -83,8 +102,10 @@ export class PrincipalExamsService {
                 FROM exam_marks em
                 JOIN exam_subject_mapping esm ON esm.id = em.exam_subject_mapping_id
                 JOIN exams e ON e.id = esm.exam_id
+                ${departmentId !== undefined ? Prisma.sql`JOIN students st ON st.id = em.student_id JOIN classes cl ON cl.id = st.class_id` : Prisma.empty}
                 ${GRADE_LOOKUP}
                 WHERE e.status = 'results_published' AND e.semester IN (${currentSemester}, ${previousSemester ?? -1})
+                ${departmentId !== undefined ? Prisma.sql`AND cl.department_id = ${departmentId}` : Prisma.empty}
               )
               SELECT
                 COUNT(*) FILTER (WHERE semester = ${currentSemester} AND is_pass)::bigint AS current_passed,
@@ -101,8 +122,10 @@ export class PrincipalExamsService {
           FROM exam_marks em
           JOIN exam_subject_mapping esm ON esm.id = em.exam_subject_mapping_id
           JOIN exams e ON e.id = esm.exam_id
+          ${departmentId !== undefined ? Prisma.sql`JOIN students st ON st.id = em.student_id JOIN classes cl ON cl.id = st.class_id` : Prisma.empty}
           ${GRADE_LOOKUP}
           WHERE e.status = 'results_published'
+          ${departmentId !== undefined ? Prisma.sql`AND cl.department_id = ${departmentId}` : Prisma.empty}
           GROUP BY em.student_id, esm.subject_id
         )
         SELECT
@@ -120,12 +143,16 @@ export class PrincipalExamsService {
           JOIN exam_subject_mapping esm ON esm.id = em.exam_subject_mapping_id
           JOIN exams e ON e.id = esm.exam_id
           JOIN subjects sub ON sub.id = esm.subject_id
+          ${departmentId !== undefined ? Prisma.sql`JOIN students st ON st.id = em.student_id JOIN classes cl ON cl.id = st.class_id` : Prisma.empty}
           ${GRADE_LOOKUP}
           WHERE e.status = 'results_published' AND em.is_absent = false AND em.marks_obtained IS NOT NULL
+          ${departmentId !== undefined ? Prisma.sql`AND cl.department_id = ${departmentId}` : Prisma.empty}
           GROUP BY em.student_id
         )
         SELECT
-          (SELECT COUNT(*) FROM students)::bigint AS total_students,
+          ${departmentId !== undefined
+            ? Prisma.sql`(SELECT COUNT(*) FROM students st2 JOIN classes cl2 ON cl2.id = st2.class_id WHERE cl2.department_id = ${departmentId})`
+            : Prisma.sql`(SELECT COUNT(*) FROM students)`}::bigint AS total_students,
           COUNT(*) FILTER (WHERE cgpa > 8.5)::bigint AS high_cgpa_count
         FROM student_cgpa
       `);
@@ -134,7 +161,8 @@ export class PrincipalExamsService {
         SELECT
           COUNT(*)::bigint AS total,
           COUNT(*) FILTER (WHERE status IN ('requested', 'under_review'))::bigint AS pending
-        FROM revaluation_requests
+        FROM revaluation_requests rr
+        ${departmentId !== undefined ? Prisma.sql`JOIN students st ON st.id = rr.student_id JOIN classes cl ON cl.id = st.class_id WHERE cl.department_id = ${departmentId}` : Prisma.empty}
       `);
 
       const deptPassRows =
@@ -193,7 +221,10 @@ export class PrincipalExamsService {
         GROUP BY cl.department_id
       `);
 
-      const departments = await this.prisma.departments.findMany({ orderBy: { name: 'asc' } });
+      const departments = await this.prisma.departments.findMany({
+        where: departmentId !== undefined ? { id: departmentId } : undefined,
+        orderBy: { name: 'asc' },
+      });
 
       const pass = passRows[0];
       const arrears = arrearsRows[0];

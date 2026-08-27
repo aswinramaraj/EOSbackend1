@@ -3,6 +3,8 @@ import type { Response } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import {
   renderExcel,
@@ -101,8 +103,8 @@ export class IqacReportsController {
 
   /** GET /iqac/reports/scorecard — always JSON, goes through the normal envelope. */
   @Get('scorecard')
-  scorecard() {
-    return this.reportsService.scorecard();
+  scorecard(@CurrentUser() user: JwtPayload) {
+    return this.reportsService.scorecard(user);
   }
 
   /**
