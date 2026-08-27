@@ -9,6 +9,9 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    // Migrations need prepared-statement support, which the transaction-mode
+    // pooler (DATABASE_URL, port 6543) doesn't have — DIRECT_URL keeps
+    // migrate/db-push on the session-mode connection (port 5432) instead.
+    url: process.env["DIRECT_URL"] ?? process.env["DATABASE_URL"],
   },
 });
