@@ -41,6 +41,17 @@ function timeStringToDate(time: string): Date {
   return new Date(`1970-01-01T${normalized}.000Z`);
 }
 
+/**
+ * Real academic_year values are inconsistently formatted across rows
+ * ("2026-27" vs "2026-2027" seen live for the same faculty) — a plain
+ * string sort/compare on the column silently misorders them. Parsing just
+ * the leading 4-digit year gives a comparison that's correct regardless of
+ * which format a given row happens to use.
+ */
+function leadingYear(academicYear: string): number {
+  return Number.parseInt(academicYear.slice(0, 4), 10) || 0;
+}
+
 const TIMETABLE_SELECT = {
   id: true,
   day_of_week: true,
@@ -189,9 +200,13 @@ const TODAY_SLOT_SELECT = {
   // a lab (PRACTICAL/THEORY_WITH_PRACTICAL), which the faculty "Today"
   // timetable screen needs for its real LABS count (previously hardcoded
   // false client-side despite this join already existing).
-  subjects: { select: { name: true, course_type: true } },
+  subjects: { select: { name: true, course_type: true, subject_code: true } },
   classes: {
-    select: { section: true, departments: { select: { name: true } } },
+    select: {
+      section: true,
+      current_semester: true,
+      departments: { select: { name: true } },
+    },
   },
 } as const;
 
@@ -202,8 +217,12 @@ interface TodaySlotRow {
   end_time: Date;
   subject_id: number;
   class_id: number;
-  subjects: { name: string; course_type: string | null };
-  classes: { section: string; departments: { name: string } };
+  subjects: { name: string; course_type: string | null; subject_code: string };
+  classes: {
+    section: string;
+    current_semester: number | null;
+    departments: { name: string };
+  };
 }
 
 function toTodaySlotResponse(slot: TodaySlotRow) {
@@ -214,9 +233,11 @@ function toTodaySlotResponse(slot: TodaySlotRow) {
     end_time: formatHHMM(slot.end_time),
     subject_id: slot.subject_id,
     subject_name: slot.subjects.name,
+    subject_code: slot.subjects.subject_code,
     course_type: slot.subjects.course_type,
     class_id: slot.class_id,
     class_section: slot.classes.section,
+    semester: slot.classes.current_semester,
     department_name: slot.classes.departments.name,
   };
 }
@@ -572,45 +593,70 @@ export class TimetableService {
    *
    * faculty_subject_class_mapping has no semester column of its own (only
    * academic_year) and a faculty member can teach several class/section
-   * combos at once, unlike the single-section student view this mirrors -
-   * so this returns one row per (subject, class) combo for the faculty's
-   * most recent academic_year, each annotated with that class's own
-   * classes.current_semester, plus real per-combo counts (hours/week from
-   * timetable_slots, tasks from assignments, materials from lms_notes).
+   * combos AT ONCE, across different batches — e.g. a Semester 1 class
+   * mapped this admission cycle alongside a Semester 7 class mapped back
+   * when that batch started. Those combos routinely carry different
+   * academic_year strings (confirmed live: one real faculty had "2026-27"
+   * on one mapping and "2026-2027" on another, for two subjects taught in
+   * the exact same real term).
+   *
+   * The previous version picked a single "latest" academic_year via
+   * `orderBy: desc` on that string column, then filtered every mapping
+   * down to just that one value — a plain lexicographic string sort, which
+   * silently DROPPED every mapping whose year happened to sort lower as
+   * text even though it was a currently-taught subject (confirmed live:
+   * "2026-27" sorts after "2026-2027" as a string, so a faculty teaching
+   * both got shown only the "2026-27" subject and lost the other two).
+   *
+   * Fixed by never picking one global "latest year" at all: fetch every
+   * mapping for this faculty, then dedupe to one row per (subject_id,
+   * class_id) combo, keeping each combo's own most recent row (by parsed
+   * leading year, not string order — robust to the "2026-27" vs
+   * "2026-2027" format mismatch above). This mirrors the same per-combo
+   * dedupe useHandledClasses() already does client-side for GET
+   * /me/handled-classes, which is why that screen never had this bug.
    */
   async getCurrentSemesterForFaculty(userId: number) {
     const faculty = await this.resolveFacultyByUserId(userId);
 
-    const latest = await this.prisma.faculty_subject_class_mapping.findFirst({
-      where: { faculty_id: faculty.id },
-      orderBy: { academic_year: 'desc' },
-      select: { academic_year: true },
-    });
-    if (!latest) {
-      return { academic_year: null, subjects: [] };
-    }
-    const academicYear = latest.academic_year;
-
     const mappings = await this.prisma.faculty_subject_class_mapping.findMany({
-      where: { faculty_id: faculty.id, academic_year: academicYear },
+      where: { faculty_id: faculty.id },
       select: {
         subject_id: true,
         class_id: true,
+        academic_year: true,
         subjects: { select: { name: true, subject_code: true } },
         classes: { select: { section: true, current_semester: true } },
       },
       orderBy: [{ class_id: 'asc' }, { subject_id: 'asc' }],
     });
+    if (mappings.length === 0) {
+      return { academic_year: null, subjects: [] };
+    }
+
+    const latestByCombo = new Map<string, (typeof mappings)[number]>();
+    for (const mapping of mappings) {
+      const key = `${mapping.subject_id}:${mapping.class_id}`;
+      const current = latestByCombo.get(key);
+      if (!current || leadingYear(mapping.academic_year) > leadingYear(current.academic_year)) {
+        latestByCombo.set(key, mapping);
+      }
+    }
+    const currentMappings = Array.from(latestByCombo.values());
+    const displayAcademicYear = currentMappings.reduce(
+      (latest, m) => (leadingYear(m.academic_year) > leadingYear(latest) ? m.academic_year : latest),
+      currentMappings[0].academic_year,
+    );
 
     const subjects = await Promise.all(
-      mappings.map(async (mapping) => {
+      currentMappings.map(async (mapping) => {
         const [hoursPerWeek, tasks, materials] = await Promise.all([
           this.prisma.timetable_slots.count({
             where: {
               faculty_id: faculty.id,
               subject_id: mapping.subject_id,
               class_id: mapping.class_id,
-              academic_year: academicYear,
+              academic_year: mapping.academic_year,
             },
           }),
           this.prisma.assignments.count({
@@ -618,7 +664,7 @@ export class TimetableService {
               faculty_id: faculty.id,
               subject_id: mapping.subject_id,
               class_id: mapping.class_id,
-              academic_year: academicYear,
+              academic_year: mapping.academic_year,
             },
           }),
           this.prisma.lms_notes.count({
@@ -644,7 +690,7 @@ export class TimetableService {
       }),
     );
 
-    return { academic_year: academicYear, subjects };
+    return { academic_year: displayAcademicYear, subjects };
   }
 
   /**

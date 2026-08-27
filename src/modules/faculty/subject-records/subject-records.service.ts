@@ -52,7 +52,7 @@ const MAPPING_SELECT = {
       id: true,
       academic_year: true,
       semester: true,
-      exam_types: { select: { id: true, name: true } },
+      exam_types: { select: { id: true, name: true, category: true } },
     },
   },
 } as const;
@@ -72,7 +72,7 @@ type MappingRow = {
     id: number;
     academic_year: string;
     semester: number;
-    exam_types: { id: number; name: string };
+    exam_types: { id: number; name: string; category: 'internal' | 'external' };
   };
 };
 
@@ -88,6 +88,10 @@ function toSummary(mapping: MappingRow, enteredCount: number) {
     exam: {
       id: mapping.exams.id,
       type: mapping.exams.exam_types.name,
+      // internal (CIA1/2/3) marks are entered by faculty here; external
+      // (University End Semester) marks come from COE's own results
+      // pipeline — the frontend uses this to render that exam read-only.
+      category: mapping.exams.exam_types.category,
       academic_year: mapping.exams.academic_year,
       semester: mapping.exams.semester,
     },
@@ -240,6 +244,13 @@ export class SubjectRecordsService {
       mapping.subjects.id,
       mapping.classes.id,
     );
+    if (mapping.exams.exam_types.category !== 'internal') {
+      throw new ForbiddenException({
+        message:
+          'University exam results are published by the Controller of Examinations, not by faculty.',
+        errorCode: 'EXTERNAL_EXAM_NOT_PUBLISHABLE',
+      });
+    }
 
     const enteredCount = await this.prisma.exam_marks.count({
       where: {

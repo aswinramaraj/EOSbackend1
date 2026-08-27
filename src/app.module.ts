@@ -16,6 +16,7 @@ import { DepartmentsModule } from './modules/academic-structure/departments/depa
 import { SubjectsModule } from './modules/academic-structure/subjects/subjects.module';
 
 import { BonafideModule } from './modules/admissions/bonafide/bonafide.module';
+import { BonafideRequestsModule } from './modules/admin/bonafide-requests/bonafide-requests.module';
 import { BonafideReasonsModule } from './modules/admissions/bonafide-reasons/bonafide-reasons.module';
 import { CertificatesModule } from './modules/admissions/certificates/certificates.module';
 import { OdModule } from './modules/admissions/od/od.module';
@@ -278,6 +279,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     SubjectsModule,
 
     BonafideModule,
+    BonafideRequestsModule,
     BonafideReasonsModule,
     CertificatesModule,
     OdModule,

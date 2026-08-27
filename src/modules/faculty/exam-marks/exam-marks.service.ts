@@ -38,7 +38,7 @@ const EXAM_MARK_SELECT = {
           id: true,
           academic_year: true,
           semester: true,
-          exam_types: { select: { id: true, name: true } },
+          exam_types: { select: { id: true, name: true, category: true } },
         },
       },
     },
@@ -64,7 +64,7 @@ interface ExamMarkRow {
       id: number;
       academic_year: string;
       semester: number;
-      exam_types: { id: number; name: string };
+      exam_types: { id: number; name: string; category: 'internal' | 'external' };
     };
   };
 }
@@ -96,6 +96,7 @@ function toResponse(row: ExamMarkRow) {
     exam: {
       id: row.exam_subject_mapping.exams.id,
       type: row.exam_subject_mapping.exams.exam_types.name,
+      category: row.exam_subject_mapping.exams.exam_types.category,
       academic_year: row.exam_subject_mapping.exams.academic_year,
       semester: row.exam_subject_mapping.exams.semester,
     },
@@ -145,6 +146,7 @@ export class ExamMarksService {
       mapping.subject_id,
       mapping.class_id,
     );
+    await this.assertInternalExam(examSubjectMappingId);
 
     const studentIds = dto.entries.map((e) => e.student_id);
     if (new Set(studentIds).size !== studentIds.length) {
@@ -347,6 +349,7 @@ export class ExamMarksService {
     if (existing.entered_by_faculty_id !== faculty.id) {
       throw new ForbiddenException('You may only correct marks you entered');
     }
+    await this.assertInternalExam(existing.exam_subject_mapping_id);
 
     if (dto.marks_obtained > Number(existing.max_marks)) {
       throw new UnprocessableEntityException({
@@ -520,6 +523,28 @@ export class ExamMarksService {
       throw new ForbiddenException({
         message: 'You are not assigned to teach this subject for this class',
         errorCode: 'NOT_MAPPED_TO_TEACH',
+      });
+    }
+  }
+
+  /**
+   * Faculty may only enter/correct marks for internal exams (CIA1/2/3) —
+   * external (University End Semester) results come from COE's own
+   * pipeline. The frontend already hides the edit controls for an external
+   * exam; this is the server-side backstop against a direct API call.
+   */
+  private async assertInternalExam(
+    examSubjectMappingId: number,
+  ): Promise<void> {
+    const mapping = await this.prisma.exam_subject_mapping.findUnique({
+      where: { id: examSubjectMappingId },
+      select: { exams: { select: { exam_types: { select: { category: true } } } } },
+    });
+    if (mapping?.exams.exam_types.category !== 'internal') {
+      throw new ForbiddenException({
+        message:
+          'This is a university exam — marks are entered by the Controller of Examinations, not by faculty.',
+        errorCode: 'EXTERNAL_EXAM_NOT_EDITABLE',
       });
     }
   }
