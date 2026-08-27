@@ -1,5 +1,7 @@
-import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { CreateEventDto } from './dto/create-event.dto';
 
 const EVENT_SELECT = {
@@ -60,15 +62,50 @@ export class EventsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateEventDto, userId: number) {
-    const department = await this.prisma.departments.findUnique({ where: { id: dto.department_id } });
+  /** Secretary is always forced to her own department; other roles keep whatever was requested (or none = institution-wide). */
+  private async resolveEffectiveDepartmentId(
+    user: JwtPayload,
+    requested?: number,
+  ): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return requested;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
+
+  /** A Secretary may only act on events belonging to her own department — other roles are unrestricted. */
+  private async assertDepartmentAccess(user: JwtPayload, eventDepartmentId: number): Promise<void> {
+    if (user.role !== ROLES.SECRETARY) return;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id || staff.department_id !== eventDepartmentId) {
+      throw new ForbiddenException({
+        message: 'You may only act on events from your own department',
+        errorCode: 'FORBIDDEN_DEPARTMENT',
+      });
+    }
+  }
+
+  async create(user: JwtPayload, dto: CreateEventDto, userId: number) {
+    const effectiveDepartmentId = (await this.resolveEffectiveDepartmentId(user, dto.department_id))!;
+    const department = await this.prisma.departments.findUnique({ where: { id: effectiveDepartmentId } });
     if (!department) {
       throw new NotFoundException({ message: 'Department not found', errorCode: 'DEPARTMENT_NOT_FOUND' });
     }
     try {
       const row = await this.prisma.department_events.create({
         data: {
-          department_id: dto.department_id,
+          department_id: effectiveDepartmentId,
           title: dto.title,
           kind: dto.kind,
           event_date: dto.event_date,
@@ -88,30 +125,33 @@ export class EventsService {
     }
   }
 
-  async findAll(departmentId?: number) {
+  async findAll(user: JwtPayload, departmentId?: number) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, departmentId);
     const rows = await this.prisma.department_events.findMany({
-      where: departmentId !== undefined ? { department_id: departmentId } : undefined,
+      where: effectiveDepartmentId !== undefined ? { department_id: effectiveDepartmentId } : undefined,
       orderBy: { created_at: 'desc' },
       select: EVENT_SELECT,
     });
     return rows.map(toResponse);
   }
 
-  async register(id: number, count: number) {
+  async register(user: JwtPayload, id: number, count: number) {
     const existing = await this.prisma.department_events.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException({ message: 'Event not found', errorCode: 'EVENT_NOT_FOUND' });
     }
+    await this.assertDepartmentAccess(user, existing.department_id);
     const nextRegs = Math.min(existing.capacity, existing.registrations + count);
     const row = await this.prisma.department_events.update({ where: { id }, data: { registrations: nextRegs }, select: EVENT_SELECT });
     return toResponse(row);
   }
 
-  async advance(id: number) {
+  async advance(user: JwtPayload, id: number) {
     const existing = await this.prisma.department_events.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException({ message: 'Event not found', errorCode: 'EVENT_NOT_FOUND' });
     }
+    await this.assertDepartmentAccess(user, existing.department_id);
     const next = existing.status === 'completed' ? 'planning' : nextOf(existing.status);
     const row = await this.prisma.department_events.update({
       where: { id },

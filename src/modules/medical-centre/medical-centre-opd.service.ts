@@ -3,9 +3,28 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import type { CreateWalkinDto } from './dto/create-walkin.dto';
 import type { OpdSearchQueryDto } from './dto/medical-crud.dto';
+import { visitStaffColumnReady } from './medical-appointments.util';
 
 type QueueStatus = 'waiting' | 'consult' | 'done';
 const NEXT_STATUS: Record<QueueStatus, QueueStatus> = { waiting: 'consult', consult: 'done', done: 'waiting' };
+
+/**
+ * visit_date is a `@db.Date` column — a timezone-naive calendar date, stored
+ * and compared as UTC midnight. `new Date().toISOString().slice(0, 10)` is
+ * the wrong way to get "today" from that: `.toISOString()` is always UTC,
+ * so on this box (IST, UTC+5:30) anywhere from 12:00 AM to 5:29 AM IST it
+ * silently returns *yesterday's* date, and the live queue reads yesterday's
+ * visits instead of today's. Same bug, same fix, as
+ * sports-admin/dashboard.service.ts's startOfDay/toDateOnly: read the
+ * server's own local (IST) calendar date, then anchor it at UTC midnight to
+ * match how the column is actually stored.
+ */
+function startOfDay(d: Date): Date {
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+}
+function toDateOnly(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
 
 interface QueueRow {
   id: number;
@@ -16,6 +35,9 @@ interface QueueRow {
   student_dept: string | null;
   faculty_name: string | null;
   faculty_dept: string | null;
+  /** Null until medical_visits.staff_id exists — see visitStaffColumnReady. */
+  staff_name: string | null;
+  staff_dept: string | null;
 }
 
 function minutesAgo(date: Date): string {
@@ -133,13 +155,34 @@ export class MedicalCentreOpdService {
       if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         throw new BadRequestException({ message: 'date must be in YYYY-MM-DD format', errorCode: 'INVALID_DATE' });
       }
-      const targetDate = date ?? new Date().toISOString().slice(0, 10);
+      const targetDate = date ?? toDateOnly(startOfDay(new Date()));
+
+      // visitor_type has always allowed 'staff', but medical_visits only ever
+      // had student_id/faculty_id, so a staff visit had no name to show.
+      // staff_id arrives with the appointment schema
+      // (prisma/migrations/medical_appointments.sql), which is applied by hand
+      // — so it is detected, not assumed. Until it exists this query is
+      // byte-for-byte the one that ran before, with two NULL columns standing
+      // in for the staff name and department.
+      const hasStaffColumn = await visitStaffColumnReady(this.prisma);
+      const staffNameExpr = hasStaffColumn
+        ? Prisma.sql`NULLIF(TRIM(CONCAT(nts.first_name, ' ', COALESCE(nts.last_name, ''))), '')`
+        : Prisma.sql`NULL::text`;
+      const staffDeptExpr = hasStaffColumn ? Prisma.sql`nd.code` : Prisma.sql`NULL::text`;
+      const staffJoin = hasStaffColumn
+        ? Prisma.sql`
+          LEFT JOIN non_teaching_staff nts ON nts.id = mv.staff_id
+          LEFT JOIN departments nd ON nd.id = nts.department_id`
+        : Prisma.empty;
+
       const rows = await this.prisma.$queryRaw<QueueRow[]>(Prisma.sql`
         SELECT mv.id, mv.status, mv.queued_at, mv.reason,
           COALESCE(NULLIF(TRIM(CONCAT(sa.first_name, ' ', COALESCE(sa.last_name, ''))), ''), su.email) AS student_name,
           d.code AS student_dept,
           NULLIF(TRIM(CONCAT(f.first_name, ' ', COALESCE(f.last_name, ''))), '') AS faculty_name,
-          fd.code AS faculty_dept
+          fd.code AS faculty_dept,
+          ${staffNameExpr} AS staff_name,
+          ${staffDeptExpr} AS staff_dept
         FROM medical_visits mv
         LEFT JOIN students s ON s.id = mv.student_id
         LEFT JOIN users su ON su.id = s.user_id
@@ -147,7 +190,7 @@ export class MedicalCentreOpdService {
         LEFT JOIN classes c ON c.id = s.class_id
         LEFT JOIN departments d ON d.id = c.department_id
         LEFT JOIN faculty f ON f.id = mv.faculty_id
-        LEFT JOIN departments fd ON fd.id = f.department_id
+        LEFT JOIN departments fd ON fd.id = f.department_id${staffJoin}
         WHERE mv.visit_date = ${targetDate}::date
         ORDER BY mv.queued_at ASC
       `);
@@ -155,8 +198,17 @@ export class MedicalCentreOpdService {
       return rows.map((r) => ({
         id: r.id,
         token: `T-${r.id}`,
-        name: r.student_name ?? r.faculty_name ?? 'Unrecorded',
-        dept: r.student_name ? (r.student_dept ?? '—') : `Faculty, ${r.faculty_dept ?? '—'}`,
+        name: r.student_name ?? r.faculty_name ?? r.staff_name ?? 'Unrecorded',
+        // Previously a row with neither a student nor a faculty name still read
+        // "Faculty, —"; a staff visit now says so, and a row with no identity
+        // at all falls back to "—" instead of claiming to be faculty.
+        dept: r.student_name
+          ? (r.student_dept ?? '—')
+          : r.faculty_name
+            ? `Faculty, ${r.faculty_dept ?? '—'}`
+            : r.staff_name
+              ? `Staff, ${r.staff_dept ?? '—'}`
+              : '—',
         complaint: r.reason ?? '—',
         wait: r.status === 'waiting' ? minutesAgo(r.queued_at) : '—',
         status: r.status,

@@ -33,15 +33,22 @@ describe('MeStaffAttendanceService', () => {
     expect(service).toBeDefined();
   });
 
-  it('throws 404 FACULTY_NOT_FOUND when the JWT user has no linked faculty record', async () => {
+  it('falls back to non-teaching-staff attendance (keyed on staff_user_id) instead of 404ing when the JWT user has no linked faculty record', async () => {
     prisma.faculty.findUnique.mockResolvedValue(null);
 
-    await expect(
-      service.getMyStaffAttendance(999, {}),
-    ).rejects.toMatchObject({
-      status: 404,
-      response: { errorCode: 'FACULTY_NOT_FOUND' },
+    const result = await service.getMyStaffAttendance(999, {
+      year: 2026,
+      month: 7,
     });
+
+    // No faculty row exists to key the query on, so it must not have asked
+    // faculty_daily_attendance/faculty_leaves for one.
+    for (const call of prisma.faculty_daily_attendance.findMany.mock.calls) {
+      expect(call[0]?.where?.faculty_id).toBeUndefined();
+    }
+    expect(result.stats).toEqual(
+      expect.objectContaining({ present: 0, absent: 0, onDuty: 0 }),
+    );
   });
 
   it('returns an empty calendar with zeroed stats when there are no daily records, leaves, or holidays', async () => {

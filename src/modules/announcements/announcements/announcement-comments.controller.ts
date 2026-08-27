@@ -12,9 +12,7 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
-import { Roles } from 'src/auth/decorators/roles.decorator';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
-import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { AnnouncementCommentsService } from './announcement-comments.service';
 import { CreateAnnouncementCommentDto } from './dto/create-comment.dto';
@@ -29,26 +27,21 @@ import { CreateAnnouncementCommentDto } from './dto/create-comment.dto';
  */
 @Controller('announcements')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(
-  ROLES.ADMIN,
-  ROLES.PRINCIPAL,
-  ROLES.HOD,
-  ROLES.FACULTY,
-  ROLES.PLACEMENT,
-  ROLES.HIGHER_EDUCATION,
-  ROLES.EDC_COORDINATOR,
-  ROLES.SECRETARY,
-  ROLES.BILLING,
-  ROLES.FINANCE,
-  ROLES.MEDIA_ROOM,
-)
+// Deliberately NO @Roles here: commenting is gated by whether the caller can
+// SEE the announcement (assertAnnouncementVisible in the service), which is
+// the correct control. The old role list excluded STUDENT, PARENT, HR_PAYROLL
+// and WARDEN, so the people the Explore feed is FOR could not comment on it,
+// while roles on the list could comment on posts never addressed to them.
 export class AnnouncementCommentsController {
   constructor(private readonly service: AnnouncementCommentsService) {}
 
   /** GET /api/v1/announcements/:id/comments */
   @Get(':id/comments')
-  findAll(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findAll(id);
+  findAll(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.findAll(id, user);
   }
 
   /** POST /api/v1/announcements/:id/comments */
@@ -59,7 +52,7 @@ export class AnnouncementCommentsController {
     @Body() dto: CreateAnnouncementCommentDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.create(id, dto, user.sub);
+    return this.service.create(id, dto, user);
   }
 
   /** DELETE /api/v1/announcements/:id/comments/:commentId */

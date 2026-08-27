@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { AssignHodDto } from './dto/assign-hod.dto';
 
 function currentTermRange(today: Date): { start: Date; end: Date } {
@@ -50,7 +51,10 @@ function hodDto(
 
 @Injectable()
 export class PrincipalDepartmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   /**
    * GET /me/principal/departments
@@ -357,8 +361,18 @@ export class PrincipalDepartmentsService {
    * department. This is the ONLY way head_of_department_faculty_id gets
    * set correctly — a designation string like "HOD" typed elsewhere never
    * touches this column and is ambiguous besides.
+   *
+   * `performedByUserId` is the Principal's own user id (from the JWT, never
+   * the client) — recorded on the audit_logs row this write creates so
+   * "who changed it" can never be spoofed by the request body. A no-op call
+   * (new faculty_id equals the one already set) still returns normally but
+   * writes no log row — there was no change to record.
    */
-  async assignHod(departmentId: number, dto: AssignHodDto) {
+  async assignHod(
+    departmentId: number,
+    dto: AssignHodDto,
+    performedByUserId: number,
+  ) {
     const dept = await this.prisma.departments.findUnique({
       where: { id: departmentId },
     });
@@ -387,10 +401,33 @@ export class PrincipalDepartmentsService {
       }
     }
 
+    const previousHodFacultyId = dept.head_of_department_faculty_id;
+
     await this.prisma.departments.update({
       where: { id: departmentId },
       data: { head_of_department_faculty_id: dto.faculty_id },
     });
+
+    if (previousHodFacultyId !== dto.faculty_id) {
+      // Awaited (not fire-and-forget): the caller refetches appointment
+      // history right after this PATCH resolves, and record() already
+      // swallows its own errors internally, so awaiting adds no failure risk
+      // — only the guarantee that the row exists before the response returns.
+      await this.auditLog.record({
+        entityType: 'department_hod',
+        entityId: departmentId,
+        action:
+          dto.faculty_id == null
+            ? 'hod_cleared'
+            : previousHodFacultyId == null
+              ? 'hod_assigned'
+              : 'hod_changed',
+        performedByUserId,
+        oldValue: { faculty_id: previousHodFacultyId },
+        newValue: { faculty_id: dto.faculty_id },
+        reason: dto.reason,
+      });
+    }
 
     return this.findOne(departmentId);
   }

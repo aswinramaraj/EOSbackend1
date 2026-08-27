@@ -1,23 +1,77 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import {
   target_audience_enum,
   announcement_status_enum,
   announcement_category_enum,
 } from '../../../../../generated/prisma/client';
+
+/**
+ * One carousel item on a social post. `storage_key` is the key returned by
+ * POST /announcements/attachments - never a URL, so the server can re-derive a
+ * fresh public URL on every read.
+ *
+ * width/height are the image's intrinsic pixel size, captured by the uploader.
+ * They are optional but strongly wanted: the app uses them to reserve the right
+ * aspect ratio BEFORE the file downloads, so a feed of mixed portrait/landscape
+ * photos does not jump as each one loads, and a small image is shown at its own
+ * shape instead of being stretched to fill a guessed box.
+ */
+export class AnnouncementMediaItemDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  storage_key!: string;
+
+  @IsIn(['photo', 'video'])
+  media_type!: 'photo' | 'video';
+
+  /** Poster frame for a video. Ignored for photos. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  thumbnail_key?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(20000)
+  width?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(20000)
+  height?: number;
+
+  /** Video length. Ignored for photos. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(60 * 60 * 4)
+  duration_seconds?: number;
+}
 
 export class CreateAnnouncementDto {
   @IsString()
@@ -192,4 +246,19 @@ export class CreateAnnouncementDto {
   @IsString()
   @MaxLength(1000)
   first_comment?: string;
+
+  /**
+   * Ordered photos/videos for a social post. Array order IS the carousel
+   * order - sequence_no is assigned server-side from it, never accepted from
+   * the client (see insertAnnouncementMedia).
+   *
+   * Capped at 10 to match announcement_media_seq_range_check; a longer array is
+   * rejected here with a readable message rather than bouncing off the CHECK.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => AnnouncementMediaItemDto)
+  media?: AnnouncementMediaItemDto[];
 }

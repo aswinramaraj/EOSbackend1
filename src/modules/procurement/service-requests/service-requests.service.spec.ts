@@ -83,6 +83,11 @@ describe('ServiceRequestsService', () => {
     expect(service).toBeDefined();
   });
 
+  // Admin, not Secretary — resolveEffectiveDepartmentId() short-circuits to
+  // the requested department_id for any non-Secretary role without touching
+  // non_teaching_staff, which this spec's mock prisma object doesn't stub.
+  const adminUser = { sub: 5, email: 'admin@sece.ac.in', role: ROLES.ADMIN, roleId: 1 } as any;
+
   describe('create', () => {
     it('throws 404 when department_id does not exist', async () => {
       prisma.departments.findUnique.mockResolvedValue(null);
@@ -91,6 +96,7 @@ describe('ServiceRequestsService', () => {
         service.create(
           { title: 'AC repair', service_description: 'x', department_id: 999 } as any,
           5,
+          adminUser,
         ),
       ).rejects.toMatchObject({ response: { errorCode: 'DEPARTMENT_NOT_FOUND' } });
       expect(prisma.service_indents.create).not.toHaveBeenCalled();
@@ -104,6 +110,7 @@ describe('ServiceRequestsService', () => {
       const result = await service.create(
         { title: 'AC repair', service_description: 'Two ACs not cooling', department_id: 2 } as any,
         5,
+        adminUser,
       );
 
       expect(prisma.service_indents.create).toHaveBeenCalledWith(

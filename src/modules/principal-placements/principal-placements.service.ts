@@ -1,6 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 
 interface SeasonRow {
   current_applicants: bigint;
@@ -41,7 +43,27 @@ export class PrincipalPlacementsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async getOverview() {
+  /** Secretary is always forced to her own department; Principal/Admin stay institution-wide (undefined = unscoped). */
+  private async resolveEffectiveDepartmentId(user: JwtPayload): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return undefined;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
+
+  async getOverview(user: JwtPayload) {
+    const departmentId = await this.resolveEffectiveDepartmentId(user);
+    const studentDeptJoin =
+      departmentId !== undefined ? Prisma.sql`JOIN students st ON st.id = sda.student_id JOIN classes cl ON cl.id = st.class_id` : Prisma.empty;
+    const studentDeptFilter = departmentId !== undefined ? Prisma.sql`AND cl.department_id = ${departmentId}` : Prisma.empty;
     try {
       // Sequential, not Promise.all - see principal-faculty/principal-departments
       // services for why (Supabase session-mode pool is small and shared).
@@ -53,9 +75,14 @@ export class PrincipalPlacementsService {
           COUNT(DISTINCT sda.student_id) FILTER (WHERE EXTRACT(YEAR FROM pd.scheduled_date) = EXTRACT(YEAR FROM CURRENT_DATE) - 1 AND sda.status = 'placed')::bigint AS previous_placed
         FROM student_drive_applications sda
         JOIN placement_drives pd ON pd.id = sda.drive_id
+        ${studentDeptJoin}
         WHERE EXTRACT(YEAR FROM pd.scheduled_date) IN (EXTRACT(YEAR FROM CURRENT_DATE), EXTRACT(YEAR FROM CURRENT_DATE) - 1)
+        ${studentDeptFilter}
       `);
 
+      // Genuinely institution-wide/common — "how many companies visited campus
+      // this year" isn't a per-department concept, so this stays unscoped
+      // even for Secretary.
       const companiesRows = await this.prisma.$queryRaw<CompaniesRow[]>(Prisma.sql`
         SELECT COUNT(DISTINCT company_id)::bigint AS companies
         FROM placement_drives
@@ -69,14 +96,18 @@ export class PrincipalPlacementsService {
           AVG(sda.offered_package) FILTER (WHERE sda.status = 'placed')::text AS average_package
         FROM student_drive_applications sda
         JOIN placement_drives pd ON pd.id = sda.drive_id
+        ${studentDeptJoin}
         WHERE EXTRACT(YEAR FROM pd.scheduled_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+        ${studentDeptFilter}
       `);
 
       const jobRoleRows = await this.prisma.$queryRaw<JobRoleRow[]>(Prisma.sql`
         SELECT pd.job_role
         FROM student_drive_applications sda
         JOIN placement_drives pd ON pd.id = sda.drive_id
+        ${studentDeptJoin}
         WHERE sda.status = 'placed' AND EXTRACT(YEAR FROM pd.scheduled_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+        ${studentDeptFilter}
         ORDER BY sda.offered_package DESC NULLS LAST
         LIMIT 1
       `);
@@ -94,10 +125,14 @@ export class PrincipalPlacementsService {
         JOIN placement_drives pd ON pd.id = sda.drive_id
         JOIN dept_students ds ON ds.student_id = sda.student_id
         WHERE EXTRACT(YEAR FROM pd.scheduled_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+        ${departmentId !== undefined ? Prisma.sql`AND ds.department_id = ${departmentId}` : Prisma.empty}
         GROUP BY ds.department_id
       `);
 
-      const departments = await this.prisma.departments.findMany({ orderBy: { name: 'asc' } });
+      const departments = await this.prisma.departments.findMany({
+        where: departmentId !== undefined ? { id: departmentId } : undefined,
+        orderBy: { name: 'asc' },
+      });
 
       const season = seasonRows[0];
       const companies = Number(companiesRows[0]?.companies ?? 0);

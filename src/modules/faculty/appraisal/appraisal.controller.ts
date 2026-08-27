@@ -41,7 +41,15 @@ export class AppraisalController {
    * Reference data (divisions + criteria) for the Apply form.
    */
   @Get('appraisal-criteria')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.SECRETARY,
+    // Non-teaching staff raise their own requests through the same route;
+    // the service branches on whether a faculty row exists, not on role.
+    ROLES.HR_PAYROLL,
+    ROLES.WARDEN,
+  )
   findCriteria(@Query() query: ListAppraisalCriteriaQueryDto) {
     return this.appraisalService.findCriteria(query);
   }
@@ -53,7 +61,15 @@ export class AppraisalController {
    * treatment as Leave/OD.
    */
   @Post('appraisal_requests')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.SECRETARY,
+    // Non-teaching staff raise their own requests through the same route;
+    // the service branches on whether a faculty row exists, not on role.
+    ROLES.HR_PAYROLL,
+    ROLES.WARDEN,
+  )
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateAppraisalDto, @CurrentUser() user: JwtPayload) {
     return this.appraisalService.create(dto, user);
@@ -92,12 +108,20 @@ export class AppraisalController {
 
   /** DELETE /api/v1/appraisal/:id — Faculty or HoD, own request, only while still 'submitted'. */
   @Delete('appraisal_requests/:id')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.SECRETARY,
+    // Attaching evidence to your OWN appraisal - the service checks
+    // ownership, so this list only needs to cover who may have an appraisal.
+    ROLES.HR_PAYROLL,
+    ROLES.WARDEN,
+  )
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.appraisalService.remove(id, user.sub, user.role);
+    return this.appraisalService.remove(id, user.sub);
   }
 
   /**
@@ -108,7 +132,15 @@ export class AppraisalController {
    * "files", 10MB each) plus a "division_id" text field.
    */
   @Post('appraisal_requests/:id/attachments')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.SECRETARY,
+    // Attaching evidence to your OWN appraisal - the service checks
+    // ownership, so this list only needs to cover who may have an appraisal.
+    ROLES.HR_PAYROLL,
+    ROLES.WARDEN,
+  )
   @UseInterceptors(
     FilesInterceptor('files', MAX_ATTACHMENT_FILES, {
       limits: { fileSize: MAX_ATTACHMENT_FILE_SIZE_BYTES },
@@ -125,18 +157,29 @@ export class AppraisalController {
       dto.division_id,
       files,
       user.sub,
-      user.role,
     );
   }
 
   /** DELETE /api/v1/appraisal_requests/:id/attachments/:attachmentId — Faculty, HoD or Secretary, own request, only while still 'submitted'/'hod_reviewed'. */
   @Delete('appraisal_requests/:id/attachments/:attachmentId')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.SECRETARY,
+    // Attaching evidence to your OWN appraisal - the service checks
+    // ownership, so this list only needs to cover who may have an appraisal.
+    ROLES.HR_PAYROLL,
+    ROLES.WARDEN,
+  )
   removeAttachment(
     @Param('id', ParseIntPipe) id: number,
     @Param('attachmentId', ParseIntPipe) attachmentId: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.appraisalService.removeAttachment(id, attachmentId, user.sub, user.role);
+    return this.appraisalService.removeAttachment(
+      id,
+      attachmentId,
+      user.sub,
+    );
   }
 }

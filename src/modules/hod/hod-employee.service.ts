@@ -473,7 +473,7 @@ export class HodEmployeeService {
   }
 
   applyPayslip(user: JwtPayload, dto: CreatePayslipRequestDto) {
-    return this.payslipRequests.create(dto, user.sub, user.role);
+    return this.payslipRequests.create(dto, user.sub);
   }
 
   getAppraisalCriteria() {

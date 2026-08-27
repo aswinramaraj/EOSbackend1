@@ -8,10 +8,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { GetStaffAttendanceDto } from './dto/get-staff-attendance.dto';
 
 export type StaffAttendanceDayStatus =
-  | 'present'
-  | 'absent'
-  | 'onDuty'
-  | 'holiday';
+  'present' | 'absent' | 'onDuty' | 'holiday';
 
 // faculty_daily_attendance.status -> the 4 UI-facing states. full_day/half_day
 // both count as attended so both map to "present"; on_leave is folded into
@@ -160,28 +157,48 @@ export class MeStaffAttendanceService {
    *      and faculty_holiday_mapping -> holiday_slots opted into by this
    *      faculty member -> "holiday".
    *
+   * Works for teaching AND non-teaching staff. faculty_daily_attendance and
+   * faculty_leaves both carry a nullable staff_user_id alongside faculty_id
+   * precisely so a non-teaching account (HR Payroll, Secretary, warden) has
+   * somewhere to record attendance — this used to resolve a faculty row and
+   * nothing else, so every such account got a flat 404 and the mobile
+   * Attendance screen showed "Couldn't load your attendance" permanently.
+   *
    * Error cases:
-   *  404 FACULTY_NOT_FOUND – authenticated user has no linked faculty record
-   *  500 INTERNAL_ERROR    – unexpected DB failure
+   *  (no 404 for a missing personnel row — an account with no attendance rows
+   *   correctly returns an empty month)
+   *  500 INTERNAL_ERROR         – unexpected DB failure
    */
   async getMyStaffAttendance(userId: number, dto: GetStaffAttendanceDto) {
     const faculty = await this.prisma.faculty.findUnique({
       where: { user_id: userId },
       select: { id: true },
     });
-    if (!faculty) {
-      throw new NotFoundException({
-        message: 'Faculty profile not found for this account',
-        errorCode: 'FACULTY_NOT_FOUND',
-      });
-    }
 
     const { year, month, monthStart, monthEnd } = this.resolvePeriod(dto);
-    const { dailyRecords, leaves, holidayMappings } = await this.fetchSources(
-      faculty.id,
-      monthStart,
-      monthEnd,
-    );
+
+    let sources: {
+      dailyRecords: DailyRecord[];
+      leaves: LeaveRange[];
+      holidayMappings: HolidayMapping[];
+    };
+
+    if (faculty) {
+      sources = await this.fetchSources(faculty.id, monthStart, monthEnd);
+    } else {
+      // Non-teaching staff: same computation, keyed on staff_user_id instead.
+      //
+      // No membership check first, and deliberately no 404: attendance is
+      // derived from rows that are keyed on staff_user_id anyway, so an account
+      // with no rows correctly produces an empty month. Refusing the request
+      // instead left the Attendance screen showing "Couldn't load your
+      // attendance" forever for any employee whose non_teaching_staff row was
+      // never created — an error the person reading it cannot act on, in place
+      // of the truthful answer "nothing recorded yet".
+      sources = await this.fetchStaffSources(userId, monthStart, monthEnd);
+    }
+
+    const { dailyRecords, leaves, holidayMappings } = sources;
     const { marks, stats } = computeMarksAndStats(
       dailyRecords,
       leaves,
@@ -205,7 +222,12 @@ export class MeStaffAttendanceService {
   ) {
     const faculty = await this.prisma.faculty.findUnique({
       where: { id: facultyId },
-      select: { id: true, first_name: true, last_name: true, designation: true },
+      select: {
+        id: true,
+        first_name: true,
+        last_name: true,
+        designation: true,
+      },
     });
     if (!faculty) {
       throw new NotFoundException('Faculty not found');
@@ -265,6 +287,58 @@ export class MeStaffAttendanceService {
     const monthStart = new Date(Date.UTC(year, month - 1, 1));
     const monthEnd = new Date(Date.UTC(year, month, 0));
     return { year, month, monthStart, monthEnd };
+  }
+
+  /**
+   * The non-teaching-staff equivalent of fetchSources, keyed on
+   * staff_user_id rather than faculty_id.
+   *
+   * holidayMappings is deliberately empty: faculty_holiday_mapping is keyed on
+   * faculty_id and there is no staff equivalent table, so rather than invent
+   * one or silently borrow another person's holidays, staff days simply fall
+   * through to the recorded attendance row / approved leave. Returning [] here
+   * keeps computeMarksAndStats identical for both paths.
+   */
+  private async fetchStaffSources(
+    staffUserId: number,
+    monthStart: Date,
+    monthEnd: Date,
+  ) {
+    try {
+      const [dailyRecords, leaves] = await Promise.all([
+        this.prisma.faculty_daily_attendance.findMany({
+          where: {
+            staff_user_id: staffUserId,
+            attendance_date: { gte: monthStart, lte: monthEnd },
+          },
+          select: { attendance_date: true, status: true },
+        }),
+        this.prisma.faculty_leaves.findMany({
+          where: {
+            staff_user_id: staffUserId,
+            hod_approval_status: 'approved',
+            hr_approval_status: 'approved',
+            from_date: { lte: monthEnd },
+            to_date: { gte: monthStart },
+          },
+          select: { from_date: true, to_date: true },
+        }),
+      ]);
+      return {
+        dailyRecords,
+        leaves,
+        holidayMappings: [] as HolidayMapping[],
+      };
+    } catch (err) {
+      this.logger.error(
+        `Failed to fetch staff attendance sources for staff user ${staffUserId}`,
+        err,
+      );
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
   }
 
   private async fetchSources(

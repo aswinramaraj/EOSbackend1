@@ -1,9 +1,12 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { MarkFacultyAttendanceDto } from './dto/mark-attendance.dto';
 
 const MONTH_LABELS = [
@@ -83,6 +86,30 @@ function computeStats(rows: { status: string }[]) {
 @Injectable()
 export class FacultyAttendanceService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Secretary is always forced to her own department, overriding whatever
+   * was requested; every other caller (including HodService's own internal
+   * call, which never passes `user`) keeps its existing unscoped/pre-resolved
+   * behavior untouched.
+   */
+  private async resolveEffectiveDepartmentId(
+    requested: number | undefined,
+    user?: JwtPayload,
+  ): Promise<number | undefined> {
+    if (!user || user.role !== ROLES.SECRETARY) return requested;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
 
   /**
    * GET /me/faculty/my-attendance — self-scoped read for a Secretary (or any
@@ -290,10 +317,12 @@ export class FacultyAttendanceService {
     departmentId?: number,
     academicYear?: string,
     search?: string,
+    user?: JwtPayload,
   ) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(departmentId, user);
     const facultyRows = await this.prisma.faculty.findMany({
       where: {
-        department_id: departmentId,
+        department_id: effectiveDepartmentId,
         status: 'active',
         OR: search
           ? [

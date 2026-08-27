@@ -13,6 +13,24 @@ export interface ReportTable {
   rows: Record<string, unknown>[];
 }
 
+/** A row's cell values are `unknown` — this avoids relying on `String(unknown)`'s default `[object Object]` stringification for anything that isn't already a primitive. */
+function cellToString(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+/** Plain CSV — same manual quoting rule (wrap every cell, double up embedded quotes) the Exams page's client-side downloadCsv() already uses, just run server-side so it can share one ReportTable shape with renderExcel/renderPdf. */
+export function renderCsv(table: ReportTable): Buffer {
+  const header = table.columns.map((c) => c.header);
+  const rows = table.rows.map((r) => table.columns.map((c) => cellToString(r[c.key])));
+  const csv = [header, ...rows]
+    .map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(','))
+    .join('\r\n');
+  return Buffer.from(csv, 'utf-8');
+}
+
 export async function renderExcel(table: ReportTable): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet(table.title.slice(0, 31)); // Excel sheet-name limit
@@ -222,7 +240,7 @@ function writePdfTable(doc: PDFKit.PDFDocument, table: ReportTable): void {
     doc.font('Helvetica').fontSize(8.5).fillColor(PDF_PALETTE.bodyText);
     const cellHeight = doc.currentLineHeight(true) * 1.5;
     table.columns.forEach((c, ci) => {
-      const value = String(row[c.key] ?? '');
+      const value = cellToString(row[c.key]);
       doc.text(value, left + ci * colWidth + PDF_CELL_PADDING, y + 5, {
         width: colWidth - PDF_CELL_PADDING * 2,
         height: cellHeight,
