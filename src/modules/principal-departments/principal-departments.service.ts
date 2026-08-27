@@ -1,6 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 
 interface HodRow {
   department_id: number;
@@ -44,7 +46,27 @@ export class PrincipalDepartmentsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async getOverview() {
+  /** Secretary is always forced to her own department; Principal/Admin stay institution-wide (undefined = unscoped). */
+  private async resolveEffectiveDepartmentId(
+    user: JwtPayload,
+    requested?: number,
+  ): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return requested;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
+
+  async getOverview(user: JwtPayload) {
+    const departmentId = await this.resolveEffectiveDepartmentId(user);
     try {
       // Run sequentially rather than via Promise.all - Supabase's session-mode
       // pooler caps concurrent connections quite low (pool_size: 15, shared
@@ -52,7 +74,10 @@ export class PrincipalDepartmentsService {
       // single dashboard load risks tipping it over under any concurrent
       // load. This endpoint isn't latency-critical enough to be worth that
       // fragility.
-      const departments = await this.prisma.departments.findMany({ orderBy: { name: 'asc' } });
+      const departments = await this.prisma.departments.findMany({
+        where: departmentId !== undefined ? { id: departmentId } : undefined,
+        orderBy: { name: 'asc' },
+      });
       const hodRows = await this.prisma.$queryRaw<HodRow[]>(Prisma.sql`
         SELECT DISTINCT ON (f.department_id) f.department_id, f.first_name, f.last_name, f.designation
         FROM faculty f
@@ -169,9 +194,10 @@ export class PrincipalDepartmentsService {
    * the same real table institution-wide for the Students screen's
    * "Sections & representatives" panel.
    */
-  async getClassMentors(departmentId?: number) {
+  async getClassMentors(user: JwtPayload, departmentId?: number) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, departmentId);
     const classes = await this.prisma.classes.findMany({
-      where: { department_id: departmentId },
+      where: { department_id: effectiveDepartmentId },
       select: { id: true, section: true, current_semester: true },
     });
     const classIds = classes.map((c) => c.id);
@@ -201,9 +227,10 @@ export class PrincipalDepartmentsService {
    * nba_criteria/nba_evidence_items tables the Accreditation screen
    * already uses (no new table — just exposed at the department level too).
    */
-  async getNbaStatus(departmentId?: number) {
+  async getNbaStatus(user: JwtPayload, departmentId?: number) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, departmentId);
     const criteria = await this.prisma.nba_criteria.findMany({
-      where: { department_id: departmentId },
+      where: { department_id: effectiveDepartmentId },
       select: { id: true, nba_evidence_items: { select: { done: true } } },
     });
     const total = criteria.reduce((s, c) => s + c.nba_evidence_items.length, 0);
@@ -222,9 +249,10 @@ export class PrincipalDepartmentsService {
    * students + attendance_records (same aggregate the Students screen's
    * section panel already computes client-side, exposed grouped by year too).
    */
-  async getClassStrength(departmentId?: number) {
+  async getClassStrength(user: JwtPayload, departmentId?: number) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, departmentId);
     const classes = await this.prisma.classes.findMany({
-      where: { department_id: departmentId },
+      where: { department_id: effectiveDepartmentId },
       select: { id: true, section: true, current_semester: true, batches: { select: { name: true } } },
     });
     const classIds = classes.map((c) => c.id);

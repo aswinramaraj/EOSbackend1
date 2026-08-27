@@ -10,7 +10,9 @@ import {
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { PrincipalDepartmentsService } from './departments.service';
 import { AssignHodDto } from './dto/assign-hod.dto';
 
@@ -39,7 +41,11 @@ export class PrincipalDepartmentsController {
   }
 
   @Patch(':id/hod')
-  assignHod(@Param('id', ParseIntPipe) id: number, @Body() dto: AssignHodDto) {
-    return this.departmentsService.assignHod(id, dto);
+  assignHod(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AssignHodDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.departmentsService.assignHod(id, dto, user.sub);
   }
 }

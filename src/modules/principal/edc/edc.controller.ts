@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -26,5 +26,11 @@ export class PrincipalEdcController {
   @Get()
   list(@Query() query: ListEdcQueryDto) {
     return this.edcService.list(query);
+  }
+
+  /** GET /me/principal/edc/:id/profile — full EDC Student Profile detail screen. */
+  @Get(':id/profile')
+  getProfile(@Param('id', ParseIntPipe) id: number) {
+    return this.edcService.getProfile(id);
   }
 }

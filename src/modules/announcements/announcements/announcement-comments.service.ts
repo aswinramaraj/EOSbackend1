@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AnnouncementsService } from './announcements.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
@@ -71,7 +72,10 @@ function resolveCommenterName(u: CommenterRow): string {
 export class AnnouncementCommentsService {
   private readonly logger = new Logger(AnnouncementCommentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly announcements: AnnouncementsService,
+  ) {}
 
   private shape(row: CommentRow) {
     return {
@@ -85,21 +89,22 @@ export class AnnouncementCommentsService {
     };
   }
 
-  private async assertAnnouncementExists(announcementId: number): Promise<void> {
-    const exists = await this.prisma.announcements.count({
-      where: { id: announcementId },
-    });
-    if (exists === 0) {
-      throw new NotFoundException({
-        message: 'Announcement not found',
-        errorCode: 'ANNOUNCEMENT_NOT_FOUND',
-      });
-    }
+  /**
+   * Existence alone was the wrong gate: it let anyone with a permitted ROLE
+   * read the comments of a post that was never addressed to them, just by
+   * knowing its id. Now delegated to the announcements service's own
+   * visibility predicate, so "can I comment" is exactly "can I see it".
+   */
+  private async assertAnnouncementVisible(
+    announcementId: number,
+    user: JwtPayload,
+  ): Promise<void> {
+    await this.announcements.assertAnnouncementVisible(announcementId, user);
   }
 
   /** GET /announcements/:id/comments — oldest first, so a thread reads in order. */
-  async findAll(announcementId: number) {
-    await this.assertAnnouncementExists(announcementId);
+  async findAll(announcementId: number, user: JwtPayload) {
+    await this.assertAnnouncementVisible(announcementId, user);
 
     try {
       const rows = await this.prisma.announcement_comments.findMany({
@@ -122,9 +127,10 @@ export class AnnouncementCommentsService {
   async create(
     announcementId: number,
     dto: { comment_text: string; parent_comment_id?: number },
-    userId: number,
+    user: JwtPayload,
   ) {
-    await this.assertAnnouncementExists(announcementId);
+    await this.assertAnnouncementVisible(announcementId, user);
+    const userId = user.sub;
 
     // A reply must belong to the same announcement, or a comment could be
     // grafted onto an unrelated thread.
@@ -209,7 +215,9 @@ export class AnnouncementCommentsService {
     try {
       // Replies cascade with the parent (FK is ON DELETE CASCADE), so a thread
       // never keeps orphaned children.
-      await this.prisma.announcement_comments.delete({ where: { id: commentId } });
+      await this.prisma.announcement_comments.delete({
+        where: { id: commentId },
+      });
       this.logger.log(`Comment ${commentId} deleted by user=${user.sub}`);
       return { id: commentId, message: 'Comment deleted successfully' };
     } catch (err) {

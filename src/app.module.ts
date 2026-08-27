@@ -204,6 +204,7 @@ import { PrincipalCalendarModule } from './modules/principal/calendar/calendar.m
 import { PrincipalStudentsModule } from './modules/principal/students/students.module';
 import { PrincipalFacultyModule } from './modules/principal/faculty/faculty.module';
 import { PrincipalDepartmentsModule } from './modules/principal/departments/departments.module';
+import { RoleAllocationModule } from './modules/principal/role-allocation/role-allocation.module';
 import { PrincipalHigherEducationModule } from './modules/principal/higher-education/higher-education.module';
 import { PrincipalEdcModule } from './modules/principal/edc/edc.module';
 import { PrincipalApprovalsModule } from './modules/principal/approvals/approvals.module';
@@ -460,6 +461,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     PrincipalStudentsModule,
     PrincipalFacultyModule,
     PrincipalDepartmentsModule,
+    RoleAllocationModule,
     PrincipalHigherEducationModule,
     PrincipalEdcModule,
     PrincipalApprovalsModule,

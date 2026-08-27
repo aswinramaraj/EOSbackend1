@@ -63,15 +63,41 @@ describe('FacultyOdService', () => {
   });
 
   describe('create', () => {
-    it('throws 404 when the JWT user has no linked faculty record', async () => {
+    it('creates a staff OD request keyed on staff_user_id when the caller has no linked faculty record (HR Payroll/warden self-service)', async () => {
       prisma.faculty.findUnique.mockResolvedValue(null);
+      prisma.faculty_od_requests.create.mockResolvedValue({
+        id: 2,
+        from_date: new Date('2026-09-01T00:00:00.000Z'),
+        to_date: new Date('2026-09-02T00:00:00.000Z'),
+        place: null,
+        purpose: null,
+        hod_approval_status: 'approved',
+        hr_approval_status: 'pending',
+        created_at: new Date('2026-08-06T00:00:00.000Z'),
+        staff_user_id: 999,
+        faculty: null,
+      });
 
-      await expect(
-        service.create(
-          { from_date: '2026-09-01', to_date: '2026-09-02' },
-          { sub: 999, role: 'faculty' } as any,
-        ),
-      ).rejects.toThrow('Faculty profile not found for the authenticated user');
+      const future = new Date();
+      future.setDate(future.getDate() + 30);
+      const from = future.toISOString().slice(0, 10);
+
+      const result = await service.create(
+        { from_date: from, to_date: from },
+        { sub: 999, role: 'hr_payroll' } as any,
+      );
+
+      expect(prisma.faculty_od_requests.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            staff_user_id: 999,
+            hod_approval_status: 'approved',
+          }),
+        }),
+      );
+      // Skips straight to HR Payroll — no HoD exists for a staff account.
+      expect(result.overall_status).toBe('pending');
+      expect(result.requester.kind).not.toBe('faculty');
     });
 
     it('rejects a from_date before today', async () => {
@@ -198,9 +224,17 @@ describe('FacultyOdService', () => {
     it('lets HoD set hod_approval_status', async () => {
       prisma.faculty_od_requests.findUnique.mockResolvedValue({
         id: 1,
+        faculty_id: 5,
         hod_approval_status: 'pending',
         hr_approval_status: 'pending',
       });
+      // First call resolves the caller's own faculty row (self-review
+      // guard), second resolves the requester's department (same-department
+      // check) — same two-call sequence FacultyOdService.update() makes for
+      // every HoD action.
+      prisma.faculty.findUnique
+        .mockResolvedValueOnce({ id: 10, department_id: 3 })
+        .mockResolvedValueOnce({ department_id: 3 });
       prisma.faculty_od_requests.update.mockResolvedValue({
         id: 1,
         from_date: new Date('2026-09-01T00:00:00.000Z'),
@@ -228,9 +262,13 @@ describe('FacultyOdService', () => {
     it('forbids HoD from setting hr_approval_status', async () => {
       prisma.faculty_od_requests.findUnique.mockResolvedValue({
         id: 1,
+        faculty_id: 5,
         hod_approval_status: 'pending',
         hr_approval_status: 'pending',
       });
+      prisma.faculty.findUnique
+        .mockResolvedValueOnce({ id: 10, department_id: 3 })
+        .mockResolvedValueOnce({ department_id: 3 });
 
       await expect(
         service.update(1, { hr_approval_status: 'approved' }, HOD_USER),

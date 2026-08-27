@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
@@ -35,6 +35,21 @@ function toFacultyEntry(row: {
 export class SecretaryDashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Every Secretary account is scoped to her own department, mirroring HOD's own department resolution. */
+  private async resolveDepartmentId(userId: number): Promise<number> {
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: userId },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
+
   /**
    * GET /me/secretary/dashboard/summary
    *
@@ -45,9 +60,9 @@ export class SecretaryDashboardService {
    * than exposing a college-wide pending count no existing endpoint grants a
    * Secretary access to.
    *
-   * Attendance/faculty duty-leave figures are college-wide staff-tier data,
-   * matching the unrestricted access Secretary already has on GET
-   * /attendance (see AttendanceService.applyRoleScoping).
+   * Attendance/faculty duty-leave figures are department-scoped (mirroring
+   * HOD's own dashboard, which is department-scoped everywhere), now that a
+   * Secretary account is department-specific rather than one shared login.
    *
    * There is no "students on leave" concept in the schema — attendance_
    * status_enum only has present/absent/on_duty, no leave value — so unlike
@@ -56,6 +71,7 @@ export class SecretaryDashboardService {
    */
   async summary(currentUser: JwtPayload) {
     const today = startOfToday();
+    const departmentId = await this.resolveDepartmentId(currentUser.sub);
     // JS Date#getDay(): 0=Sun..6=Sat. timetable_slots.day_of_week uses the
     // same 1=Mon..6=Sat range with no Sunday value, so a Sunday query (0)
     // simply matches zero rows — no special-casing needed.
@@ -86,7 +102,11 @@ export class SecretaryDashboardService {
         where: { requested_by_user_id: userId, status: 'pending' },
       }),
       this.prisma.faculty_daily_attendance.findMany({
-        where: { attendance_date: today, status: { in: ['on_leave', 'on_duty'] } },
+        where: {
+          attendance_date: today,
+          status: { in: ['on_leave', 'on_duty'] },
+          faculty: { department_id: departmentId },
+        },
         select: {
           status: true,
           faculty: {
@@ -101,22 +121,22 @@ export class SecretaryDashboardService {
         },
       }),
       this.prisma.attendance_records.findMany({
-        where: { attendance_date: today, status: 'absent' },
+        where: { attendance_date: today, status: 'absent', classes: { department_id: departmentId } },
         select: { student_id: true },
         distinct: ['student_id'],
       }),
       this.prisma.attendance_records.findMany({
-        where: { attendance_date: today, status: 'on_duty' },
+        where: { attendance_date: today, status: 'on_duty', classes: { department_id: departmentId } },
         select: { student_id: true },
         distinct: ['student_id'],
       }),
       this.prisma.timetable_slots.findMany({
-        where: { day_of_week: dayOfWeek },
+        where: { day_of_week: dayOfWeek, classes: { department_id: departmentId } },
         select: { class_id: true, subject_id: true },
         distinct: ['class_id', 'subject_id'],
       }),
       this.prisma.attendance_records.findMany({
-        where: { attendance_date: today },
+        where: { attendance_date: today, classes: { department_id: departmentId } },
         select: { class_id: true, subject_id: true },
         distinct: ['class_id', 'subject_id'],
       }),

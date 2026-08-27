@@ -2,6 +2,8 @@ import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { AccreditationService } from 'src/modules/secretary-portal/accreditation/accreditation.service';
 import { CreateAccreditationItemDto } from './dto/create-accreditation-item.dto';
@@ -27,8 +29,9 @@ export class IqacAccreditationController {
   ) {}
 
   @Get('nba-overview')
-  getOverview(@Query('department_id') departmentId?: string) {
+  getOverview(@CurrentUser() user: JwtPayload, @Query('department_id') departmentId?: string) {
     return this.accreditation.getOverview(
+      user,
       departmentId ? Number(departmentId) : undefined,
     );
   }

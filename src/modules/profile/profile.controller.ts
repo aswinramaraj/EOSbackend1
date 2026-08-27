@@ -48,6 +48,7 @@ export class ProfileController {
     ROLES.HR_PAYROLL,
     ROLES.PARENT,
     ROLES.PRINCIPAL,
+    ROLES.SECRETARY,
   )
   getMyProfile(@CurrentUser() user: JwtPayload) {
     return this.profileService.getMyProfile(user);

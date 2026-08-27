@@ -54,6 +54,30 @@ const FACULTY_OD_SELECT = {
   email_body: true,
   admin_remarks: true,
   staff_user_id: true,
+  // faculty_od.faculty_id is NULLABLE - an OD raised by non-teaching staff
+  // (Secretary / HR Payroll / warden) has staff_user_id set and faculty null.
+  // Without a name here every client had to guess, and the mobile HR queue
+  // asserted row.faculty! and crashed on the first such row.
+  // Prisma auto-names this relation after the FK column. Plain `users` is a
+
+  // DIFFERENT relation (or absent), so the generated name must be used
+
+  // verbatim - see the note in FacultyLeavesService.resolveDepartmentHodUserId
+
+  // about these names not being stable across `db pull`.
+
+  users_faculty_od_requests_staff_user_idTousers: {
+    select: {
+      email: true,
+      non_teaching_staff: {
+        select: {
+          first_name: true,
+          last_name: true,
+          departments: { select: { id: true, name: true, code: true } },
+        },
+      },
+    },
+  },
   faculty: {
     select: {
       id: true,
@@ -109,6 +133,17 @@ interface FacultyOdRow {
     user_id: number;
     department_id: number;
     departments: { id: number; name: string; code: string } | null;
+  } | null;
+  // The requester's user row, so a staff-submitted OD (faculty null) still has
+  // a name. non_teaching_staff.user_id is nullable, so Prisma models the
+  // relation as a list.
+  users_faculty_od_requests_staff_user_idTousers: {
+    email: string;
+    non_teaching_staff: {
+      first_name: string;
+      last_name: string | null;
+      departments: { id: number; name: string; code: string } | null;
+    }[];
   } | null;
 }
 
@@ -170,6 +205,42 @@ function toResponse(od: FacultyOdRow) {
         }
       : null,
     staff_user_id: od.staff_user_id,
+    // One display identity, whichever register the requester lives in.
+    // Clients must read this rather than reaching into `faculty`, which is
+    // null for staff-submitted rows.
+    requester: resolveOdRequester(od),
+  };
+}
+
+/**
+ * Display identity for an OD request: faculty -> non_teaching_staff -> email,
+ * the same order used across this codebase (resolveRequesterName in
+ * media-requests.service.ts, resolveMarkerName in attendance.service.ts).
+ */
+function resolveOdRequester(od: FacultyOdRow) {
+  if (od.faculty) {
+    return {
+      kind: 'faculty' as const,
+      name: `${od.faculty.first_name} ${od.faculty.last_name}`,
+      designation: od.faculty.designation,
+      department: od.faculty.departments?.code ?? null,
+    };
+  }
+  const staff =
+    od.users_faculty_od_requests_staff_user_idTousers?.non_teaching_staff?.[0];
+  if (staff) {
+    return {
+      kind: 'staff' as const,
+      name: [staff.first_name, staff.last_name].filter(Boolean).join(' '),
+      designation: 'Non-teaching staff',
+      department: staff.departments?.code ?? null,
+    };
+  }
+  return {
+    kind: 'unknown' as const,
+    name: od.users_faculty_od_requests_staff_user_idTousers?.email ?? 'Unknown',
+    designation: null,
+    department: null,
   };
 }
 
@@ -207,10 +278,23 @@ export class FacultyOdService {
       throw new BadRequestException('from_date must be on or before to_date');
     }
 
-    // Secretary (or any non-Faculty staff account) — no faculty row, no
-    // HoD to review; goes straight to the HR Payroll stage, keyed by
-    // staff_user_id. Mirrors faculty-leaves' identical Secretary branch.
-    if (currentUser.role === ROLES.SECRETARY) {
+    // Any non-teaching staff account — no faculty row, no HoD to review; goes
+    // straight to the HR Payroll stage, keyed by staff_user_id.
+    //
+    // Branches on whether a faculty row EXISTS rather than on the role name.
+    // This used to test `role === SECRETARY`, so HR Payroll and warden fell
+    // through to the faculty path and got a FACULTY_NOT_FOUND 404 raising
+    // their own OD. See the identical fix in faculty-leaves.service.ts.
+    const facultyRow = await this.prisma.faculty.findUnique({
+      where: { user_id: currentUser.sub },
+    });
+
+    if (!facultyRow) {
+      // No non_teaching_staff membership check: the row this writes is keyed
+      // on staff_user_id, whose FK is to `users` — which the authenticated
+      // caller demonstrably has. Demanding a personnel row as well added no
+      // integrity and 404d real employees whose non_teaching_staff row was
+      // never created.
       const od = await this.prisma.faculty_od_requests.create({
         data: {
           staff_user_id: currentUser.sub,
@@ -226,7 +310,7 @@ export class FacultyOdService {
       return toResponse(od);
     }
 
-    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
+    const faculty = facultyRow;
 
     const od = await this.prisma.faculty_od_requests.create({
       data: {
@@ -545,12 +629,16 @@ export class FacultyOdService {
 
     if (role === ROLES.SECRETARY) {
       if (existing.staff_user_id !== userId) {
-        throw new ForbiddenException('You may only delete your own OD requests');
+        throw new ForbiddenException(
+          'You may only delete your own OD requests',
+        );
       }
     } else {
       const faculty = await this.resolveFacultyByUserId(userId);
       if (existing.faculty_id !== faculty.id) {
-        throw new ForbiddenException('You may only delete your own OD requests');
+        throw new ForbiddenException(
+          'You may only delete your own OD requests',
+        );
       }
     }
 
@@ -578,7 +666,12 @@ export class FacultyOdService {
   async updateOwnStaffRequest(
     id: number,
     userId: number,
-    dto: { from_date?: string; to_date?: string; place?: string; purpose?: string },
+    dto: {
+      from_date?: string;
+      to_date?: string;
+      place?: string;
+      purpose?: string;
+    },
   ) {
     const existing = await this.prisma.faculty_od_requests.findUnique({
       where: { id },

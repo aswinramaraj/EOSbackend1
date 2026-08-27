@@ -493,12 +493,29 @@ describe('AppraisalService', () => {
   });
 
   describe('addAttachments', () => {
-    it('throws 404 when the JWT user has no linked faculty record', async () => {
+    it('attaches to the caller\'s own staff_user_id-owned request when the caller has no linked faculty record (staff account)', async () => {
       prisma.faculty.findUnique.mockResolvedValue(null);
+      prisma.appraisal_requests.findUnique.mockResolvedValue({
+        staff_user_id: 999,
+        faculty_id: null,
+        status: 'hod_reviewed',
+      });
+      prisma.appraisal_divisions.findUnique.mockResolvedValue({ id: 1 });
+      storage.upload.mockResolvedValue({ url: 'https://x/f.pdf' });
+      prisma.appraisal_requests.findUniqueOrThrow.mockResolvedValue(
+        requestRow({ status: 'hod_reviewed', staff_user_id: 999, faculty_id: null, faculty: null }),
+      );
 
       await expect(
-        service.addAttachments(1, 1, [], 999),
-      ).rejects.toThrow('Faculty profile not found for the authenticated user');
+        service.addAttachments(
+          1,
+          1,
+          [{ buffer: Buffer.from(''), originalname: 'f.pdf', mimetype: 'application/pdf' }],
+          999,
+        ),
+      ).resolves.toBeDefined();
+
+      expect(prisma.appraisal_attachments.createMany).toHaveBeenCalled();
     });
 
     it('throws 403 when the request does not belong to the caller', async () => {
@@ -513,11 +530,11 @@ describe('AppraisalService', () => {
       ).rejects.toThrow('You may only attach files to your own appraisal requests');
     });
 
-    it('throws 409 when the request is no longer submitted', async () => {
+    it('throws 409 when the request has moved past hod_reviewed (submitted/hod_reviewed are the only stages attachments are allowed in — the latter is what lets a staff account, which skips straight to it, attach anything at all)', async () => {
       prisma.faculty.findUnique.mockResolvedValue({ id: 5 });
       prisma.appraisal_requests.findUnique.mockResolvedValue({
         faculty_id: 5,
-        status: 'hod_reviewed',
+        status: 'hr_scored',
       });
 
       await expect(
