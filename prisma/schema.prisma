@@ -2817,11 +2817,14 @@ model exam_timetable_versions {
   published_by_user_id                                      Int?
   published_at                                              DateTime?                     @db.Timestamptz(6)
   withdrawn_at                                              DateTime?                     @db.Timestamptz(6)
+  cloned_from_version_id                                    Int?
   exam_timetable                                            exam_timetable[]
   users_exam_timetable_versions_created_by_user_idTousers   users?                        @relation("exam_timetable_versions_created_by_user_idTousers", fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   departments                                               departments?                  @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   exams                                                     exams                         @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users_exam_timetable_versions_published_by_user_idTousers users?                        @relation("exam_timetable_versions_published_by_user_idTousers", fields: [published_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cloned_from                                               exam_timetable_versions?      @relation("exam_timetable_versions_clone", fields: [cloned_from_version_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cloned_into                                               exam_timetable_versions[]     @relation("exam_timetable_versions_clone")
 
   @@unique([exam_id, department_id, version_number])
 }
@@ -4878,6 +4881,9 @@ model certificate_requests {
   status              certificate_request_status_enum @default(pending)
   requested_at        DateTime                        @default(now()) @db.Timestamptz(6)
   issued_at           DateTime?                       @db.Timestamptz(6)
+  copies              Int                             @default(1)
+  delivery_mode       String?                         @db.VarChar(30)
+  reason              String?                         @db.VarChar(300)
   certificate_types   certificate_types               @relation(fields: [certificate_type_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   students            students                        @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
@@ -4935,14 +4941,17 @@ model confidential_access_events {
 }
 
 model convocation_registrations {
-  id             Int                     @id @default(autoincrement())
-  student_id     Int                     @unique
-  cgpa           Decimal?                @db.Decimal(4, 2)
-  arrears_count  Int                     @default(0)
-  classification String?                 @db.VarChar(50)
-  status         convocation_status_enum @default(eligible)
-  registered_at  DateTime?               @db.Timestamptz(6)
-  students       students                @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                  Int                     @id @default(autoincrement())
+  student_id          Int                     @unique
+  cgpa                Decimal?                @db.Decimal(4, 2)
+  arrears_count       Int                     @default(0)
+  classification      String?                 @db.VarChar(50)
+  status              convocation_status_enum @default(eligible)
+  registered_at       DateTime?               @db.Timestamptz(6)
+  convocation_batch   String?                 @db.VarChar(100)
+  merit_list_eligible Boolean                 @default(true)
+  remarks             String?                 @db.VarChar(500)
+  students            students                @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model course_outcomes {
@@ -4969,15 +4978,17 @@ model course_result_status {
 }
 
 model exam_fee_transactions {
-  id         Int                      @id @default(autoincrement())
-  student_id Int
-  fee_head   exam_fee_head_enum
-  amount     Decimal                  @db.Decimal(10, 2)
-  mode       exam_fee_mode_enum       @default(online)
-  status     exam_fee_txn_status_enum @default(paid)
-  receipt_no String?                  @unique @db.VarChar(30)
-  created_at DateTime                 @default(now()) @db.Timestamptz(6)
-  students   students                 @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id             Int                      @id @default(autoincrement())
+  student_id     Int
+  fee_head       exam_fee_head_enum
+  amount         Decimal                  @db.Decimal(10, 2)
+  mode           exam_fee_mode_enum       @default(online)
+  status         exam_fee_txn_status_enum @default(paid)
+  receipt_no     String?                  @unique @db.VarChar(30)
+  reference_no   String?                  @db.VarChar(60)
+  reconciled_at  DateTime?                @db.Timestamptz(6)
+  created_at     DateTime                 @default(now()) @db.Timestamptz(6)
+  students       students                 @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model exam_registrations {
@@ -4989,6 +5000,7 @@ model exam_registrations {
   approved_by_user_id Int?
   approved_at         DateTime?                         @db.Timestamptz(6)
   registered_at       DateTime                          @default(now()) @db.Timestamptz(6)
+  reason              String?                           @db.VarChar(300)
   users               users?                            @relation(fields: [approved_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   exams               exams                             @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   students            students                          @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -5371,6 +5383,7 @@ model question_papers {
   sets_count                                            Int                          @default(0) @db.SmallInt
   vaulted                                               Boolean                      @default(false)
   status                                                question_paper_status_enum   @default(awaiting_upload)
+  due_date                                              DateTime?                    @db.Date
   created_at                                            DateTime                     @default(now()) @db.Timestamptz(6)
   updated_at                                            DateTime                     @default(now()) @db.Timestamptz(6)
   confidential_access_events                            confidential_access_events[]

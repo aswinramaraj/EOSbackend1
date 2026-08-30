@@ -63,12 +63,22 @@ interface VenueAvailabilityBookingRow {
   users_venue_bookings_booked_by_user_idTousers: VenueAvailabilityBookerRow;
 }
 
+interface VenueAvailabilityExamUsageRow {
+  exam_date: Date;
+  exams: {
+    academic_year: string;
+    semester: number;
+    exam_types: { name: string };
+  };
+}
+
 interface VenueAvailabilityRow {
   id: number;
   name: string;
   location: string | null;
   capacity: number | null;
   venue_bookings_venue_bookings_venue_idTovenues: VenueAvailabilityBookingRow[];
+  hall_plans: VenueAvailabilityExamUsageRow[];
 }
 
 /**
@@ -90,12 +100,19 @@ function resolveBookerName(user: VenueAvailabilityBookerRow): string {
 
 function toVenueAvailability(venue: VenueAvailabilityRow) {
   const [booking] = venue.venue_bookings_venue_bookings_venue_idTovenues;
+  const [examUsage] = venue.hall_plans;
   return {
     id: venue.id,
     name: venue.name,
     location: venue.location,
     capacity: venue.capacity,
-    is_available: !booking,
+    is_available: !booking && !examUsage,
+    exam_usage: examUsage
+      ? {
+          exam_date: examUsage.exam_date,
+          exam_label: `${examUsage.exams.exam_types.name} · Semester ${examUsage.exams.semester} · ${examUsage.exams.academic_year}`,
+        }
+      : null,
     booking: booking
       ? {
           purpose: booking.purpose,
@@ -250,7 +267,12 @@ export class VenuesService {
    * A venue is "available" when it has no *non-rejected* booking whose
    * window overlaps [from, to); `venue_booking_status_enum` has no
    * "cancelled" value (only pending/approved/rejected/alternative_offered),
-   * so "rejected" is the only status excluded here.
+   * so "rejected" is the only status excluded here. It's also unavailable
+   * if COE already has a real exam hall plan there — a `hall_plans` row for
+   * that venue with an `exam_date` inside [from, to) — so this faculty-side
+   * booking flow can't double-book a hall COE is already using for an exam;
+   * `hall_plans.exam_date` has no time component, so the whole calendar day
+   * is treated as occupied.
    */
   async findAll(query: ListVenueQueryDto) {
     const from = new Date(query.from);
@@ -259,6 +281,9 @@ export class VenuesService {
     if (from >= to) {
       throw new BadRequestException('from must be before to');
     }
+
+    const examDateFrom = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+    const examDateTo = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()));
 
     const where = query.search
       ? { name: { contains: query.search, mode: 'insensitive' as const } }
@@ -284,6 +309,15 @@ export class VenuesService {
             orderBy: { created_at: 'desc' },
             take: 1,
             select: VENUE_AVAILABILITY_BOOKING_SELECT,
+          },
+          hall_plans: {
+            where: { exam_date: { gte: examDateFrom, lte: examDateTo } },
+            orderBy: { exam_date: 'asc' },
+            take: 1,
+            select: {
+              exam_date: true,
+              exams: { select: { academic_year: true, semester: true, exam_types: { select: { name: true } } } },
+            },
           },
         },
       }),

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -14,8 +14,8 @@ export class QuestionPapersController {
   constructor(private readonly service: QuestionPapersService) {}
 
   @Get('stats')
-  async getStats(@Query('exam_id') examId: string) {
-    const stats = await this.service.getStats(Number(examId));
+  async getStats(@Query('exam_id') examId?: string) {
+    const stats = await this.service.getStats(examId ? Number(examId) : undefined);
     return ApiResponse.ok(stats, 'Question paper stats fetched successfully.');
   }
 
@@ -35,5 +35,11 @@ export class QuestionPapersController {
   async upsert(@Body() dto: UpsertQuestionPaperDto) {
     const paper = await this.service.upsert(dto);
     return ApiResponse.ok(paper, 'Question paper updated successfully.');
+  }
+
+  @Post(':examSubjectMappingId/remind')
+  async remind(@Param('examSubjectMappingId', ParseIntPipe) examSubjectMappingId: number) {
+    const notification = await this.service.remind(examSubjectMappingId);
+    return ApiResponse.created(notification, 'Reminder sent successfully.');
   }
 }

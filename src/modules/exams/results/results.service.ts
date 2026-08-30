@@ -7,6 +7,7 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { UpdateResultDto } from './dto/update-result.dto';
 import { ScheduleResultDto } from './dto/schedule-result.dto';
@@ -245,6 +246,22 @@ export class ResultsService {
         state: dto.state,
       },
     });
+  }
+
+  /** A scheduled release genuinely goes live once its embargo time arrives, not just marked so — same real-dispatch pattern as coe_notification_broadcasts. */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async releaseDueResults() {
+    const due = await this.prisma.result_publications.findMany({
+      where: { state: 'embargo', scheduled_release_at: { lte: new Date() } },
+      select: { id: true },
+    });
+    for (const r of due) {
+      try {
+        await this.prisma.result_publications.update({ where: { id: r.id }, data: { state: 'live' } });
+      } catch (err) {
+        this.logger.error(`Failed to auto-release result publication ${r.id}`, err);
+      }
+    }
   }
 
   async update(id: number, updateResultDto: UpdateResultDto) {

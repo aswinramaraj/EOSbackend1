@@ -4,9 +4,10 @@ import { HallTicketsController } from './hall-tickets.controller';
 import { HallTicketsSummaryController } from './hall-tickets-summary.controller';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { AuditLogModule } from 'src/common/audit-log/audit-log.module';
+import { AttendanceEligibilityModule } from '../attendance-eligibility/attendance-eligibility.module';
 
 @Module({
-  imports: [PrismaModule, AuditLogModule],
+  imports: [PrismaModule, AuditLogModule, AttendanceEligibilityModule],
   controllers: [HallTicketsController, HallTicketsSummaryController],
   providers: [HallTicketsService],
 })

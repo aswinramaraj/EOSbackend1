@@ -4,7 +4,7 @@ import { PrismaClient } from '../../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool, type PoolClient } from 'pg';
 
-const POOL_SIZE = 6;
+const POOL_SIZE = 20;
 
 /**
  * Reads a numeric setting from DATABASE_URL's query string so the pool can be

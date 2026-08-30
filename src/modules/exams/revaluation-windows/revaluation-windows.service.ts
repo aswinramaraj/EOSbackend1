@@ -5,9 +5,15 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateRevaluationWindowDto } from './dto/create-revaluation-window.dto';
 import { UpdateRevaluationWindowDto } from './dto/update-revaluation-window.dto';
+
+/** Decimal fields serialize to JSON as strings — convert at the boundary so callers summing/comparing these get real numbers instead of a string. */
+function withNumericFees<T extends { fee_per_paper: Prisma.Decimal; photocopy_fee_per_paper: Prisma.Decimal }>(row: T) {
+  return { ...row, fee_per_paper: Number(row.fee_per_paper), photocopy_fee_per_paper: Number(row.photocopy_fee_per_paper) };
+}
 
 @Injectable()
 export class RevaluationWindowsService {
@@ -27,7 +33,7 @@ export class RevaluationWindowsService {
       });
     }
 
-    return window;
+    return withNumericFees(window);
   }
 
   async create(dto: CreateRevaluationWindowDto, createdByUserId: number) {
@@ -53,7 +59,7 @@ export class RevaluationWindowsService {
     }
 
     try {
-      return await this.prisma.revaluation_windows.create({
+      const created = await this.prisma.revaluation_windows.create({
         data: {
           exam_id: dto.exam_id,
           application_type: dto.application_type,
@@ -66,6 +72,7 @@ export class RevaluationWindowsService {
           created_by_user_id: createdByUserId,
         },
       });
+      return withNumericFees(created);
     } catch (err: any) {
       this.logger.error('DB error while creating revaluation window', err);
       throw new InternalServerErrorException({
@@ -87,7 +94,7 @@ export class RevaluationWindowsService {
     }
 
     try {
-      return await this.prisma.revaluation_windows.update({
+      const updated = await this.prisma.revaluation_windows.update({
         where: { exam_id: examId },
         data: {
           application_type: dto.application_type,
@@ -101,6 +108,7 @@ export class RevaluationWindowsService {
           max_papers_per_student: dto.max_papers_per_student,
         },
       });
+      return withNumericFees(updated);
     } catch (err: any) {
       this.logger.error('DB error while updating revaluation window', err);
       throw new InternalServerErrorException({

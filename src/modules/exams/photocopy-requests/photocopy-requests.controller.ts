@@ -5,11 +5,13 @@ import {
   Param,
   ParseIntPipe,
   Patch,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { PhotocopyRequestsService } from './photocopy-requests.service';
 import { UpdatePhotocopyRequestDto } from './dto/update-photocopy-request.dto';
+import { CreatePhotocopyRequestDto } from './dto/create-photocopy-request.dto';
 import { FindPhotocopyRequestsQueryDto } from './dto/find-photocopy-requests-query.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
@@ -26,6 +28,12 @@ export class PhotocopyRequestsController {
   constructor(
     private readonly photocopyRequestsService: PhotocopyRequestsService,
   ) {}
+
+  @Post()
+  async create(@Body() dto: CreatePhotocopyRequestDto) {
+    const request = await this.photocopyRequestsService.create(dto);
+    return ApiResponse.created(request, 'Photocopy request recorded successfully');
+  }
 
   @Get()
   findAll(@Query() query: FindPhotocopyRequestsQueryDto) {

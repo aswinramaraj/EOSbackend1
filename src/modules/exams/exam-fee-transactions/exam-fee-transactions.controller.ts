@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -29,12 +39,33 @@ export class ExamFeeTransactionsController {
   @Post()
   async create(@Body() dto: CreateExamFeeTransactionDto) {
     const row = await this.service.create(dto);
-    return ApiResponse.created(row, 'Exam fee transaction recorded successfully.');
+    return ApiResponse.created(
+      row,
+      'Exam fee transaction recorded successfully.',
+    );
   }
 
   @Patch(':id/status')
-  async updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateExamFeeStatusDto) {
+  async updateStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateExamFeeStatusDto,
+  ) {
     const row = await this.service.updateStatus(id, dto);
-    return ApiResponse.ok(row, 'Exam fee transaction status updated successfully.');
+    return ApiResponse.ok(
+      row,
+      'Exam fee transaction status updated successfully.',
+    );
+  }
+
+  @Post(':id/reconcile')
+  async reconcile(@Param('id', ParseIntPipe) id: number) {
+    const row = await this.service.reconcile(id);
+    return ApiResponse.ok(row, 'Transaction reconciled successfully.');
+  }
+
+  @Post(':id/remind')
+  async remind(@Param('id', ParseIntPipe) id: number) {
+    const notification = await this.service.remind(id);
+    return ApiResponse.created(notification, 'Reminder sent successfully.');
   }
 }
