@@ -1,9 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { MarksRosterQueryDto } from './dto/marks-roster-query.dto';
 import { GradeMatrixQueryDto } from './dto/grade-matrix-query.dto';
 import { DepartmentCompletionQueryDto } from './dto/department-completion-query.dto';
 import { ResultsSummaryQueryDto } from './dto/results-summary-query.dto';
+import { CourseMarkStatusQueryDto } from './dto/course-mark-status-query.dto';
+import { VerifyMappingMarksDto } from './dto/verify-mapping-marks.dto';
 
 // No `grade_bands` table exists anywhere in the schema (flagged in query.md
 // as a genuinely-missing, purely optional table) — grading bands are a
@@ -30,6 +32,13 @@ function studentName(soa: { first_name: string; last_name: string | null } | nul
   return [soa.first_name, soa.last_name].filter(Boolean).join(' ').trim() || null;
 }
 
+function facultyDisplayName(f: { prefix?: string | null; first_name: string; last_name: string }): string {
+  return [f.prefix, f.first_name, f.last_name].filter(Boolean).join(' ');
+}
+
+type CourseMarkType = 'internal' | 'external' | 'practical';
+type CourseMarkRowStatus = 'not_started' | 'in_progress' | 'submitted' | 'verified' | 'locked';
+
 const STUDENT_SELECT = {
   id: true,
   register_no: true,
@@ -53,7 +62,7 @@ export class MarksRosterService {
         exams: { academic_year: academicYear, semester, exam_types: { category: 'internal' } },
       },
       orderBy: { exam_id: 'desc' },
-      select: { id: true },
+      select: { id: true, exam_id: true },
     });
   }
 
@@ -124,7 +133,7 @@ export class MarksRosterService {
         roll_no: s.roll_no,
         name: studentName(s.soa_applications),
         internal: internal
-          ? { marks_obtained: internalScore, max_marks: Number(internal.max_marks), is_absent: internal.is_absent }
+          ? { id: internal.id, marks_obtained: internalScore, max_marks: Number(internal.max_marks), is_absent: internal.is_absent }
           : null,
         external: external
           ? { id: external.id, marks_obtained: externalScore, max_marks: Number(external.max_marks), is_absent: external.is_absent }
@@ -254,40 +263,43 @@ export class MarksRosterService {
    * recent exam whose timetable has run, then the most recent exam of any
    * status, only when no exam has any marks yet.
    */
+  /** Whichever exam actually has the most exam_marks recorded, falling back to the most recent exam whose timetable has run, then the most recent exam of any status — the same "busiest real exam" default used across COE. */
+  private async resolveDefaultExamId(): Promise<number | null> {
+    const marksByMapping = await this.prisma.exam_marks.groupBy({ by: ['exam_subject_mapping_id'], _count: { _all: true } });
+    const mappingIds = marksByMapping.map((m) => m.exam_subject_mapping_id);
+    const mappingsWithExam = mappingIds.length
+      ? await this.prisma.exam_subject_mapping.findMany({ where: { id: { in: mappingIds } }, select: { id: true, exam_id: true } })
+      : [];
+    const examIdByMapping = new Map(mappingsWithExam.map((m) => [m.id, m.exam_id]));
+
+    const countByExam = new Map<number, number>();
+    for (const row of marksByMapping) {
+      const examIdForRow = examIdByMapping.get(row.exam_subject_mapping_id);
+      if (examIdForRow == null) continue;
+      countByExam.set(examIdForRow, (countByExam.get(examIdForRow) ?? 0) + row._count._all);
+    }
+    let busiestExamId: number | null = null;
+    let busiestCount = 0;
+    for (const [id, count] of countByExam) {
+      if (count > busiestCount) {
+        busiestExamId = id;
+        busiestCount = count;
+      }
+    }
+    if (busiestExamId != null) return busiestExamId;
+
+    const exam =
+      (await this.prisma.exams.findFirst({ where: { status: { in: ['completed', 'timetable_published'] } }, orderBy: { id: 'desc' }, select: { id: true } })) ??
+      (await this.prisma.exams.findFirst({ orderBy: { id: 'desc' }, select: { id: true } }));
+    return exam?.id ?? null;
+  }
+
   async getDepartmentCompletion(query: DepartmentCompletionQueryDto) {
     let examId = query.exam_id;
     if (examId === undefined) {
-      const marksByMapping = await this.prisma.exam_marks.groupBy({ by: ['exam_subject_mapping_id'], _count: { _all: true } });
-      const mappingIds = marksByMapping.map((m) => m.exam_subject_mapping_id);
-      const mappingsWithExam = mappingIds.length
-        ? await this.prisma.exam_subject_mapping.findMany({ where: { id: { in: mappingIds } }, select: { id: true, exam_id: true } })
-        : [];
-      const examIdByMapping = new Map(mappingsWithExam.map((m) => [m.id, m.exam_id]));
-
-      const countByExam = new Map<number, number>();
-      for (const row of marksByMapping) {
-        const examIdForRow = examIdByMapping.get(row.exam_subject_mapping_id);
-        if (examIdForRow == null) continue;
-        countByExam.set(examIdForRow, (countByExam.get(examIdForRow) ?? 0) + row._count._all);
-      }
-      let busiestExamId: number | null = null;
-      let busiestCount = 0;
-      for (const [id, count] of countByExam) {
-        if (count > busiestCount) {
-          busiestExamId = id;
-          busiestCount = count;
-        }
-      }
-
-      const exam = busiestExamId != null
-        ? { id: busiestExamId }
-        : ((await this.prisma.exams.findFirst({
-            where: { status: { in: ['completed', 'timetable_published'] } },
-            orderBy: { id: 'desc' },
-            select: { id: true },
-          })) ?? (await this.prisma.exams.findFirst({ orderBy: { id: 'desc' }, select: { id: true } })));
-      if (!exam) return { exam_id: null, departments: [] };
-      examId = exam.id;
+      const resolved = await this.resolveDefaultExamId();
+      if (resolved == null) return { exam_id: null, departments: [] };
+      examId = resolved;
     }
 
     const mappings = await this.prisma.exam_subject_mapping.findMany({
@@ -508,5 +520,155 @@ export class MarksRosterService {
       department_breakdown: departmentBreakdown,
       rank_holders: rankHolders,
     };
+  }
+
+  /**
+   * GET /marks-roster/course-status — one row per (course, mark type) for
+   * the COE Marks Management page: Internal (via the same real
+   * internal-mapping match as getRoster), External, or Practical (real
+   * `subjects.course_type = PRACTICAL`, not a fabricated third mark type)
+   * — with real entered/verified counts, real entered-by/verified-by
+   * (resolved to a name only when every entered mark shares one faculty;
+   * "COE cell" when several different people entered/verified marks for
+   * it, which is exactly what real bundle-based external valuation looks
+   * like), and the real per-(exam,department) lock.
+   */
+  async getCourseMarkStatus(query: CourseMarkStatusQueryDto) {
+    let examId = query.exam_id;
+    if (examId === undefined) {
+      const resolved = await this.resolveDefaultExamId();
+      if (resolved == null) return { exam_id: null, rows: [] };
+      examId = resolved;
+    }
+
+    const exam = await this.prisma.exams.findUnique({ where: { id: examId }, select: { academic_year: true, semester: true } });
+    if (!exam) return { exam_id: examId, rows: [] };
+
+    const mappings = await this.prisma.exam_subject_mapping.findMany({
+      where: { exam_id: examId },
+      select: {
+        id: true,
+        exam_id: true,
+        class_id: true,
+        subject_id: true,
+        subjects: { select: { id: true, name: true, subject_code: true, course_type: true } },
+        classes: { select: { current_semester: true, department_id: true, departments: { select: { id: true, code: true, name: true } } } },
+      },
+    });
+    if (mappings.length === 0) return { exam_id: examId, rows: [] };
+
+    const internalByMainId = new Map<number, { id: number; exam_id: number } | null>();
+    await Promise.all(
+      mappings.map(async (m) => {
+        const im = await this.findInternalMapping(m.class_id, m.subject_id, exam.academic_year, exam.semester, m.id);
+        internalByMainId.set(m.id, im);
+      }),
+    );
+
+    const internalMappings = [...internalByMainId.values()].filter((im): im is { id: number; exam_id: number } => im != null);
+    const allMappingIds = [...mappings.map((m) => m.id), ...internalMappings.map((im) => im.id)];
+
+    const [allMarks, classStudentCounts, locks] = await Promise.all([
+      this.prisma.exam_marks.findMany({
+        where: { exam_subject_mapping_id: { in: allMappingIds } },
+        select: { exam_subject_mapping_id: true, marks_obtained: true, is_absent: true, entered_by_faculty_id: true, verified_by_faculty_id: true },
+      }),
+      this.prisma.students.groupBy({ by: ['class_id'], where: { class_id: { in: mappings.map((m) => m.class_id) }, status: 'active' }, _count: { _all: true } }),
+      this.prisma.marks_entry_locks.findMany({ where: { department_id: { in: mappings.map((m) => m.classes.department_id) } } }),
+    ]);
+
+    const marksByMapping = new Map<number, typeof allMarks>();
+    for (const mk of allMarks) {
+      const list = marksByMapping.get(mk.exam_subject_mapping_id) ?? [];
+      list.push(mk);
+      marksByMapping.set(mk.exam_subject_mapping_id, list);
+    }
+    const studentCountByClass = new Map(classStudentCounts.map((c) => [c.class_id, c._count._all]));
+    const lockByKey = new Map(locks.map((l) => [`${l.exam_id}|${l.department_id}`, l.is_locked]));
+
+    const facultyIds = [...new Set(allMarks.flatMap((m) => [m.entered_by_faculty_id, m.verified_by_faculty_id]).filter((id): id is number => id != null))];
+    const facultyRows = facultyIds.length
+      ? await this.prisma.faculty.findMany({ where: { id: { in: facultyIds } }, select: { id: true, prefix: true, first_name: true, last_name: true } })
+      : [];
+    const facultyById = new Map(facultyRows.map((f) => [f.id, facultyDisplayName(f)]));
+
+    const resolveWho = (ids: Set<number>): string | null => {
+      if (ids.size === 0) return null;
+      if (ids.size === 1) return facultyById.get([...ids][0]) ?? null;
+      return 'COE cell';
+    };
+
+    const buildRow = (mappingId: number, examIdForRow: number, departmentId: number, totalStudents: number, markType: CourseMarkType, mainMappingId: number) => {
+      const marks = marksByMapping.get(mappingId) ?? [];
+      const entered = marks.filter((m) => m.marks_obtained != null || m.is_absent);
+      const enteredByIds = new Set(entered.map((m) => m.entered_by_faculty_id).filter((id): id is number => id != null));
+      const verifiedByIds = new Set(entered.map((m) => m.verified_by_faculty_id).filter((id): id is number => id != null));
+      const allVerified = entered.length > 0 && entered.every((m) => m.verified_by_faculty_id != null);
+      const isLocked = lockByKey.get(`${examIdForRow}|${departmentId}`) ?? false;
+
+      let status: CourseMarkRowStatus;
+      if (isLocked) status = 'locked';
+      else if (entered.length === 0) status = 'not_started';
+      else if (entered.length < totalStudents) status = 'in_progress';
+      else status = allVerified ? 'verified' : 'submitted';
+
+      return {
+        exam_subject_mapping_id: mappingId,
+        // The "external" mapping id — always the one getRoster()/getGradeMatrix() expect,
+        // since that's the anchor they resolve the internal counterpart *from*. An internal
+        // row's own exam_subject_mapping_id is the internal mapping, so it needs this
+        // separately to fetch the same combined internal+external roster the main row sees.
+        main_exam_subject_mapping_id: mainMappingId,
+        exam_id: examIdForRow,
+        mark_type: markType,
+        entered_count: entered.length,
+        total_students: totalStudents,
+        entered_by: resolveWho(enteredByIds),
+        verified_by: resolveWho(verifiedByIds),
+        is_locked: isLocked,
+        status,
+      };
+    };
+
+    const rows: Array<ReturnType<typeof buildRow> & { subject: unknown; department: unknown; semester: number | null }> = [];
+    for (const m of mappings) {
+      const totalStudents = studentCountByClass.get(m.class_id) ?? 0;
+      const internal = internalByMainId.get(m.id) ?? null;
+      if (internal) {
+        rows.push({
+          ...buildRow(internal.id, internal.exam_id, m.classes.department_id, totalStudents, 'internal', m.id),
+          subject: m.subjects,
+          department: m.classes.departments,
+          semester: m.classes.current_semester,
+        });
+      }
+      const mainType: CourseMarkType = m.subjects.course_type === 'PRACTICAL' ? 'practical' : 'external';
+      rows.push({
+        ...buildRow(m.id, m.exam_id, m.classes.department_id, totalStudents, mainType, m.id),
+        subject: m.subjects,
+        department: m.classes.departments,
+        semester: m.classes.current_semester,
+      });
+    }
+
+    return { exam_id: examId, rows };
+  }
+
+  /** POST /marks-roster/verify — bulk-marks every currently-entered exam_marks row for one course as verified. Real verified_at/verified_by_faculty_id columns, previously write-only from nowhere in the UI. */
+  async verifyMapping(dto: VerifyMappingMarksDto) {
+    const marks = await this.prisma.exam_marks.findMany({
+      where: { exam_subject_mapping_id: dto.exam_subject_mapping_id, OR: [{ marks_obtained: { not: null } }, { is_absent: true }] },
+      select: { id: true },
+    });
+    if (marks.length === 0) {
+      throw new UnprocessableEntityException({ message: 'No entered marks to verify for this course yet.', errorCode: 'NO_MARKS_ENTERED' });
+    }
+
+    await this.prisma.exam_marks.updateMany({
+      where: { id: { in: marks.map((m) => m.id) } },
+      data: { verified_at: new Date(), verified_by_faculty_id: dto.verified_by_faculty_id },
+    });
+
+    return { exam_subject_mapping_id: dto.exam_subject_mapping_id, verified_count: marks.length };
   }
 }

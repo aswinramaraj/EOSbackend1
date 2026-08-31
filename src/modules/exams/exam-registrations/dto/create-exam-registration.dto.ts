@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsPositive } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsPositive, IsString, MaxLength } from 'class-validator';
 
 export class CreateExamRegistrationDto {
   @Type(() => Number)
@@ -15,4 +15,9 @@ export class CreateExamRegistrationDto {
   @IsOptional()
   @IsIn(['paid', 'unpaid', 'partial'])
   fee_status?: 'paid' | 'unpaid' | 'partial';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  reason?: string;
 }

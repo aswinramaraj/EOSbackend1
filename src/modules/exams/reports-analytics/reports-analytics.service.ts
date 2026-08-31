@@ -1,6 +1,26 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 
+/**
+ * A short "Nov 2026"-style label for delta captions ("+2.4 points vs Nov
+ * 2026") — real exam titles already follow a "<name> <Mon> <YYYY>"
+ * convention (e.g. "End Semester Nov 2026"), so the last two words are a
+ * genuine date, not a fabricated one; falls back to the exam's real
+ * start_date when there's no title.
+ */
+function shortCycleLabel(title: string | null, startDate: Date | null): string {
+  if (title) {
+    const words = title.trim().split(/\s+/);
+    if (words.length >= 2) return words.slice(-2).join(' ');
+  }
+  if (startDate)
+    return startDate.toLocaleDateString('en-GB', {
+      month: 'short',
+      year: 'numeric',
+    });
+  return 'the previous cycle';
+}
+
 interface StudentStat {
   departmentId: number;
   classId: number;
@@ -24,6 +44,7 @@ interface SubjectAgg {
 interface CycleStats {
   examId: number;
   examLabel: string;
+  shortLabel: string;
   academicYear: string;
   semester: number;
   examTypeId: number;
@@ -130,11 +151,15 @@ export class ReportsAnalyticsService {
     const topBandMin = gradeBandsDesc[0]
       ? Number(gradeBandsDesc[0].min_percentage)
       : null;
-    const examLabel = `${exam.exam_types.name} · Semester ${exam.semester} · ${exam.academic_year}`;
+    const examLabel =
+      exam.title ??
+      `${exam.exam_types.name} · Semester ${exam.semester} · ${exam.academic_year}`;
+    const shortLabel = shortCycleLabel(exam.title, exam.start_date);
 
     const base: CycleStats = {
       examId,
       examLabel,
+      shortLabel,
       academicYear: exam.academic_year,
       semester: exam.semester,
       examTypeId: exam.exam_type_id,
@@ -370,14 +395,19 @@ export class ReportsAnalyticsService {
       if (s.arrears === 0) d.pass += 1;
       deptMap.set(s.departmentId, d);
     }
-    base.departmentBreakdown = [...deptMap.values()]
-      .map((d) => ({
+    // Ordered by real department id (their natural/canonical listing order),
+    // not by pass percentage — the chart needs departments to stay in the
+    // same left-to-right order every render so a bar's position is
+    // comparable cycle to cycle, not reshuffled by whichever department
+    // happened to score highest this time.
+    base.departmentBreakdown = [...deptMap.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, d]) => ({
         code: d.code,
         passPercentage:
           d.total > 0 ? Math.round((d.pass / d.total) * 1000) / 10 : 0,
         candidates: d.total,
-      }))
-      .sort((a, b) => b.passPercentage - a.passPercentage);
+      }));
 
     base.subjectPerformance = [...subjectAgg.values()]
       .map((s) => ({
@@ -436,7 +466,11 @@ export class ReportsAnalyticsService {
     // cycles concurrently could burst to 20+ simultaneous connections from
     // this one request and trip the pooler's EMAXCONNSESSION ceiling.
     const trendExamIds = [...priorExams.map((e) => e.id).reverse(), examId];
-    const trend: { examId: number; label: string; passPercentage: number | null }[] = [];
+    const trend: {
+      examId: number;
+      label: string;
+      passPercentage: number | null;
+    }[] = [];
     for (const id of trendExamIds) {
       const cycle =
         id === examId
@@ -446,7 +480,7 @@ export class ReportsAnalyticsService {
             : await this.computeCycle(id);
       trend.push({
         examId: id,
-        label: `${cycle.academicYear} S${cycle.semester}`,
+        label: cycle.shortLabel,
         passPercentage: cycle.passPercentage,
       });
     }
@@ -483,6 +517,7 @@ export class ReportsAnalyticsService {
 
     return {
       exam: { id: current.examId, label: current.examLabel },
+      previousExamLabel: previous?.shortLabel ?? null,
       overallPassPercentage: current.passPercentage,
       overallPassPercentageDelta:
         previous?.passPercentage != null && current.passPercentage != null

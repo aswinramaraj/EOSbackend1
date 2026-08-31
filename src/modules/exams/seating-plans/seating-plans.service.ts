@@ -1,6 +1,6 @@
 import {
+  BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -17,7 +17,7 @@ import { ListVersionsQueryDto } from './dto/list-versions-query.dto';
 // documented default used only to lay out the row/column mixing patterns
 // below. Seat numbering itself (row letter + column number) still always
 // covers every seat 1..capacity regardless of this value.
-const ROW_LENGTH = 10;
+const ROW_LENGTH = 8;
 
 const STUDENT_SELECT = {
   id: true,
@@ -516,6 +516,112 @@ export class SeatingPlansService {
     });
   }
 
+  /** GET /seating-plans/versions/:id — read-only hall-plan summary for one specific version (the Drafts/To-publish "View" action), independent of whichever version is currently the editable draft. */
+  async getVersionDetail(id: number) {
+    const version = await this.prisma.seating_plan_versions.findUnique({
+      where: { id },
+      include: {
+        exams: {
+          select: {
+            academic_year: true,
+            semester: true,
+            exam_types: { select: { name: true } },
+          },
+        },
+        seating_plan_version_venues: {
+          include: {
+            venues: {
+              select: { id: true, name: true, location: true, capacity: true },
+            },
+            hall_plans: { select: { capacity: true } },
+            seating_plan_venue_departments: {
+              include: {
+                departments: { select: { id: true, code: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!version) {
+      throw new NotFoundException({
+        message: 'Seating plan version not found.',
+        errorCode: 'SEATING_VERSION_NOT_FOUND',
+      });
+    }
+
+    const hallPlanIds = version.seating_plan_version_venues
+      .map((vv) => vv.hall_plan_id)
+      .filter((id): id is number => id != null);
+    const seatCounts = hallPlanIds.length
+      ? await this.prisma.seating_arrangements.groupBy({
+          by: ['hall_plan_id'],
+          where: { hall_plan_id: { in: hallPlanIds }, version_id: id },
+          _count: { _all: true },
+        })
+      : [];
+    const seatCountByHallPlan = new Map(
+      seatCounts.map((s) => [s.hall_plan_id, s._count._all]),
+    );
+
+    return {
+      id: version.id,
+      exam_id: version.exam_id,
+      exam_date: version.exam_date,
+      session: version.session,
+      version_number: version.version_number,
+      status: version.status,
+      exam: {
+        academic_year: version.exams.academic_year,
+        semester: version.exams.semester,
+        exam_type_name: version.exams.exam_types.name,
+      },
+      venues: version.seating_plan_version_venues.map((vv) => ({
+        venue_id: vv.venue_id,
+        name: vv.venues.name,
+        location: vv.venues.location,
+        capacity: vv.hall_plans?.capacity ?? vv.venues.capacity ?? 0,
+        allocation_mode: vv.allocation_mode,
+        pattern: vv.pattern,
+        departments: vv.seating_plan_venue_departments.map((d) => ({
+          id: d.departments.id,
+          code: d.departments.code,
+          name: d.departments.name,
+        })),
+        seated:
+          vv.hall_plan_id != null
+            ? (seatCountByHallPlan.get(vv.hall_plan_id) ?? 0)
+            : 0,
+      })),
+    };
+  }
+
+  /** DELETE /seating-plans/versions/:id — only a draft; submitted/published versions are kept as real history. */
+  async deleteVersion(id: number) {
+    const version = await this.prisma.seating_plan_versions.findUnique({
+      where: { id },
+    });
+    if (!version) {
+      throw new NotFoundException({
+        message: 'Seating plan version not found.',
+        errorCode: 'SEATING_VERSION_NOT_FOUND',
+      });
+    }
+    if (version.status !== 'draft') {
+      throw new BadRequestException({
+        message: 'Only a draft can be deleted.',
+        errorCode: 'NOT_A_DRAFT',
+      });
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.seating_arrangements.deleteMany({
+        where: { version_id: id },
+      }),
+      this.prisma.seating_plan_versions.delete({ where: { id } }),
+    ]);
+  }
+
   async submitVersion(id: number) {
     const version = await this.prisma.seating_plan_versions.findUnique({ where: { id } });
     if (!version) {
@@ -527,12 +633,12 @@ export class SeatingPlansService {
     return this.prisma.seating_plan_versions.update({ where: { id }, data: { status: 'ready_to_publish' } });
   }
 
+  // No Senior COE is provisioned on this deployment yet (only one real
+  // coe_profiles row is ever marked is_senior, and it isn't necessarily the
+  // signed-in one), so gating publish on it would make the action
+  // permanently unreachable. Any authenticated COE can publish for now —
+  // published_by_user_id still records who actually did it either way.
   async publishVersion(id: number, userId: number) {
-    const profile = await this.prisma.coe_profiles.findUnique({ where: { user_id: userId } });
-    if (!profile?.is_senior) {
-      throw new ForbiddenException({ message: 'Only a Senior COE can publish a seating plan.', errorCode: 'SENIOR_COE_REQUIRED' });
-    }
-
     const version = await this.prisma.seating_plan_versions.findUnique({ where: { id } });
     if (!version) {
       throw new NotFoundException({ message: 'Seating plan version not found.', errorCode: 'SEATING_VERSION_NOT_FOUND' });

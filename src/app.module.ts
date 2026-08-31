@@ -80,6 +80,7 @@ import { RevaluationModule } from './modules/exams/revaluation/revaluation.modul
 import { SeatingArrangementsModule } from './modules/exams/seating-arrangements/seating-arrangements.module';
 
 // COE module — added onto exams' existing feature set, nothing above changed.
+import { ArrearsModule } from './modules/exams/arrears/arrears.module';
 import { AttendanceEligibilityModule } from './modules/exams/attendance-eligibility/attendance-eligibility.module';
 import { CertificateRequestsModule } from './modules/exams/certificate-requests/certificate-requests.module';
 import { CoeProfileModule } from './modules/exams/coe-profile/coe-profile.module';
@@ -343,6 +344,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     RevaluationModule,
     SeatingArrangementsModule,
 
+    ArrearsModule,
     AttendanceEligibilityModule,
     CertificateRequestsModule,
     CoeProfileModule,

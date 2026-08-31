@@ -7,5 +7,6 @@ import { AttendanceEligibilityController } from './attendance-eligibility.contro
   imports: [PrismaModule],
   controllers: [AttendanceEligibilityController],
   providers: [AttendanceEligibilityService],
+  exports: [AttendanceEligibilityService],
 })
 export class AttendanceEligibilityModule {}

@@ -17,6 +17,7 @@ import { CreateInvigilationDto } from './dto/create-invigilation.dto';
 import { UpdateInvigilationDto } from './dto/update-invigilation.dto';
 import { FindInvigilationQueryDto } from './dto/find-invigilation-query.dto';
 import { VenuesOverviewQueryDto } from './dto/venues-overview-query.dto';
+import { AvailableFacultyQueryDto } from './dto/available-faculty-query.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -52,6 +53,12 @@ export class InvigilationController {
   async getStats() {
     const stats = await this.invigilationService.getStats();
     return ApiResponse.ok(stats, 'Invigilation stats fetched successfully');
+  }
+
+  @Get('available-faculty')
+  async getAvailableFaculty(@Query() query: AvailableFacultyQueryDto) {
+    const faculty = await this.invigilationService.getAvailableFaculty(query);
+    return ApiResponse.ok(faculty, 'Available faculty fetched successfully');
   }
 
   @Post('auto-assign')

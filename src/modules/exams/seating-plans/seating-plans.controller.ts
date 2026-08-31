@@ -1,4 +1,16 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -42,6 +54,18 @@ export class SeatingPlansController {
   async listVersions(@Query() query: ListVersionsQueryDto) {
     const versions = await this.seatingPlansService.listVersions(query);
     return ApiResponse.ok(versions, 'Seating plan versions fetched successfully.');
+  }
+
+  @Get('versions/:id')
+  async getVersionDetail(@Param('id', ParseIntPipe) id: number) {
+    const detail = await this.seatingPlansService.getVersionDetail(id);
+    return ApiResponse.ok(detail, 'Seating plan version fetched successfully.');
+  }
+
+  @Delete('versions/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteVersion(@Param('id', ParseIntPipe) id: number) {
+    await this.seatingPlansService.deleteVersion(id);
   }
 
   @Post('venue-config')

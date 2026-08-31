@@ -84,4 +84,10 @@ export class MalpracticeController {
     await this.malpracticeService.remove(id);
     return ApiResponse.ok(null, 'Malpractice incident removed successfully');
   }
+
+  @Post(':id/notice')
+  async sendNotice(@Param('id', ParseIntPipe) id: number) {
+    const notification = await this.malpracticeService.sendNotice(id);
+    return ApiResponse.created(notification, 'Notice sent successfully');
+  }
 }

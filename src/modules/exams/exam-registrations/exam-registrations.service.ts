@@ -129,18 +129,22 @@ export class ExamRegistrationsService {
     }
 
     return this.prisma.exam_registrations.create({
-      data: { exam_id: dto.exam_id, student_id: dto.student_id, fee_status: dto.fee_status ?? 'unpaid' },
+      data: { exam_id: dto.exam_id, student_id: dto.student_id, fee_status: dto.fee_status ?? 'unpaid', reason: dto.reason },
       include: INCLUDE,
     });
   }
 
+  /** dto.status: 'pending' reopens a rejected registration — clears the prior review instead of stamping a new one. */
   async review(id: number, dto: ReviewExamRegistrationDto, reviewedByUserId: number) {
     const existing = await this.prisma.exam_registrations.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException({ message: 'Registration not found.', errorCode: 'REGISTRATION_NOT_FOUND' });
 
     return this.prisma.exam_registrations.update({
       where: { id },
-      data: { status: dto.status, approved_by_user_id: reviewedByUserId, approved_at: new Date() },
+      data:
+        dto.status === 'pending'
+          ? { status: 'pending', approved_by_user_id: null, approved_at: null }
+          : { status: dto.status, approved_by_user_id: reviewedByUserId, approved_at: new Date() },
       include: INCLUDE,
     });
   }

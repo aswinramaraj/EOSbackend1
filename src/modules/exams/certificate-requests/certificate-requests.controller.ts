@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -18,7 +28,10 @@ export class CertificateRequestsController {
   @Get('stats')
   async getStats() {
     const stats = await this.service.getStats();
-    return ApiResponse.ok(stats, 'Certificate request stats fetched successfully.');
+    return ApiResponse.ok(
+      stats,
+      'Certificate request stats fetched successfully.',
+    );
   }
 
   @Get('types')
@@ -30,24 +43,48 @@ export class CertificateRequestsController {
   @Get()
   async findAll(@Query() query: ListCertificateRequestsQueryDto) {
     const requests = await this.service.findAll(query);
-    return ApiResponse.ok(requests, 'Certificate requests fetched successfully.');
+    return ApiResponse.ok(
+      requests,
+      'Certificate requests fetched successfully.',
+    );
   }
 
   @Post()
   async create(@Body() dto: CreateCertificateRequestDto) {
     const request = await this.service.create(dto);
-    return ApiResponse.created(request, 'Certificate request created successfully.');
+    return ApiResponse.created(
+      request,
+      'Certificate request created successfully.',
+    );
   }
 
   @Patch(':id/status')
-  async updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCertificateStatusDto) {
+  async updateStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCertificateStatusDto,
+  ) {
     const request = await this.service.updateStatus(id, dto);
-    return ApiResponse.ok(request, 'Certificate request status updated successfully.');
+    return ApiResponse.ok(
+      request,
+      'Certificate request status updated successfully.',
+    );
   }
 
   @Patch(':id/fee')
-  async updateFee(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCertificateFeeDto) {
+  async updateFee(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCertificateFeeDto,
+  ) {
     const request = await this.service.updateFee(id, dto);
-    return ApiResponse.ok(request, 'Certificate request fee updated successfully.');
+    return ApiResponse.ok(
+      request,
+      'Certificate request fee updated successfully.',
+    );
+  }
+
+  @Post(':id/remind')
+  async remind(@Param('id', ParseIntPipe) id: number) {
+    const notification = await this.service.remind(id);
+    return ApiResponse.created(notification, 'Reminder sent successfully.');
   }
 }

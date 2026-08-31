@@ -1,19 +1,37 @@
-import { Type } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsOptional, IsPositive, IsString, MaxLength } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateRetrievalDto {
-  @Type(() => Number)
-  @IsInt()
-  @IsPositive()
-  archive_bundle_id: number;
-
+  @IsNotEmpty({ message: 'bundle_or_roll is required' })
   @IsString()
-  @IsNotEmpty()
-  @MaxLength(150)
-  purpose: string;
+  @MaxLength(60)
+  bundle_or_roll: string;
+
+  @IsIn(['photocopy', 'rti'])
+  request_type: 'photocopy' | 'rti';
 
   @IsOptional()
   @IsString()
   @MaxLength(150)
-  issued_to?: string;
+  requester?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  fee_receipt_no?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  fee_receipt_url?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  purpose?: string;
 }

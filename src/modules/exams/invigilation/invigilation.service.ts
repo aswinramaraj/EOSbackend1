@@ -11,6 +11,7 @@ import { CreateInvigilationDto } from './dto/create-invigilation.dto';
 import { UpdateInvigilationDto } from './dto/update-invigilation.dto';
 import { FindInvigilationQueryDto } from './dto/find-invigilation-query.dto';
 import { VenuesOverviewQueryDto } from './dto/venues-overview-query.dto';
+import { AvailableFacultyQueryDto } from './dto/available-faculty-query.dto';
 
 const FACULTY_SELECT = {
   id: true,
@@ -30,16 +31,119 @@ function hms(d: Date): string {
   return d.toISOString().slice(11, 16);
 }
 
+// The institution's standard exam session windows — used as the fallback
+// when the caller doesn't know the real per-hall timetable start/end yet
+// (e.g. a hall with no seating/papers assigned so venues-overview has no
+// real times for it). Real times, when known, always take priority.
+const SESSION_WINDOW: Record<'FN' | 'AN', { start: string; end: string }> = {
+  FN: { start: '09:30', end: '12:30' },
+  AN: { start: '14:00', end: '17:00' },
+};
+
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function rangesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
+  return toMinutes(aStart) < toMinutes(bEnd) && toMinutes(bStart) < toMinutes(aEnd);
+}
+
 const HALL_PLAN_SELECT = {
   id: true,
   exam_id: true,
   exam_date: true,
-  venues: { select: { id: true, name: true, location: true } },
+  capacity: true,
+  venues: { select: { id: true, name: true, location: true, capacity: true } },
 };
 
 @Injectable()
 export class InvigilationService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Throws if `facultyId` is on approved leave covering `dutyDate`, or has a class-timetable slot overlapping `window` on that day — the two checks behind "Conflicts with class timetable are checked on save." Duplicate-duty conflicts are handled separately (see create()/update()) since they need a more specific message. */
+  private async assertFacultyAvailableForSession(
+    facultyId: number,
+    dutyDate: Date,
+    window: { start: string; end: string },
+  ) {
+    const [leave, teachingSlots] = await Promise.all([
+      this.prisma.faculty_leaves.findFirst({
+        where: {
+          faculty_id: facultyId,
+          from_date: { lte: dutyDate },
+          to_date: { gte: dutyDate },
+          hod_approval_status: 'approved',
+          hr_approval_status: 'approved',
+        },
+      }),
+      this.prisma.timetable_slots.findMany({
+        where: { faculty_id: facultyId, day_of_week: dutyDate.getUTCDay() },
+        select: { start_time: true, end_time: true },
+      }),
+    ]);
+
+    if (leave) {
+      throw new ConflictException({ message: 'This faculty member is on approved leave on this date.', errorCode: 'FACULTY_ON_LEAVE' });
+    }
+    if (teachingSlots.some((t) => rangesOverlap(hms(t.start_time), hms(t.end_time), window.start, window.end))) {
+      throw new ConflictException({ message: 'This faculty member has a class timetable clash at this date and session.', errorCode: 'FACULTY_TIMETABLE_CONFLICT' });
+    }
+  }
+
+  /** Bulk version of the same two checks, plus existing-duty conflicts — everything that makes a faculty member unavailable for a (date, session), for listing/auto-pick use (getAvailableFaculty, autoAssign). */
+  private async getIneligibleFacultyIds(dutyDate: Date, session: 'FN' | 'AN', window: { start: string; end: string }): Promise<Set<number>> {
+    const [busy, onLeave, teaching] = await Promise.all([
+      this.prisma.invigilation_duties.findMany({ where: { duty_date: dutyDate, session }, select: { faculty_id: true } }),
+      this.prisma.faculty_leaves.findMany({
+        where: { from_date: { lte: dutyDate }, to_date: { gte: dutyDate }, hod_approval_status: 'approved', hr_approval_status: 'approved' },
+        select: { faculty_id: true },
+      }),
+      this.prisma.timetable_slots.findMany({ where: { day_of_week: dutyDate.getUTCDay() }, select: { faculty_id: true, start_time: true, end_time: true } }),
+    ]);
+
+    const ineligible = new Set<number>();
+    for (const d of busy) ineligible.add(d.faculty_id);
+    for (const l of onLeave) if (l.faculty_id != null) ineligible.add(l.faculty_id);
+    for (const t of teaching) if (rangesOverlap(hms(t.start_time), hms(t.end_time), window.start, window.end)) ineligible.add(t.faculty_id);
+    return ineligible;
+  }
+
+  /** GET /invigilation/available-faculty — faculty eligible for a (date, session), for the Assign duty faculty search: active, not already on a duty that slot, not on approved leave, and no class-timetable clash. Real hall times (start_time/end_time) are passed in when known; otherwise falls back to the standard FN/AN window. */
+  async getAvailableFaculty(query: AvailableFacultyQueryDto) {
+    const dutyDate = new Date(query.date);
+    const window = {
+      start: query.start_time ?? SESSION_WINDOW[query.session].start,
+      end: query.end_time ?? SESSION_WINDOW[query.session].end,
+    };
+    const ineligible = await this.getIneligibleFacultyIds(dutyDate, query.session, window);
+
+    const candidates = await this.prisma.faculty.findMany({
+      where: {
+        status: 'active',
+        OR: query.search
+          ? [
+              { first_name: { contains: query.search, mode: 'insensitive' } },
+              { last_name: { contains: query.search, mode: 'insensitive' } },
+              { staff_code: { contains: query.search, mode: 'insensitive' } },
+            ]
+          : undefined,
+      },
+      select: { id: true, prefix: true, first_name: true, last_name: true, designation: true, staff_code: true, departments: { select: { code: true } } },
+      orderBy: [{ first_name: 'asc' }, { last_name: 'asc' }],
+      take: 30,
+    });
+
+    return candidates
+      .filter((f) => !ineligible.has(f.id))
+      .map((f) => ({
+        id: f.id,
+        name: facultyName(f),
+        staff_code: f.staff_code,
+        designation: f.designation,
+        department_code: f.departments?.code ?? null,
+      }));
+  }
 
   async create(dto: CreateInvigilationDto) {
     const exam = await this.prisma.exams.findUnique({
@@ -80,6 +184,8 @@ export class InvigilationService {
     }
 
     const dutyDate = new Date(dto.duty_date);
+
+    await this.assertFacultyAvailableForSession(dto.faculty_id, dutyDate, SESSION_WINDOW[dto.session]);
 
     return this.prisma.$transaction(async (tx) => {
       const existingDuty = await tx.invigilation_duties.findFirst({
@@ -558,6 +664,7 @@ export class InvigilationService {
       required: total + unfilled.length,
       unfilled_slots: unfilled.length,
       next_unfilled_date: unfilled[0]?.exam_date ?? null,
+      next_unfilled_session: unfilled[0]?.session ?? null,
       acknowledged,
       acknowledged_pct: total > 0 ? Math.round((acknowledged / total) * 1000) / 10 : 0,
       relief_invigilators: reliefFaculty.length,
@@ -597,19 +704,18 @@ export class InvigilationService {
     }
 
     const dutyDate = new Date(dto.duty_date);
-    const busyFacultyIds = new Set(
-      (await this.prisma.invigilation_duties.findMany({ where: { duty_date: dutyDate, session: dto.session }, select: { faculty_id: true } })).map(
-        (d) => d.faculty_id,
-      ),
-    );
+    const ineligible = await this.getIneligibleFacultyIds(dutyDate, dto.session, SESSION_WINDOW[dto.session]);
 
     const candidate = activeFaculty
-      .filter((f) => !busyFacultyIds.has(f.id))
+      .filter((f) => !ineligible.has(f.id))
       .map((f) => ({ id: f.id, count: countByFaculty.get(f.id) ?? 0 }))
       .sort((a, b) => a.count - b.count)[0];
 
     if (!candidate) {
-      throw new UnprocessableEntityException({ message: 'Every active faculty member is already on duty for this date and session.', errorCode: 'NO_FACULTY_AVAILABLE' });
+      throw new UnprocessableEntityException({
+        message: 'No active faculty is free for this date and session — everyone is already on duty, on approved leave, or has a class then.',
+        errorCode: 'NO_FACULTY_AVAILABLE',
+      });
     }
 
     return this.create({

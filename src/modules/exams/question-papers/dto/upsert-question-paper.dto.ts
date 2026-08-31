@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsPositive } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsOptional, IsPositive } from 'class-validator';
 
 export class UpsertQuestionPaperDto {
   @Type(() => Number)
@@ -27,4 +27,8 @@ export class UpsertQuestionPaperDto {
   @IsOptional()
   @IsIn(['awaiting_upload', 'under_moderation', 'sealed'])
   status?: 'awaiting_upload' | 'under_moderation' | 'sealed';
+
+  @IsOptional()
+  @IsDateString()
+  due_date?: string;
 }

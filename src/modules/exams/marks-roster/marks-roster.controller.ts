@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -8,6 +8,8 @@ import { MarksRosterQueryDto } from './dto/marks-roster-query.dto';
 import { GradeMatrixQueryDto } from './dto/grade-matrix-query.dto';
 import { DepartmentCompletionQueryDto } from './dto/department-completion-query.dto';
 import { ResultsSummaryQueryDto } from './dto/results-summary-query.dto';
+import { CourseMarkStatusQueryDto } from './dto/course-mark-status-query.dto';
+import { VerifyMappingMarksDto } from './dto/verify-mapping-marks.dto';
 
 /**
  * Read-only aggregation for the COE Marks entry / Mark records pages.
@@ -39,6 +41,18 @@ export class MarksRosterController {
   async getResultsSummary(@Query() query: ResultsSummaryQueryDto) {
     const summary = await this.marksRosterService.getResultsSummary(query);
     return ApiResponse.ok(summary, 'Results summary fetched successfully.');
+  }
+
+  @Get('course-status')
+  async getCourseMarkStatus(@Query() query: CourseMarkStatusQueryDto) {
+    const status = await this.marksRosterService.getCourseMarkStatus(query);
+    return ApiResponse.ok(status, 'Course mark status fetched successfully.');
+  }
+
+  @Post('verify')
+  async verifyMapping(@Body() dto: VerifyMappingMarksDto) {
+    const result = await this.marksRosterService.verifyMapping(dto);
+    return ApiResponse.ok(result, 'Marks verified successfully.');
   }
 
   @Get()

@@ -69,12 +69,22 @@ interface VenueAvailabilityBookingRow {
   users_venue_bookings_booked_by_user_idTousers: VenueAvailabilityBookerRow;
 }
 
+interface VenueAvailabilityExamUsageRow {
+  exam_date: Date;
+  exams: {
+    academic_year: string;
+    semester: number;
+    exam_types: { name: string };
+  };
+}
+
 interface VenueAvailabilityRow {
   id: number;
   name: string;
   location: string | null;
   capacity: number | null;
   venue_bookings_venue_bookings_venue_idTovenues: VenueAvailabilityBookingRow[];
+  hall_plans: VenueAvailabilityExamUsageRow[];
 }
 
 /**
@@ -99,13 +109,20 @@ function toVenueAvailability(
   photoUrl: string | null,
 ) {
   const [booking] = venue.venue_bookings_venue_bookings_venue_idTovenues;
+  const [examUsage] = venue.hall_plans;
   return {
     id: venue.id,
     name: venue.name,
     location: venue.location,
     capacity: venue.capacity,
     photo_url: photoUrl,
-    is_available: !booking,
+    is_available: !booking && !examUsage,
+    exam_usage: examUsage
+      ? {
+          exam_date: examUsage.exam_date,
+          exam_label: `${examUsage.exams.exam_types.name} · Semester ${examUsage.exams.semester} · ${examUsage.exams.academic_year}`,
+        }
+      : null,
     booking: booking
       ? {
           purpose: booking.purpose,
@@ -146,9 +163,19 @@ const VENUE_BOOKING_SELECT = {
       id: true,
       email: true,
       phone: true,
-      faculty: { select: { first_name: true, last_name: true, departments: { select: { name: true } } } },
+      faculty: {
+        select: {
+          first_name: true,
+          last_name: true,
+          departments: { select: { name: true } },
+        },
+      },
       non_teaching_staff: {
-        select: { first_name: true, last_name: true, departments: { select: { name: true } } },
+        select: {
+          first_name: true,
+          last_name: true,
+          departments: { select: { name: true } },
+        },
       },
     },
   },
@@ -158,7 +185,11 @@ interface VenueBookingBookerRow {
   id: number;
   email: string;
   phone: string | null;
-  faculty: { first_name: string; last_name: string; departments: { name: string } } | null;
+  faculty: {
+    first_name: string;
+    last_name: string;
+    departments: { name: string };
+  } | null;
   non_teaching_staff: {
     first_name: string;
     last_name: string | null;
@@ -200,7 +231,9 @@ interface VenueBookingRow {
 function resolveBooker(user: VenueBookingBookerRow) {
   const profile = user.faculty ?? user.non_teaching_staff[0] ?? null;
   return {
-    name: profile ? `${profile.first_name} ${profile.last_name ?? ''}`.trim() : user.email,
+    name: profile
+      ? `${profile.first_name} ${profile.last_name ?? ''}`.trim()
+      : user.email,
     department_name: profile?.departments?.name ?? null,
     email: user.email,
     phone: user.phone,
@@ -221,8 +254,11 @@ function toBookingResponse(booking: VenueBookingRow) {
     status: booking.status,
     admin_remarks: booking.admin_remarks,
     reviewed_at: booking.reviewed_at,
-    alternative_venue: booking.venues_venue_bookings_alternative_venue_idTovenues,
-    booked_by: resolveBooker(booking.users_venue_bookings_booked_by_user_idTousers),
+    alternative_venue:
+      booking.venues_venue_bookings_alternative_venue_idTovenues,
+    booked_by: resolveBooker(
+      booking.users_venue_bookings_booked_by_user_idTousers,
+    ),
     created_at: booking.created_at,
   };
 }
@@ -261,7 +297,12 @@ export class VenuesService {
    * A venue is "available" when it has no *non-rejected* booking whose
    * window overlaps [from, to); `venue_booking_status_enum` has no
    * "cancelled" value (only pending/approved/rejected/alternative_offered),
-   * so "rejected" is the only status excluded here.
+   * so "rejected" is the only status excluded here. It's also unavailable
+   * if COE already has a real exam hall plan there — a `hall_plans` row for
+   * that venue with an `exam_date` inside [from, to) — so this faculty-side
+   * booking flow can't double-book a hall COE is already using for an exam;
+   * `hall_plans.exam_date` has no time component, so the whole calendar day
+   * is treated as occupied.
    */
   async findAll(query: ListVenueQueryDto) {
     const from = new Date(query.from);
@@ -271,35 +312,60 @@ export class VenuesService {
       throw new BadRequestException('from must be before to');
     }
 
+    const examDateFrom = new Date(
+      Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()),
+    );
+    const examDateTo = new Date(
+      Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()),
+    );
+
     const where = query.search
       ? { name: { contains: query.search, mode: 'insensitive' as const } }
       : {};
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.venues.findMany({
-        where,
-        skip: query.skip,
-        take: query.limit,
-        orderBy: { id: 'asc' },
-        select: {
-          id: true,
-          name: true,
-          location: true,
-          capacity: true,
-          venue_bookings_venue_bookings_venue_idTovenues: {
-            where: {
-              status: { not: 'rejected' },
-              from_datetime: { lt: to },
-              to_datetime: { gt: from },
+    const [rows, total] = await this.prisma.$transaction(
+      [
+        this.prisma.venues.findMany({
+          where,
+          skip: query.skip,
+          take: query.limit,
+          orderBy: { id: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            location: true,
+            capacity: true,
+            venue_bookings_venue_bookings_venue_idTovenues: {
+              where: {
+                status: { not: 'rejected' },
+                from_datetime: { lt: to },
+                to_datetime: { gt: from },
+              },
+              orderBy: { created_at: 'desc' },
+              take: 1,
+              select: VENUE_AVAILABILITY_BOOKING_SELECT,
             },
-            orderBy: { created_at: 'desc' },
-            take: 1,
-            select: VENUE_AVAILABILITY_BOOKING_SELECT,
+            hall_plans: {
+              where: { exam_date: { gte: examDateFrom, lte: examDateTo } },
+              orderBy: { exam_date: 'asc' },
+              take: 1,
+              select: {
+                exam_date: true,
+                exams: {
+                  select: {
+                    academic_year: true,
+                    semester: true,
+                    exam_types: { select: { name: true } },
+                  },
+                },
+              },
+            },
           },
-        },
-      }),
-      this.prisma.venues.count(),
-    ], TRANSACTION_OPTIONS);
+        }),
+        this.prisma.venues.count(),
+      ],
+      TRANSACTION_OPTIONS,
+    );
 
     const photoUrls = await this.getPhotoUrls(rows.map((r) => r.id));
     return paginate(
@@ -619,8 +685,16 @@ export class VenuesService {
       bookerConditions.push({
         OR: [
           { email: { contains: query.search, mode: 'insensitive' } },
-          { faculty: { first_name: { contains: query.search, mode: 'insensitive' } } },
-          { faculty: { last_name: { contains: query.search, mode: 'insensitive' } } },
+          {
+            faculty: {
+              first_name: { contains: query.search, mode: 'insensitive' },
+            },
+          },
+          {
+            faculty: {
+              last_name: { contains: query.search, mode: 'insensitive' },
+            },
+          },
         ],
       });
     }
@@ -628,24 +702,33 @@ export class VenuesService {
       bookerConditions.push({
         OR: [
           { faculty: { department_id: query.department_id } },
-          { non_teaching_staff: { some: { department_id: query.department_id } } },
+          {
+            non_teaching_staff: {
+              some: { department_id: query.department_id },
+            },
+          },
         ],
       });
     }
     if (bookerConditions.length > 0) {
-      where.users_venue_bookings_booked_by_user_idTousers = { AND: bookerConditions };
+      where.users_venue_bookings_booked_by_user_idTousers = {
+        AND: bookerConditions,
+      };
     }
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.venue_bookings.findMany({
-        where,
-        skip: query.skip,
-        take: query.limit,
-        orderBy: { created_at: 'desc' },
-        select: VENUE_BOOKING_SELECT,
-      }),
-      this.prisma.venue_bookings.count({ where }),
-    ], TRANSACTION_OPTIONS);
+    const [rows, total] = await this.prisma.$transaction(
+      [
+        this.prisma.venue_bookings.findMany({
+          where,
+          skip: query.skip,
+          take: query.limit,
+          orderBy: { created_at: 'desc' },
+          select: VENUE_BOOKING_SELECT,
+        }),
+        this.prisma.venue_bookings.count({ where }),
+      ],
+      TRANSACTION_OPTIONS,
+    );
 
     return paginate(rows.map(toBookingResponse), total, query);
   }
@@ -822,8 +905,15 @@ export class VenuesService {
       await this.notificationsService.notify({
         user_id: booking.users_venue_bookings_booked_by_user_idTousers.id,
         title: 'Venue booking update',
-        message: messages[decision] ?? `Your venue booking "${booking.purpose}" was updated.`,
-        type: decision === 'approved' ? 'approval_request_approved' : decision === 'rejected' ? 'approval_request_rejected' : undefined,
+        message:
+          messages[decision] ??
+          `Your venue booking "${booking.purpose}" was updated.`,
+        type:
+          decision === 'approved'
+            ? 'approval_request_approved'
+            : decision === 'rejected'
+              ? 'approval_request_rejected'
+              : undefined,
         related_entity_type: 'venue_booking',
         related_entity_id: booking.id,
       });

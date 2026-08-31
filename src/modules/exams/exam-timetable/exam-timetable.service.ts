@@ -11,6 +11,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateExamTimetableDto } from './dto/create-exam-timetable.dto';
 import { UpdateExamTimetableDto } from './dto/update-exam-timetable.dto';
 import { exam_session_enum } from 'generated/prisma/client';
+import { ExamTimetableVersionsService } from './exam-timetable-versions.service';
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -22,7 +23,10 @@ function prismaErrorCode(err: unknown): string | undefined {
 export class ExamTimetableService {
   private readonly logger = new Logger(ExamTimetableService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly versions: ExamTimetableVersionsService,
+  ) {}
 
   private toTimeDate(time: string): Date {
     const normalized = time.length === 5 ? `${time}:00` : time;
@@ -69,35 +73,6 @@ export class ExamTimetableService {
     }
   }
 
-  /**
-   * exam_timetable now belongs to a specific exam_timetable_versions row
-   * (@@unique([version_id, exam_subject_mapping_id]) lets the same mapping
-   * appear in more than one version's draft), and publication moved to
-   * exam_subject_mapping.is_published/published_at rather than a per-slot
-   * flag. This module has no version-management API of its own, so every
-   * exam gets exactly one implicit, exam-wide (department_id: null) version,
-   * lazily created on first use — same getOrCreateRow() convention as
-   * library_settings/hostel_settings elsewhere in this codebase.
-   *
-   * Note: like the advisory-lock comment in attendance.service.ts, Postgres
-   * treats NULL <> NULL in unique indexes, so @@unique([exam_id,
-   * department_id, version_number]) does not by itself stop two concurrent
-   * calls from both creating a default version for the same exam. Left
-   * unlocked here since exam-timetable authoring is a rare, single-admin
-   * action, not a high-concurrency path.
-   */
-  private async getOrCreateDefaultVersion(examId: number) {
-    const existing = await this.prisma.exam_timetable_versions.findFirst({
-      where: { exam_id: examId, department_id: null },
-    });
-    if (existing) {
-      return existing;
-    }
-    return this.prisma.exam_timetable_versions.create({
-      data: { exam_id: examId, version_number: 1, status: 'draft' },
-    });
-  }
-
   async create(createExamTimetableDto: CreateExamTimetableDto) {
     const {
       exam_subject_mapping_id,
@@ -119,7 +94,9 @@ export class ExamTimetableService {
       });
     }
 
-    const version = await this.getOrCreateDefaultVersion(mapping.exam_id);
+    const version = await this.versions.getOrCreateEditableVersion(
+      mapping.exam_id,
+    );
 
     const existing = await this.prisma.exam_timetable.findUnique({
       where: {

@@ -1,6 +1,7 @@
 import { IsIn } from 'class-validator';
 
 export class ReviewExamRegistrationDto {
-  @IsIn(['approved', 'rejected'])
-  status: 'approved' | 'rejected';
+  /** 'pending' reopens a previously rejected registration for re-review. */
+  @IsIn(['approved', 'rejected', 'pending'])
+  status: 'approved' | 'rejected' | 'pending';
 }
