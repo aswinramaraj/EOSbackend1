@@ -134,6 +134,7 @@ model announcements {
   category                   announcement_category_enum?
   scheduled_at               DateTime?                    @db.Timestamptz(6)
   priority                   String?                      @db.VarChar(20)
+  audience_student_type      student_type_enum?
   announcement_class_mapping announcement_class_mapping[]
   announcement_comments      announcement_comments[]
   announcement_media         announcement_media[]
@@ -1234,15 +1235,18 @@ model hostel_rooms {
   capacity               Int                      @db.SmallInt
   hostel_id              Int
   block_id               Int?
+  floor_id               Int?
   faculty_hostel_mapping faculty_hostel_mapping[]
   hostel_quit_requests   hostel_quit_requests[]
   hostel_blocks          hostel_blocks?           @relation(fields: [block_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  hostel_floors          hostel_floors?           @relation(fields: [floor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   hostels                hostels                  @relation(fields: [hostel_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   hostel_room_types      hostel_room_types        @relation(fields: [room_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_hostel_mapping student_hostel_mapping[]
 
   @@unique([hostel_id, room_number])
   @@index([block_id], map: "idx_hostel_rooms_block")
+  @@index([floor_id], map: "idx_hostel_rooms_floor")
 }
 
 /// Singleton hostel-wide policy config — mirrors library_settings' lazy
@@ -2279,6 +2283,7 @@ model students {
   student_health_records                                            student_health_records?
   student_higher_education                                          student_higher_education?
   student_hostel_mapping                                            student_hostel_mapping?
+  student_id_card_issuances                                         student_id_card_issuances[]
   student_identity_marks                                            student_identity_marks[]
   student_leaves                                                    student_leaves[]
   student_meeting_notes                                             student_meeting_notes[]
@@ -2547,6 +2552,7 @@ model users {
   startup_ideas                                                                     startup_ideas[]
   student_drive_applications                                                        student_drive_applications[]
   student_escalations                                                               student_escalations[]
+  student_id_card_issuances                                                         student_id_card_issuances[]
   student_leaves                                                                    student_leaves[]
   student_leaves_student_leaves_approved_by_warden_user_idTousers                   student_leaves[]                        @relation("student_leaves_approved_by_warden_user_idTousers")
   student_meeting_notes                                                             student_meeting_notes[]
@@ -2622,6 +2628,8 @@ model venues {
   location                                                   String?                       @db.VarChar(255)
   capacity                                                   Int?
   venue_type                                                 venue_type_enum?
+  photo_url                                                  String?                       @db.VarChar(500)
+  photo_uploaded_at                                          DateTime?                     @db.Timestamptz(6)
   department_events                                          department_events[]
   exam_timetable                                             exam_timetable[]
   grn                                                        grn[]
@@ -2819,12 +2827,12 @@ model exam_timetable_versions {
   withdrawn_at                                              DateTime?                     @db.Timestamptz(6)
   cloned_from_version_id                                    Int?
   exam_timetable                                            exam_timetable[]
+  cloned_from                                               exam_timetable_versions?      @relation("exam_timetable_versions_clone", fields: [cloned_from_version_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cloned_into                                               exam_timetable_versions[]     @relation("exam_timetable_versions_clone")
   users_exam_timetable_versions_created_by_user_idTousers   users?                        @relation("exam_timetable_versions_created_by_user_idTousers", fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   departments                                               departments?                  @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   exams                                                     exams                         @relation(fields: [exam_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users_exam_timetable_versions_published_by_user_idTousers users?                        @relation("exam_timetable_versions_published_by_user_idTousers", fields: [published_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  cloned_from                                               exam_timetable_versions?      @relation("exam_timetable_versions_clone", fields: [cloned_from_version_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  cloned_into                                               exam_timetable_versions[]     @relation("exam_timetable_versions_clone")
 
   @@unique([exam_id, department_id, version_number])
 }
@@ -2976,6 +2984,7 @@ model hostel_blocks {
   created_at     DateTime         @default(now()) @db.Timestamptz(6)
   updated_at     DateTime         @default(now()) @db.Timestamptz(6)
   hostels        hostels          @relation(fields: [hostel_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  hostel_floors  hostel_floors[]
   hostel_goods   hostel_goods[]
   hostel_rooms   hostel_rooms[]
   hostel_wardens hostel_wardens[]
@@ -4978,17 +4987,17 @@ model course_result_status {
 }
 
 model exam_fee_transactions {
-  id             Int                      @id @default(autoincrement())
-  student_id     Int
-  fee_head       exam_fee_head_enum
-  amount         Decimal                  @db.Decimal(10, 2)
-  mode           exam_fee_mode_enum       @default(online)
-  status         exam_fee_txn_status_enum @default(paid)
-  receipt_no     String?                  @unique @db.VarChar(30)
-  reference_no   String?                  @db.VarChar(60)
-  reconciled_at  DateTime?                @db.Timestamptz(6)
-  created_at     DateTime                 @default(now()) @db.Timestamptz(6)
-  students       students                 @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id            Int                      @id @default(autoincrement())
+  student_id    Int
+  fee_head      exam_fee_head_enum
+  amount        Decimal                  @db.Decimal(10, 2)
+  mode          exam_fee_mode_enum       @default(online)
+  status        exam_fee_txn_status_enum @default(paid)
+  receipt_no    String?                  @unique @db.VarChar(30)
+  created_at    DateTime                 @default(now()) @db.Timestamptz(6)
+  reference_no  String?                  @db.VarChar(60)
+  reconciled_at DateTime?                @db.Timestamptz(6)
+  students      students                 @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model exam_registrations {
@@ -5383,9 +5392,9 @@ model question_papers {
   sets_count                                            Int                          @default(0) @db.SmallInt
   vaulted                                               Boolean                      @default(false)
   status                                                question_paper_status_enum   @default(awaiting_upload)
-  due_date                                              DateTime?                    @db.Date
   created_at                                            DateTime                     @default(now()) @db.Timestamptz(6)
   updated_at                                            DateTime                     @default(now()) @db.Timestamptz(6)
+  due_date                                              DateTime?                    @db.Date
   confidential_access_events                            confidential_access_events[]
   exam_subject_mapping                                  exam_subject_mapping         @relation(fields: [exam_subject_mapping_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   faculty_question_papers_moderator_faculty_idTofaculty faculty?                     @relation("question_papers_moderator_faculty_idTofaculty", fields: [moderator_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -5760,6 +5769,32 @@ model medical_appointments {
   @@index([booked_by_user_id, slot_date(sort: Desc)], map: "idx_medical_appointments_booker")
   @@index([slot_date, slot_start, status], map: "idx_medical_appointments_slot_status")
   @@index([window_id], map: "idx_medical_appointments_window")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model hostel_floors {
+  id            Int            @id @default(autoincrement())
+  block_id      Int
+  name          String         @db.VarChar(50)
+  created_at    DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime       @default(now()) @db.Timestamptz(6)
+  hostel_blocks hostel_blocks  @relation(fields: [block_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  hostel_rooms  hostel_rooms[]
+
+  @@unique([block_id, name])
+  @@index([block_id], map: "idx_hostel_floors_block")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model student_id_card_issuances {
+  id                Int      @id @default(autoincrement())
+  student_id        Int
+  issued_at         DateTime @default(now()) @db.Timestamptz(6)
+  issued_by_user_id Int?
+  users             users?   @relation(fields: [issued_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students          students @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([student_id, issued_at], map: "idx_student_id_card_issuances_student_id")
 }
 
 enum achievement_media_type_enum {
