@@ -7,11 +7,14 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { Prisma } from 'generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { StorageService } from 'src/common/storage/storage.service';
+import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 import { CreateVenueBookingDto } from './dto/create-venue-booking.dto';
@@ -28,6 +31,9 @@ import { ListVenueBookingQueryDto } from './dto/list-venue-booking-query.dto';
  * so this raises the budget rather than papering over a one-off blip.
  */
 const TRANSACTION_OPTIONS = { maxWait: 10000, timeout: 15000 };
+
+const PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024; // 5 MB — same limit as the students photo upload
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -52,7 +58,7 @@ const VENUE_AVAILABILITY_BOOKING_SELECT = {
 interface VenueAvailabilityBookerRow {
   email: string;
   faculty: { first_name: string; last_name: string } | null;
-  non_teaching_staff: { first_name: string; last_name: string }[];
+  non_teaching_staff: { first_name: string; last_name: string | null }[];
 }
 
 interface VenueAvailabilityBookingRow {
@@ -83,18 +89,22 @@ function resolveBookerName(user: VenueAvailabilityBookerRow): string {
   }
   if (user.non_teaching_staff[0]) {
     const staff = user.non_teaching_staff[0];
-    return `${staff.first_name} ${staff.last_name}`;
+    return `${staff.first_name} ${staff.last_name ?? ''}`.trim();
   }
   return user.email;
 }
 
-function toVenueAvailability(venue: VenueAvailabilityRow) {
+function toVenueAvailability(
+  venue: VenueAvailabilityRow,
+  photoUrl: string | null,
+) {
   const [booking] = venue.venue_bookings_venue_bookings_venue_idTovenues;
   return {
     id: venue.id,
     name: venue.name,
     location: venue.location,
     capacity: venue.capacity,
+    photo_url: photoUrl,
     is_available: !booking,
     booking: booking
       ? {
@@ -224,6 +234,7 @@ export class VenuesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly storage: StorageService,
   ) {}
 
   /** POST /venues (Admin only). */
@@ -290,7 +301,12 @@ export class VenuesService {
       this.prisma.venues.count(),
     ], TRANSACTION_OPTIONS);
 
-    return paginate(rows.map(toVenueAvailability), total, query);
+    const photoUrls = await this.getPhotoUrls(rows.map((r) => r.id));
+    return paginate(
+      rows.map((r) => toVenueAvailability(r, photoUrls.get(r.id) ?? null)),
+      total,
+      query,
+    );
   }
 
   /** GET /venues/:id (any authenticated user). Static venue details only. */
@@ -347,6 +363,166 @@ export class VenuesService {
 
     this.logger.log(`Venue deleted: id=${id}`);
     return { id, deleted: true };
+  }
+
+  /**
+   * POST /venues/:id/photo (Admin only) — attach/replace a venue's photo.
+   *
+   * `photo_url`/`photo_uploaded_at` are NOT Prisma-typed fields on `venues`
+   * (see query.md #8) — `venues` is read elsewhere via bare, no-`select`
+   * `findUnique`/`findMany` calls (hall_plans, malpractice, media_requests,
+   * grn, and this service's own findOne/update/remove), which implicitly
+   * select every column, so adding this to schema.prisma would break those
+   * reads until the column exists on the live database. Read/write both go
+   * through $queryRaw/$executeRaw instead, exactly like the hostel
+   * announcements' audience_student_type column.
+   */
+  async uploadPhoto(id: number, file: Express.Multer.File) {
+    const venue = await this.prisma.venues.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!venue) {
+      throw new NotFoundException({
+        message: 'Venue not found',
+        errorCode: 'VENUE_NOT_FOUND',
+      });
+    }
+    if (!PHOTO_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException({
+        message: `That file type is not accepted. JPG, PNG or WebP only — got ${file.mimetype || 'an unknown type'}.`,
+        errorCode: 'INVALID_PHOTO_TYPE',
+      });
+    }
+    if (file.size > PHOTO_MAX_BYTES) {
+      throw new BadRequestException({
+        message: `File is too large — the limit is ${PHOTO_MAX_BYTES / (1024 * 1024)}MB.`,
+        errorCode: 'PHOTO_TOO_LARGE',
+      });
+    }
+
+    const oldPhotoUrl = await this.getPhotoUrl(id);
+
+    const { key } = await this.storage.upload(
+      `venues/${id}`,
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+      STORAGE_BUCKETS.VENUE_PHOTOS,
+    );
+    const photoUrl = this.storage.getPublicUrl(
+      key,
+      STORAGE_BUCKETS.VENUE_PHOTOS,
+    );
+    const uploadedAt = new Date();
+
+    try {
+      await this.prisma.$executeRaw`
+        UPDATE venues SET photo_url = ${photoUrl}, photo_uploaded_at = ${uploadedAt} WHERE id = ${id}
+      `;
+    } catch (err) {
+      this.logger.warn(
+        `photo_url unavailable (see query.md #8) — venue ${id} photo uploaded to storage but not saved to the database: ${String(err)}`,
+      );
+      throw new BadRequestException({
+        message:
+          'Venue photos are not enabled on this database yet. Ask an administrator to run the pending migration.',
+        errorCode: 'FEATURE_NOT_MIGRATED',
+      });
+    }
+
+    const oldKey = this.extractStorageKey(
+      oldPhotoUrl,
+      STORAGE_BUCKETS.VENUE_PHOTOS,
+    );
+    if (oldKey) {
+      try {
+        await this.storage.delete(oldKey, STORAGE_BUCKETS.VENUE_PHOTOS);
+      } catch (err) {
+        this.logger.warn(
+          `Old photo cleanup failed for venue ${id} (new photo already saved): ${err}`,
+        );
+      }
+    }
+
+    return { photo_url: photoUrl, photo_uploaded_at: uploadedAt };
+  }
+
+  /** DELETE /venues/:id/photo (Admin only) — idempotent: a venue with no photo is a no-op, not an error. */
+  async deletePhoto(id: number) {
+    const venue = await this.prisma.venues.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!venue) {
+      throw new NotFoundException({
+        message: 'Venue not found',
+        errorCode: 'VENUE_NOT_FOUND',
+      });
+    }
+
+    const photoUrl = await this.getPhotoUrl(id);
+    const key = this.extractStorageKey(photoUrl, STORAGE_BUCKETS.VENUE_PHOTOS);
+    if (key) {
+      try {
+        await this.storage.delete(key, STORAGE_BUCKETS.VENUE_PHOTOS);
+      } catch (err) {
+        this.logger.warn(
+          `Photo storage cleanup failed for venue ${id} (DB will still be cleared): ${err}`,
+        );
+      }
+    }
+
+    try {
+      await this.prisma.$executeRaw`
+        UPDATE venues SET photo_url = NULL, photo_uploaded_at = NULL WHERE id = ${id}
+      `;
+    } catch (err) {
+      this.logger.warn(
+        `photo_url unavailable (see query.md #8) while clearing venue ${id}'s photo: ${String(err)}`,
+      );
+    }
+
+    return { photo_url: null, photo_uploaded_at: null };
+  }
+
+  /** Best-effort lookup — returns null (not an error) if the column doesn't exist yet on the live database. */
+  private async getPhotoUrl(id: number): Promise<string | null> {
+    const urls = await this.getPhotoUrls([id]);
+    return urls.get(id) ?? null;
+  }
+
+  /**
+   * Batched best-effort lookup for findAll()'s venue list — one query for
+   * every row on the page instead of one per row. Returns an empty map (not
+   * an error) if the column doesn't exist yet on the live database, so the
+   * list still renders with every photo_url simply defaulting to null.
+   */
+  private async getPhotoUrls(
+    ids: number[],
+  ): Promise<Map<number, string | null>> {
+    if (ids.length === 0) return new Map();
+    try {
+      const rows = await this.prisma.$queryRaw<
+        { id: number; photo_url: string | null }[]
+      >`
+        SELECT id, photo_url FROM venues WHERE id IN (${Prisma.join(ids)})
+      `;
+      return new Map(rows.map((r) => [r.id, r.photo_url]));
+    } catch (err) {
+      this.logger.warn(
+        `photo_url unavailable (see query.md #8) while listing venues: ${String(err)}`,
+      );
+      return new Map();
+    }
+  }
+
+  /** Reverses getPublicUrl()'s construction — null on any URL that doesn't match this bucket's public-URL shape (nothing to delete, not an error). */
+  private extractStorageKey(url: string | null, bucket: string): string | null {
+    if (!url) return null;
+    const marker = `/storage/v1/object/public/${bucket}/`;
+    const index = url.indexOf(marker);
+    return index === -1 ? null : url.slice(index + marker.length);
   }
 
   /**

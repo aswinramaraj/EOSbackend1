@@ -78,6 +78,7 @@ export class HodAppraisalService {
           submitted_at: r.created_at,
           cycle_academic_year: r.academic_year,
           entries_count: r.entries.length,
+          attachments_count: r.attachments.length,
           self_score:
             scored.length > 0
               ? scored.reduce((sum, e) => sum + (e.score ?? 0), 0)
@@ -117,6 +118,13 @@ export class HodAppraisalService {
         description: e.description,
         score: e.score,
         max_score: e.criteria.max_score,
+      })),
+      attachments: r.attachments.map((a) => ({
+        id: a.id,
+        division_id: a.division_id,
+        file_url: a.file_url,
+        file_name: a.file_name,
+        uploaded_at: a.uploaded_at,
       })),
     };
   }

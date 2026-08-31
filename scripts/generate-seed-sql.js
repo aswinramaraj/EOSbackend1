@@ -1340,9 +1340,82 @@ line('-- =======================================================================
 // subjects + faculty_subject_class_mapping
 // ---------------------------------------------------------------------------
 line('-- ===========================================================================');
-line('-- SUBJECTS (generic placeholder list, no real syllabus source given) + TEACHING MAPPING');
+line('-- SUBJECTS (curriculum-style placeholder names, no real syllabus source given) + TEACHING MAPPING');
 line('-- ===========================================================================');
 const SEMESTERS_IN_USE = [1, 3, 5, 7];
+
+// Generic engineering-curriculum-style subject titles per department/semester —
+// not a claim of the institution's actual official syllabus (none was given),
+// but distinct, readable names instead of the old "{Dept} Semester {n} Subject
+// {k}" template, whose subjects all shared the same ~55-character prefix and
+// read as identical once a UI column truncates them.
+const COMMON_SEM1_SUBJECTS = [
+  'Engineering Mathematics I',
+  'Engineering Physics',
+  'Engineering Chemistry',
+  'Problem Solving and Programming in C',
+  'Engineering Graphics',
+  'English for Communication',
+];
+const SUBJECT_NAMES_BY_DEPT = {
+  CS: {
+    3: ['Data Structures', 'Digital Logic Design', 'Object Oriented Programming', 'Discrete Mathematics', 'Computer Organization', 'Python Programming'],
+    5: ['Database Management Systems', 'Operating Systems', 'Design and Analysis of Algorithms', 'Computer Networks', 'Software Engineering', 'Web Technology'],
+    7: ['Machine Learning', 'Cloud Computing', 'Compiler Design', 'Cryptography and Network Security', 'Mobile Application Development', 'Distributed Systems'],
+  },
+  AI: {
+    3: ['Data Structures', 'Digital Logic Design', 'Statistics for Data Science', 'Discrete Mathematics', 'Computer Organization', 'Python Programming'],
+    5: ['Machine Learning Fundamentals', 'Database Management Systems', 'Neural Networks and Deep Learning', 'Computer Networks', 'Data Mining Techniques', 'Natural Language Processing'],
+    7: ['Deep Learning Architectures', 'Computer Vision', 'Reinforcement Learning', 'Big Data Analytics', 'AI Ethics and Governance', 'Robotics and Automation'],
+  },
+  CY: {
+    3: ['Data Structures', 'Digital Logic Design', 'Object Oriented Programming', 'Discrete Mathematics', 'Computer Organization', 'Python Programming'],
+    5: ['Database Management Systems', 'Operating Systems', 'Cryptography Fundamentals', 'Computer Networks', 'Network Security', 'Ethical Hacking'],
+    7: ['Digital Forensics', 'Malware Analysis', 'Cloud Security', 'Security Operations and Incident Response', 'Secure Software Development', 'Cyber Law and Compliance'],
+  },
+  CC: {
+    3: ['Data Structures', 'Digital Logic Design', 'Signals and Systems', 'Discrete Mathematics', 'Computer Organization', 'Analog Communication'],
+    5: ['Database Management Systems', 'Operating Systems', 'Digital Communication', 'Computer Networks', 'Microprocessors and Microcontrollers', 'Wireless Communication'],
+    7: ['Mobile Networks', 'Internet of Things', 'Network Security', 'Optical Communication', 'Satellite Communication', 'VLSI Design'],
+  },
+  EC: {
+    3: ['Circuit Theory', 'Electronic Devices and Circuits', 'Signals and Systems', 'Digital Electronics', 'Engineering Mathematics III', 'Electromagnetic Fields'],
+    5: ['Analog Communication', 'Linear Integrated Circuits', 'Microprocessors and Microcontrollers', 'Digital Signal Processing', 'Control Systems', 'Antenna and Wave Propagation'],
+    7: ['VLSI Design', 'Wireless Communication', 'Embedded Systems', 'Optical Communication', 'Radar and Navigation Systems', 'Satellite Communication'],
+  },
+  EE: {
+    3: ['Circuit Theory', 'Electrical Machines I', 'Electronic Devices and Circuits', 'Engineering Mathematics III', 'Electromagnetic Theory', 'Digital Electronics'],
+    5: ['Power Systems I', 'Electrical Machines II', 'Control Systems', 'Power Electronics', 'Microprocessors and Microcontrollers', 'Measurements and Instrumentation'],
+    7: ['Power System Protection', 'High Voltage Engineering', 'Renewable Energy Systems', 'Electric Drives', 'Smart Grid Technology', 'Industrial Automation'],
+  },
+  ME: {
+    3: ['Engineering Mechanics', 'Strength of Materials', 'Manufacturing Technology I', 'Thermodynamics', 'Engineering Mathematics III', 'Fluid Mechanics'],
+    5: ['Design of Machine Elements', 'Heat Transfer', 'Manufacturing Technology II', 'Dynamics of Machinery', 'Metrology and Measurements', 'Thermal Engineering'],
+    7: ['CAD/CAM', 'Robotics and Automation', 'Automobile Engineering', 'Finite Element Analysis', 'Industrial Engineering', 'Refrigeration and Air Conditioning'],
+  },
+  AD: {
+    3: ['Data Structures', 'Digital Logic Design', 'Statistics for Data Science', 'Discrete Mathematics', 'Computer Organization', 'Python Programming'],
+    5: ['Machine Learning Fundamentals', 'Database Management Systems', 'Data Visualization Techniques', 'Computer Networks', 'Data Mining Techniques', 'Big Data Fundamentals'],
+    7: ['Deep Learning', 'Data Engineering', 'Business Intelligence', 'Cloud Computing for Data Science', 'Time Series Analysis', 'AI Product Design'],
+  },
+  CB: {
+    3: ['Data Structures', 'Digital Logic Design', 'Object Oriented Programming', 'Financial Accounting', 'Computer Organization', 'Python Programming'],
+    5: ['Database Management Systems', 'Operating Systems', 'Business Analytics', 'Computer Networks', 'Enterprise Resource Planning', 'Software Engineering'],
+    7: ['Machine Learning for Business', 'Cloud Computing', 'Digital Marketing Analytics', 'Business Process Management', 'Data Visualization', 'IT Project Management'],
+  },
+  IT: {
+    3: ['Data Structures', 'Digital Logic Design', 'Object Oriented Programming', 'Discrete Mathematics', 'Computer Organization', 'Python Programming'],
+    5: ['Database Management Systems', 'Operating Systems', 'Web Technology', 'Computer Networks', 'Software Engineering', 'Information Security'],
+    7: ['Cloud Computing', 'Mobile Application Development', 'Data Analytics', 'Internet of Things', 'DevOps Practices', 'Enterprise Networking'],
+  },
+};
+
+/** Falls back to the old generic template only for a dept/semester this table doesn't cover (shouldn't happen for the 10 seeded departments × 4 seeded semesters). */
+function subjectName(dept, sem, k) {
+  const pool = sem === 1 ? COMMON_SEM1_SUBJECTS : SUBJECT_NAMES_BY_DEPT[dept.code]?.[sem];
+  return pool?.[k - 1] ?? `${dept.name.replace(/^B\.(E|Tech)\.?\s*/, '')} Semester ${sem} Subject ${k}`;
+}
+
 const subjectsByDeptSem = {}; // deptCode -> sem -> [subject_code,...]
 {
   const rows = [];
@@ -1354,7 +1427,7 @@ const subjectsByDeptSem = {}; // deptCode -> sem -> [subject_code,...]
         const code = `${d.code}${sem}${String(k).padStart(2, '0')}`;
         codes.push(code);
         rows.push([
-          esc(`${d.name.replace(/^B\.(E|Tech)\.?\s*/, '')} Semester ${sem} Subject ${k}`),
+          esc(subjectName(d, sem, k)),
           esc(code), sub.dept(d.code), num(3), esc(sem <= 2 ? 'CORE' : (k === 6 ? 'ELECTIVE' : 'CORE')), num(sem),
         ]);
       }
@@ -2208,9 +2281,10 @@ const EXAM_TYPES = [
   { name: 'CIA1', category: 'internal', code: 'CIA1', isUniversity: false },
   { name: 'CIA2', category: 'internal', code: 'CIA2', isUniversity: false },
   { name: 'CIA3', category: 'internal', code: 'CIA3', isUniversity: false },
+  { name: 'Quiz', category: 'internal', code: 'QUIZ', isUniversity: false },
   { name: 'University End Semester Exam', category: 'external', code: 'UNIV_END', isUniversity: true },
 ];
-line('-- exam_types (guarded on name) — real workflow-doc exam types: CIA1/CIA2/CIA3 (internal) + University end-semester (external)');
+line('-- exam_types (guarded on name) — real workflow-doc exam types: CIA1/CIA2/CIA3/Quiz (internal) + University end-semester (external)');
 for (const et of EXAM_TYPES) {
   insertGuardedRow(
     'exam_types', ['name', 'category', 'code', 'is_university'],

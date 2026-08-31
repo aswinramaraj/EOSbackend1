@@ -103,6 +103,7 @@ export class PrincipalPlacementsService {
         },
         placement_drives: {
           select: {
+            id: true,
             package_lpa: true,
             job_role: true,
             companies: { select: { id: true, name: true } },
@@ -584,6 +585,7 @@ export class PrincipalPlacementsService {
       company_name: company.name,
       students: rows.map((a) => ({
         student_id: a.students.id,
+        drive_id: a.placement_drives.id,
         name: this.studentName(a.students),
         roll_no: a.students.student_id_no,
         register_no: a.students.register_no,
