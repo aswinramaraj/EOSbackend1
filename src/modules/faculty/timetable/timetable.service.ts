@@ -247,8 +247,8 @@ function toResponse(slot: TimetableRow) {
     id: slot.id,
     day_of_week: slot.day_of_week,
     period_number: slot.period_number,
-    start_time: slot.start_time,
-    end_time: slot.end_time,
+    start_time: formatHHMM(slot.start_time),
+    end_time: formatHHMM(slot.end_time),
     academic_year: slot.academic_year,
     semester: slot.semester,
     class: {
