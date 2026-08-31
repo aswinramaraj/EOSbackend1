@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PrincipalFacultyService } from 'src/modules/principal/faculty/faculty.service';
 import { AddPublicationEntryDto } from './dto/add-publication-entry.dto';
@@ -6,6 +6,11 @@ import { AddDevelopmentProgramEntryDto } from './dto/add-development-program-ent
 import { AddResearchEntryDto } from './dto/add-research-entry.dto';
 import { AddPatentEntryDto } from './dto/add-patent-entry.dto';
 import { AddFacultyCertificationEntryDto } from './dto/add-faculty-certification-entry.dto';
+import { UpdateDevelopmentProgramEntryDto } from './dto/update-development-program-entry.dto';
+import { UpdateFacultyCertificationEntryDto } from './dto/update-faculty-certification-entry.dto';
+import { UpdatePublicationEntryDto } from './dto/update-publication-entry.dto';
+import { UpdateResearchEntryDto } from './dto/update-research-entry.dto';
+import { UpdatePatentEntryDto } from './dto/update-patent-entry.dto';
 
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
@@ -130,7 +135,8 @@ export class IqacFacultyDevelopmentService {
       };
       entry.papers += 1;
       entry.citations += p.citation_count;
-      if (p.faculty.departments?.code) entry.departments.add(p.faculty.departments.code);
+      if (p.faculty.departments?.code)
+        entry.departments.add(p.faculty.departments.code);
       byVenue.set(p.venue, entry);
     }
 
@@ -224,6 +230,54 @@ export class IqacFacultyDevelopmentService {
     return created;
   }
 
+  /**
+   * PATCH /me/iqac/faculty-development/publications/:id — real
+   * faculty_publications update. author_role/indexing/published_date/status
+   * are real columns now (confirmed in schema.prisma), so this is a plain
+   * typed update, not the guarded raw-query fallback addPublicationEntry()
+   * still uses for its own historical reasons.
+   */
+  async updatePublicationEntry(id: number, dto: UpdatePublicationEntryDto) {
+    const existing = await this.prisma.faculty_publications.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Publication not found',
+        errorCode: 'PUBLICATION_NOT_FOUND',
+      });
+    }
+    return this.prisma.faculty_publications.update({
+      where: { id },
+      data: {
+        title: dto.title,
+        venue: dto.venue,
+        author_role: dto.author_role,
+        indexing: dto.indexing,
+        published_date: dto.published_date
+          ? new Date(dto.published_date)
+          : undefined,
+        status: dto.status,
+        citation_count: dto.citation_count,
+      },
+    });
+  }
+
+  /** DELETE /me/iqac/faculty-development/publications/:id */
+  async removePublicationEntry(id: number) {
+    const existing = await this.prisma.faculty_publications.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Publication not found',
+        errorCode: 'PUBLICATION_NOT_FOUND',
+      });
+    }
+    await this.prisma.faculty_publications.delete({ where: { id } });
+    return { id, deleted: true };
+  }
+
   /** Shared faculty summary shape for FDP/STTP/Research/Patents rows. */
   private facultySummary(faculty: {
     id: number;
@@ -285,7 +339,9 @@ export class IqacFacultyDevelopmentService {
     const rows = await this.prisma.faculty_development_programs.findMany({
       where: {
         program_type: programType,
-        ...(departmentId != null ? { faculty: { department_id: departmentId } } : {}),
+        ...(departmentId != null
+          ? { faculty: { department_id: departmentId } }
+          : {}),
       },
       orderBy: { id: 'desc' },
       include: { faculty: this.facultyInclude },
@@ -316,6 +372,47 @@ export class IqacFacultyDevelopmentService {
         status: dto.status,
       },
     });
+  }
+
+  /** PATCH /me/iqac/faculty-development/{fdp,sttp}/:id — program_type is fixed by the existing row, not re-checked against the route. */
+  async updateDevelopmentProgramEntry(
+    id: number,
+    dto: UpdateDevelopmentProgramEntryDto,
+  ) {
+    const existing = await this.prisma.faculty_development_programs.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Entry not found',
+        errorCode: 'DEVELOPMENT_PROGRAM_NOT_FOUND',
+      });
+    }
+    return this.prisma.faculty_development_programs.update({
+      where: { id },
+      data: {
+        programme_name: dto.programme_name,
+        host_agency: dto.host_agency,
+        duration: dto.duration,
+        attended_on: dto.attended_on ? new Date(dto.attended_on) : undefined,
+        status: dto.status,
+      },
+    });
+  }
+
+  /** DELETE /me/iqac/faculty-development/{fdp,sttp}/:id */
+  async removeDevelopmentProgramEntry(id: number) {
+    const existing = await this.prisma.faculty_development_programs.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Entry not found',
+        errorCode: 'DEVELOPMENT_PROGRAM_NOT_FOUND',
+      });
+    }
+    await this.prisma.faculty_development_programs.delete({ where: { id } });
+    return { id, deleted: true };
   }
 
   fdpQuality() {
@@ -368,7 +465,10 @@ export class IqacFacultyDevelopmentService {
   /** GET /me/iqac/faculty-development/research?department_id= — real faculty_research_project_members rows, one per faculty-project membership. */
   async research(departmentId?: number) {
     const rows = await this.prisma.faculty_research_project_members.findMany({
-      where: departmentId != null ? { faculty: { department_id: departmentId } } : undefined,
+      where:
+        departmentId != null
+          ? { faculty: { department_id: departmentId } }
+          : undefined,
       orderBy: { id: 'desc' },
       include: {
         faculty: this.facultyInclude,
@@ -420,6 +520,58 @@ export class IqacFacultyDevelopmentService {
     });
   }
 
+  /**
+   * PATCH /me/iqac/faculty-development/research/:id — id is the real
+   * faculty_research_project_members row. role/joined_on edit that
+   * membership; focus_area/status edit the shared faculty_research_projects
+   * row (visible to every other member too — same convention as patents'
+   * stage/filed_year below).
+   */
+  async updateResearchEntry(id: number, dto: UpdateResearchEntryDto) {
+    const existing =
+      await this.prisma.faculty_research_project_members.findUnique({
+        where: { id },
+      });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Research entry not found',
+        errorCode: 'RESEARCH_ENTRY_NOT_FOUND',
+      });
+    }
+    if (dto.focus_area !== undefined || dto.status !== undefined) {
+      await this.prisma.faculty_research_projects.update({
+        where: { id: existing.project_id },
+        data: { focus_area: dto.focus_area, status: dto.status },
+      });
+    }
+    return this.prisma.faculty_research_project_members.update({
+      where: { id },
+      data: {
+        role: dto.role,
+        joined_on: dto.joined_on ? new Date(dto.joined_on) : undefined,
+      },
+      include: { faculty_research_projects: true },
+    });
+  }
+
+  /** DELETE /me/iqac/faculty-development/research/:id — removes just this faculty's membership, not the shared project. */
+  async removeResearchEntry(id: number) {
+    const existing =
+      await this.prisma.faculty_research_project_members.findUnique({
+        where: { id },
+      });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Research entry not found',
+        errorCode: 'RESEARCH_ENTRY_NOT_FOUND',
+      });
+    }
+    await this.prisma.faculty_research_project_members.delete({
+      where: { id },
+    });
+    return { id, deleted: true };
+  }
+
   /** GET /me/iqac/faculty-development/patents/quality — bucketed by the real filed_year (calendar year, same convention as Publications). */
   async patentsQuality() {
     const currentYear = new Date().getUTCFullYear();
@@ -428,7 +580,9 @@ export class IqacFacultyDevelopmentService {
       this.prisma.faculty_patents.findMany({ select: { filed_year: true } }),
     ]);
     const thisYear = rows.filter((r) => r.filed_year === currentYear).length;
-    const lastYear = rows.filter((r) => r.filed_year === currentYear - 1).length;
+    const lastYear = rows.filter(
+      (r) => r.filed_year === currentYear - 1,
+    ).length;
     return {
       this_year: thisYear,
       last_year: lastYear,
@@ -440,7 +594,10 @@ export class IqacFacultyDevelopmentService {
   /** GET /me/iqac/faculty-development/patents?department_id= — real faculty_patent_inventors rows, one per faculty-patent inventorship. */
   async patents(departmentId?: number) {
     const rows = await this.prisma.faculty_patent_inventors.findMany({
-      where: departmentId != null ? { faculty: { department_id: departmentId } } : undefined,
+      where:
+        departmentId != null
+          ? { faculty: { department_id: departmentId } }
+          : undefined,
       orderBy: { id: 'desc' },
       include: { faculty: this.facultyInclude, faculty_patents: true },
     });
@@ -490,6 +647,61 @@ export class IqacFacultyDevelopmentService {
     });
   }
 
+  /**
+   * PATCH /me/iqac/faculty-development/patents/:id — id is the real
+   * faculty_patent_inventors row. role edits that inventorship; title/
+   * stage/filed_year/stage_date edit the shared faculty_patents row
+   * (visible to every other inventor too) — this is how a patent's real
+   * Filed → Granted progression gets recorded.
+   */
+  async updatePatentEntry(id: number, dto: UpdatePatentEntryDto) {
+    const existing = await this.prisma.faculty_patent_inventors.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Patent entry not found',
+        errorCode: 'PATENT_ENTRY_NOT_FOUND',
+      });
+    }
+    if (
+      dto.title !== undefined ||
+      dto.stage !== undefined ||
+      dto.filed_year !== undefined ||
+      dto.stage_date !== undefined
+    ) {
+      await this.prisma.faculty_patents.update({
+        where: { id: existing.patent_id },
+        data: {
+          title: dto.title,
+          stage: dto.stage,
+          filed_year: dto.filed_year,
+          stage_date: dto.stage_date ? new Date(dto.stage_date) : undefined,
+        },
+      });
+    }
+    return this.prisma.faculty_patent_inventors.update({
+      where: { id },
+      data: { role: dto.role },
+      include: { faculty_patents: true },
+    });
+  }
+
+  /** DELETE /me/iqac/faculty-development/patents/:id — removes just this faculty's inventorship, not the shared patent. */
+  async removePatentEntry(id: number) {
+    const existing = await this.prisma.faculty_patent_inventors.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Patent entry not found',
+        errorCode: 'PATENT_ENTRY_NOT_FOUND',
+      });
+    }
+    await this.prisma.faculty_patent_inventors.delete({ where: { id } });
+    return { id, deleted: true };
+  }
+
   /** GET /me/iqac/faculty-development/certifications/quality — bucketed by the real completed_on date. */
   async facultyCertificationsQuality() {
     const thisTerm = currentTermRange(startOfToday());
@@ -518,7 +730,10 @@ export class IqacFacultyDevelopmentService {
   /** GET /me/iqac/faculty-development/certifications?department_id= — real faculty_certifications rows. */
   async facultyCertifications(departmentId?: number) {
     const rows = await this.prisma.faculty_certifications.findMany({
-      where: departmentId != null ? { faculty: { department_id: departmentId } } : undefined,
+      where:
+        departmentId != null
+          ? { faculty: { department_id: departmentId } }
+          : undefined,
       orderBy: { id: 'desc' },
       include: { faculty: this.facultyInclude },
     });
@@ -547,5 +762,47 @@ export class IqacFacultyDevelopmentService {
         certificate_url: dto.certificate_url,
       },
     });
+  }
+
+  /** PATCH /me/iqac/faculty-development/certifications/:id — real faculty_certifications update. */
+  async updateFacultyCertificationEntry(
+    id: number,
+    dto: UpdateFacultyCertificationEntryDto,
+  ) {
+    const existing = await this.prisma.faculty_certifications.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Certification entry not found',
+        errorCode: 'CERTIFICATION_NOT_FOUND',
+      });
+    }
+    return this.prisma.faculty_certifications.update({
+      where: { id },
+      data: {
+        platform: dto.platform,
+        track: dto.track,
+        score: dto.score,
+        completed_on: dto.completed_on ? new Date(dto.completed_on) : undefined,
+        status: dto.status,
+        certificate_url: dto.certificate_url,
+      },
+    });
+  }
+
+  /** DELETE /me/iqac/faculty-development/certifications/:id */
+  async removeFacultyCertificationEntry(id: number) {
+    const existing = await this.prisma.faculty_certifications.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Certification entry not found',
+        errorCode: 'CERTIFICATION_NOT_FOUND',
+      });
+    }
+    await this.prisma.faculty_certifications.delete({ where: { id } });
+    return { id, deleted: true };
   }
 }

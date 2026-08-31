@@ -68,12 +68,16 @@ export class HostelRoomController {
   @Roles(ROLES.ADMIN, ROLES.WARDEN, ROLES.BILLING)
   async findAll(
     @Query('hostel_id') hostelId: string | undefined,
+    @Query('block_id') blockId: string | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
     const wardenHostelId = await resolveWardenHostelId(this.prisma, user.sub);
     const effectiveHostelId =
       wardenHostelId ?? (hostelId ? Number(hostelId) : undefined);
-    return this.hostelRoomService.findAll(effectiveHostelId);
+    return this.hostelRoomService.findAll(
+      effectiveHostelId,
+      blockId ? Number(blockId) : undefined,
+    );
   }
 
   /**

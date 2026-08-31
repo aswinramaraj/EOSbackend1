@@ -21,6 +21,8 @@ import { UpdateFacultyDto } from './dto/update-faculty.dto';
 import { AdminUpdateFacultyDto } from './dto/admin-update-faculty.dto';
 import { ListFacultyQueryDto } from './dto/list-faculty-query.dto';
 import type { FacultyExtendedFieldsDto } from './dto/faculty-extended-fields.dto';
+import type { NotifyEntityDto } from 'src/common/dto/notify-entity.dto';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 
 /** Characters used for generated temporary passwords — excludes visually ambiguous chars (0/O, 1/l/I). */
 const TEMP_PASSWORD_CHARSET =
@@ -87,7 +89,10 @@ function pickExtendedFields<T extends Record<string, unknown>>(
 export class FacultyService {
   private readonly logger = new Logger(FacultyService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /** Secretary is always forced to her own department; other roles keep whatever was requested. */
   private async resolveEffectiveDepartmentId(
@@ -462,7 +467,11 @@ export class FacultyService {
       throw new BadRequestException('No fields provided to update');
     }
 
-    if (dto.department_id !== undefined) {
+    // != null (not !== undefined) — @IsOptional() lets a literal `null`
+    // through validation untouched, and passing that straight into a
+    // non-nullable Int where-clause throws an uncaught PrismaClientValidationError
+    // instead of the intended "Department not found".
+    if (dto.department_id != null) {
       const department = await this.prisma.departments.findUnique({
         where: { id: dto.department_id },
       });
@@ -609,6 +618,35 @@ export class FacultyService {
       this.logger.warn(`faculty_activity_log unavailable: ${String(err)}`);
       return [];
     }
+  }
+
+  /**
+   * POST /me/faculty/:id/notify (Admin/HR Payroll) — an ad-hoc message
+   * pushed straight to this faculty member's own notification inbox
+   * (bell icon), via the same notify() every real notification producer
+   * in this app calls (persists the in-app row + best-effort push). No
+   * `type` is set — the closed notification_type_enum has no value for
+   * "an admin sent you a one-off message", and the DTO/mobile client both
+   * already treat an unset type as a valid, generic case (no deep link).
+   */
+  async notifyFaculty(facultyId: number, dto: NotifyEntityDto) {
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { id: facultyId },
+      select: { user_id: true },
+    });
+    if (!faculty) {
+      throw new NotFoundException('Faculty not found');
+    }
+
+    await this.notifications.notify({
+      user_id: faculty.user_id,
+      title: dto.title,
+      message: dto.message,
+      related_entity_type: 'faculty',
+      related_entity_id: facultyId,
+    });
+
+    return { sent: true };
   }
 
   /**

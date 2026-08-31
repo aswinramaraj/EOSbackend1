@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -17,6 +19,7 @@ import { ROLES } from 'src/common/constants/roles.constant';
 import { PrincipalExamsService } from 'src/modules/principal/exams/exams.service';
 import { ClassesService } from 'src/modules/academic-structure/classes/classes.service';
 import { CreateClassDto } from 'src/modules/academic-structure/classes/dto/create-class.dto';
+import { UpdateClassDto } from 'src/modules/academic-structure/classes/dto/update-class.dto';
 import { AssignMentorDto } from 'src/modules/academic-structure/classes/dto/assign-mentor.dto';
 import { CoursesService } from 'src/modules/academic-structure/courses/courses.service';
 import { IqacAcademicQualityService } from './iqac-academic-quality.service';
@@ -61,6 +64,19 @@ export class IqacAcademicQualityController {
   @Post('class-rows')
   createClassRow(@Body() dto: CreateClassDto) {
     return this.classesService.create(dto);
+  }
+
+  @Patch('class-rows/:id')
+  updateClassRow(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateClassDto,
+  ) {
+    return this.classesService.update(id, dto);
+  }
+
+  @Delete('class-rows/:id')
+  removeClassRow(@Param('id', ParseIntPipe) id: number) {
+    return this.classesService.remove(id);
   }
 
   @Post('class-rows/:id/mentor')

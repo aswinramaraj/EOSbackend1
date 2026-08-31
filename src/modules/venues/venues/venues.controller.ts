@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -11,7 +12,10 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -27,6 +31,8 @@ import { ListVenueQueryDto } from './dto/list-venue-query.dto';
 import { ReviewVenueBookingDto } from './dto/review-venue-booking.dto';
 import { ReallocateVenueBookingDto } from './dto/reallocate-venue-booking.dto';
 import { ListVenueBookingQueryDto } from './dto/list-venue-booking-query.dto';
+
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 
 /**
  * No class-level @Controller() prefix — Nest always prepends one to every
@@ -100,6 +106,34 @@ export class VenuesController {
   @Roles(ROLES.ADMIN)
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.venuesService.remove(id);
+  }
+
+  /** POST /api/v1/venues/:id/photo (multipart, field "file") — Admin only. Attach/replace a venue's photo. */
+  @Post('venues/:id/photo')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: MAX_PHOTO_BYTES } }),
+  )
+  uploadPhoto(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        message: 'No file was uploaded (expected multipart field "file")',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    return this.venuesService.uploadPhoto(id, file);
+  }
+
+  /** DELETE /api/v1/venues/:id/photo — Admin only. */
+  @Delete('venues/:id/photo')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  deletePhoto(@Param('id', ParseIntPipe) id: number) {
+    return this.venuesService.deletePhoto(id);
   }
 
   /**

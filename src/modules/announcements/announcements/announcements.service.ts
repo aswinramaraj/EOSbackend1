@@ -26,6 +26,19 @@ import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 
 /**
+ * "No restriction" for a role with institution-wide visibility (Admin,
+ * Principal, Billing, Finance, IQAC). NOT a bare `{}` — nested inside the
+ * `OR: [...]` array in buildVisibilityQuery, an empty object is silently
+ * dropped by this Prisma version's query builder instead of matching every
+ * row, which meant every one of these roles' announcement feeds only ever
+ * showed posts published through the separate social-composer branch (2
+ * rows) — including each role's own posts. `id: { gt: 0 }` is a real,
+ * always-true condition (ids are positive autoincrement) that Prisma can't
+ * optimize away.
+ */
+const UNRESTRICTED: Prisma.announcementsWhereInput = { id: { gt: 0 } };
+
+/**
  * Resolved relationship facts for the current actor, derived once per request.
  * batch_id/department_id on `announcements` are never populated and never
  * read here — announcement_class_mapping is the only recipient source.
@@ -39,6 +52,15 @@ interface UserContext {
   assignedClassIds?: number[];
   studentClassId?: number | null;
   linkedStudentClassIds?: number[];
+  // Ids of announcements scoped to this student's hostel/day-scholar status
+  // via the raw `audience_student_type` column proposed in query.md #7 (not
+  // a Prisma field — see resolveUserContext's STUDENT case for why). Always
+  // [] until that column exists or for any non-STUDENT role.
+  hostelAudienceAnnouncementIds?: number[];
+  // Whether this student has their own student_entrepreneurship row (and
+  // whether it's incubated) — resolves the edc_* target_audience values.
+  // undefined for any non-STUDENT role.
+  edcAudience?: { isEntrepreneur: boolean; isIncubated: boolean };
 }
 
 /**
@@ -503,6 +525,13 @@ export class AnnouncementsService {
         });
       }
 
+      void this.notifyNewAnnouncement(
+        announcement.id,
+        dto.title,
+        dto.target_audience,
+        {},
+      );
+
       return this.toResponseShape({ ...announcement, announcement_class_mapping: [] });
     }
 
@@ -737,7 +766,11 @@ export class AnnouncementsService {
       // Principal elsewhere in this service (see resolveUserContext) — no
       // department linkage exists for IQAC, so it's always an all-faculty
       // broadcast, same as Admin/Principal omitting requestedDepartmentId.
-      context.role === ROLES.IQAC
+      context.role === ROLES.IQAC ||
+      // HR & Payroll is the same shape — institution-wide, no department
+      // linkage of its own (appraisal/payroll circulars go to every
+      // faculty account, not one department).
+      context.role === ROLES.HR_PAYROLL
     ) {
       if (requestedDepartmentId === undefined) {
         return null;
@@ -860,6 +893,25 @@ export class AnnouncementsService {
           select: { id: true },
         });
         return users.map((u) => u.id);
+      }
+
+      // 'edc_founders' and 'edc_all_entrepreneurs' resolve to the same set —
+      // see getEdcAudience's comment on why this schema can't distinguish them.
+      case 'edc_founders':
+      case 'edc_all_entrepreneurs': {
+        const entrepreneurs =
+          await this.prisma.student_entrepreneurship.findMany({
+            select: { students: { select: { user_id: true } } },
+          });
+        return entrepreneurs.map((e) => e.students.user_id);
+      }
+
+      case 'edc_inside_college': {
+        const incubated = await this.prisma.student_entrepreneurship.findMany({
+          where: { is_incubated: true },
+          select: { students: { select: { user_id: true } } },
+        });
+        return incubated.map((e) => e.students.user_id);
       }
 
       default:
@@ -1309,6 +1361,9 @@ export class AnnouncementsService {
           userId: user.sub,
           roleId: user.roleId,
           studentClassId: student.class_id,
+          hostelAudienceAnnouncementIds:
+            await this.getHostelAudienceAnnouncementIds(student.student_type),
+          edcAudience: await this.getEdcAudience(student.id),
         };
       }
 
@@ -1394,13 +1449,13 @@ export class AnnouncementsService {
 
     switch (context.role) {
       case ROLES.ADMIN:
-        return {};
+        return UNRESTRICTED;
 
       // Principal is institution-wide leadership — same broadcast tier as
       // Admin, sees everything (subject to the draft rule in
       // buildVisibilityQuery above).
       case ROLES.PRINCIPAL:
-        return {};
+        return UNRESTRICTED;
 
       // Department-scoped, mirroring HOD's own clause exactly (own posts +
       // all Admin/Principal posts + org-wide teacher broadcasts +
@@ -1420,14 +1475,14 @@ export class AnnouncementsService {
       // anywhere in the schema.
       case ROLES.BILLING:
       case ROLES.FINANCE:
-        return {};
+        return UNRESTRICTED;
 
       // IQAC is an institution-wide quality/audit function — it needs to
       // see every announcement for oversight purposes, same broadcast tier
       // as Admin/Principal/Billing/Finance, not a narrower "own posts
       // only" scope like Media Room/Higher Education.
       case ROLES.IQAC:
-        return {};
+        return UNRESTRICTED;
 
       // EDC coordinator has no recipient list to resolve (no "founders"
       // user table exists yet) - sees only what they authored themselves,
@@ -1491,10 +1546,29 @@ export class AnnouncementsService {
 
       case ROLES.STUDENT: {
         const classId = context.studentClassId ?? -1;
+        const hostelAudienceIds = context.hostelAudienceAnnouncementIds ?? [];
+        const edc = context.edcAudience;
+        const edcAudiences: target_audience_enum[] = [];
+        // See getEdcAudience: 'edc_founders' and 'edc_all_entrepreneurs' are
+        // the same recipient set — this schema has no way to distinguish them.
+        if (edc?.isEntrepreneur) {
+          edcAudiences.push('edc_founders', 'edc_all_entrepreneurs');
+        }
+        if (edc?.isIncubated) {
+          edcAudiences.push('edc_inside_college');
+        }
         return {
           OR: [
             { announcement_class_mapping: { some: { class_id: classId } } },
             roleTargeted,
+            // Only ever non-empty once query.md #7's column exists — see
+            // getHostelAudienceAnnouncementIds.
+            ...(hostelAudienceIds.length > 0
+              ? [{ id: { in: hostelAudienceIds } }]
+              : []),
+            ...(edcAudiences.length > 0
+              ? [{ target_audience: { in: edcAudiences } }]
+              : []),
           ],
         };
       }
@@ -1553,7 +1627,12 @@ export class AnnouncementsService {
       // `default`, which matches only role-targeted broadcasts — so the Media
       // Room could not see even the posts it had just published, and reading
       // or deleting one came back 404.
+      // falls through — HR & Payroll is institution-wide with no
+      // class/department scope of its own either, same shape: with no case
+      // here it fell through to `default` (role-targeted only), so HR could
+      // never see its own posts after publishing them.
       case ROLES.MEDIA_ROOM:
+      case ROLES.HR_PAYROLL:
         return {
           OR: [
             { posted_by_user_id: context.userId },
@@ -1645,7 +1724,10 @@ export class AnnouncementsService {
       // IQAC's composer targets HOD/HR/Placement directly (e.g. NAAC
       // documentation requests, audit follow-ups) — same oversight-tier
       // posting capability as its 'teachers' broadcast above.
-      context.role !== ROLES.IQAC
+      context.role !== ROLES.IQAC &&
+      // HR & Payroll targets specific roles directly too (e.g. "All HoDs"
+      // for an appraisal-cycle reminder) — same shape as IQAC/Billing above.
+      context.role !== ROLES.HR_PAYROLL
     ) {
       throw new ForbiddenException({
         message: 'You are not permitted to target announcements by role',
@@ -1920,7 +2002,7 @@ export class AnnouncementsService {
     try {
       return await this.prisma.students.findUnique({
         where: { user_id: userId },
-        select: { class_id: true },
+        select: { id: true, class_id: true, student_type: true },
       });
     } catch (err) {
       this.logger.error('DB error during student lookup', err);
@@ -1928,6 +2010,60 @@ export class AnnouncementsService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
+    }
+  }
+
+  /**
+   * Ids of announcements scoped to `studentType` via the raw
+   * `audience_student_type` column proposed in query.md #7. Not a Prisma
+   * field on `announcements` — that table is read elsewhere via
+   * `include`-based queries that implicitly select every column, so adding
+   * it to schema.prisma would break those reads until the column exists.
+   * A raw lookup instead: resolves to [] (no match, not an error) until the
+   * column is migrated, exactly like the write side in
+   * HostelAnnouncementsService.create().
+   */
+  private async getHostelAudienceAnnouncementIds(
+    studentType: string,
+  ): Promise<number[]> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM announcements WHERE audience_student_type = ${studentType}::student_type_enum
+      `;
+      return rows.map((r) => r.id);
+    } catch (err) {
+      this.logger.warn(
+        `audience_student_type unavailable (see query.md #7): ${String(err)}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Whether this student has their own `student_entrepreneurship` row, and
+   * whether it's incubated — resolves the 3 EDC-specific `target_audience`
+   * values (see the EDC branch of create()). `student_entrepreneurship.
+   * student_id` is `@unique`, i.e. this schema has no concept of a
+   * "co-founder" who isn't themselves the row's owner (team members are
+   * free-text notes, not linked student accounts) — so 'edc_founders' and
+   * 'edc_all_entrepreneurs' are necessarily the same recipient set; there is
+   * no data-model distinction between them to enforce.
+   */
+  private async getEdcAudience(
+    studentId: number,
+  ): Promise<{ isEntrepreneur: boolean; isIncubated: boolean }> {
+    try {
+      const row = await this.prisma.student_entrepreneurship.findUnique({
+        where: { student_id: studentId },
+        select: { is_incubated: true },
+      });
+      return {
+        isEntrepreneur: row !== null,
+        isIncubated: row?.is_incubated ?? false,
+      };
+    } catch (err) {
+      this.logger.error('DB error while resolving EDC audience', err);
+      return { isEntrepreneur: false, isIncubated: false };
     }
   }
 

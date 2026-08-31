@@ -15,6 +15,10 @@ function toRoomResponse(room: {
   room_number: string;
   room_type_id: number;
   capacity: number;
+  block_id: number | null;
+  floor_id: number | null;
+  hostel_blocks: { id: number; name: string } | null;
+  hostel_floors: { id: number; name: string } | null;
   _count: { student_hostel_mapping: number };
 }) {
   return {
@@ -23,6 +27,8 @@ function toRoomResponse(room: {
     room_number: room.room_number,
     room_type_id: room.room_type_id,
     capacity: room.capacity,
+    block: room.hostel_blocks,
+    floor: room.hostel_floors,
     occupied: room._count.student_hostel_mapping,
     vacant: room.capacity - room._count.student_hostel_mapping,
   };
@@ -46,6 +52,18 @@ export class HostelRoomService {
   async create(dto: CreateHostelRoomDto) {
     await this.assertHostelExists(dto.hostel_id);
     await this.assertRoomTypeExists(dto.room_type_id);
+    if (dto.block_id) {
+      await this.assertBlockExists(dto.block_id, dto.hostel_id);
+    }
+    if (dto.floor_id) {
+      if (!dto.block_id) {
+        throw new ConflictException({
+          message: 'A block must be selected before a floor can be assigned',
+          errorCode: 'HOSTEL_ROOM_FLOOR_NEEDS_BLOCK',
+        });
+      }
+      await this.assertFloorExists(dto.floor_id, dto.block_id);
+    }
 
     const existing = await this.findByHostelAndRoomNumber(
       dto.hostel_id,
@@ -67,8 +85,14 @@ export class HostelRoomService {
           room_number: dto.room_number,
           room_type_id: dto.room_type_id,
           capacity: dto.capacity,
+          block_id: dto.block_id,
+          floor_id: dto.floor_id,
         },
-        include: { _count: { select: { student_hostel_mapping: true } } },
+        include: {
+          hostel_blocks: { select: { id: true, name: true } },
+          hostel_floors: { select: { id: true, name: true } },
+          _count: { select: { student_hostel_mapping: true } },
+        },
       });
       return toRoomResponse(room);
     } catch (err) {
@@ -83,11 +107,18 @@ export class HostelRoomService {
   /**
    * GET /hostel-rooms?hostel_id=
    */
-  async findAll(hostelId?: number) {
+  async findAll(hostelId?: number, blockId?: number) {
     try {
       const rooms = await this.prisma.hostel_rooms.findMany({
-        where: hostelId ? { hostel_id: hostelId } : {},
-        include: { _count: { select: { student_hostel_mapping: true } } },
+        where: {
+          ...(hostelId ? { hostel_id: hostelId } : {}),
+          ...(blockId ? { block_id: blockId } : {}),
+        },
+        include: {
+          hostel_blocks: { select: { id: true, name: true } },
+          hostel_floors: { select: { id: true, name: true } },
+          _count: { select: { student_hostel_mapping: true } },
+        },
         orderBy: { room_number: 'asc' },
       });
       return rooms.map(toRoomResponse);
@@ -146,6 +177,24 @@ export class HostelRoomService {
       await this.assertRoomTypeExists(dto.room_type_id);
     }
 
+    if (dto.block_id) {
+      await this.assertBlockExists(
+        dto.block_id,
+        dto.hostel_id ?? room.hostel_id,
+      );
+    }
+
+    if (dto.floor_id) {
+      const effectiveBlockId = dto.block_id ?? room.block_id;
+      if (!effectiveBlockId) {
+        throw new ConflictException({
+          message: 'A block must be selected before a floor can be assigned',
+          errorCode: 'HOSTEL_ROOM_FLOOR_NEEDS_BLOCK',
+        });
+      }
+      await this.assertFloorExists(dto.floor_id, effectiveBlockId);
+    }
+
     if (dto.room_number || dto.hostel_id) {
       const effectiveHostelId = dto.hostel_id ?? room.hostel_id;
       const effectiveRoomNumber = dto.room_number ?? room.room_number;
@@ -171,8 +220,14 @@ export class HostelRoomService {
           room_number: dto.room_number,
           room_type_id: dto.room_type_id,
           capacity: dto.capacity,
+          block_id: dto.block_id,
+          floor_id: dto.floor_id,
         },
-        include: { _count: { select: { student_hostel_mapping: true } } },
+        include: {
+          hostel_blocks: { select: { id: true, name: true } },
+          hostel_floors: { select: { id: true, name: true } },
+          _count: { select: { student_hostel_mapping: true } },
+        },
       });
       return toRoomResponse(updated);
     } catch (err) {
@@ -282,11 +337,73 @@ export class HostelRoomService {
     }
   }
 
+  private async assertBlockExists(blockId: number, hostelId: number) {
+    let block: { hostel_id: number } | null;
+    try {
+      block = await this.prisma.hostel_blocks.findUnique({
+        where: { id: blockId },
+        select: { hostel_id: true },
+      });
+    } catch (err) {
+      this.logger.error('DB error during hostel block lookup', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (!block) {
+      throw new NotFoundException({
+        message: 'Hostel block not found',
+        errorCode: 'HOSTEL_BLOCK_NOT_FOUND',
+      });
+    }
+    if (block.hostel_id !== hostelId) {
+      throw new ConflictException({
+        message: 'This block belongs to a different hostel',
+        errorCode: 'HOSTEL_BLOCK_HOSTEL_MISMATCH',
+      });
+    }
+  }
+
+  private async assertFloorExists(floorId: number, blockId: number) {
+    let floor: { block_id: number } | null;
+    try {
+      floor = await this.prisma.hostel_floors.findUnique({
+        where: { id: floorId },
+        select: { block_id: true },
+      });
+    } catch (err) {
+      this.logger.error('DB error during hostel floor lookup', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    if (!floor) {
+      throw new NotFoundException({
+        message: 'Hostel floor not found',
+        errorCode: 'HOSTEL_FLOOR_NOT_FOUND',
+      });
+    }
+    if (floor.block_id !== blockId) {
+      throw new ConflictException({
+        message: 'This floor belongs to a different block',
+        errorCode: 'HOSTEL_FLOOR_BLOCK_MISMATCH',
+      });
+    }
+  }
+
   private async findById(id: number) {
     try {
       return await this.prisma.hostel_rooms.findUnique({
         where: { id },
-        include: { _count: { select: { student_hostel_mapping: true } } },
+        include: {
+          hostel_blocks: { select: { id: true, name: true } },
+          hostel_floors: { select: { id: true, name: true } },
+          _count: { select: { student_hostel_mapping: true } },
+        },
       });
     } catch (err) {
       this.logger.error('DB error during hostel room lookup', err);

@@ -5,6 +5,16 @@ export class ExecutiveKpisDto {
   collectionPercentage: number;
   pendingEducationLoanDD: number;
   activeFeeStructures: number;
+  /**
+   * Sum of fee_payments.amount_paid whose payment_date falls within the
+   * caller's `from`/`to` query params — undefined when neither is passed
+   * (every existing caller). totalCollected/collectionPercentage above stay
+   * all-time on purpose: the Admin dashboard's period toggle (Today/This
+   * term/This year) needs a genuinely windowed figure without disturbing
+   * the cumulative "% of demand collected" metric Billing already relies on.
+   */
+  collectedInRange?: string;
+  paymentCountInRange?: number;
 }
 
 export class DemandVsCollectionDto {
