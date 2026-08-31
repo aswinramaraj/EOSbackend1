@@ -26,8 +26,16 @@ export class PrincipalCalendarService {
    * AcademicCalendarEventsService.findAll() rather than a new query.
    */
   async eventsForMonth(year: number, month: number) {
-    const monthStart = new Date(Date.UTC(year, month - 1, 1));
-    const monthEnd = new Date(Date.UTC(year, month, 0));
+    // findAll() now returns event_date as a plain "YYYY-MM-DD" string (see
+    // AcademicCalendarEventsService.serializeEvent) — ISO date strings
+    // compare lexicographically the same as their Date equivalents compare
+    // chronologically, so this stays a straight range filter.
+    const monthStart = new Date(Date.UTC(year, month - 1, 1))
+      .toISOString()
+      .slice(0, 10);
+    const monthEnd = new Date(Date.UTC(year, month, 0))
+      .toISOString()
+      .slice(0, 10);
     const events = await this.academicCalendarEventsService.findAll();
     return events.filter(
       (e) => e.event_date >= monthStart && e.event_date <= monthEnd,
