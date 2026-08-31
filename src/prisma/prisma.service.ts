@@ -1,21 +1,15 @@
 import 'dotenv/config';
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { PrismaClient } from '../../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool, type PoolClient } from 'pg';
 
 const POOL_SIZE = 20;
-
-/**
- * Reads a numeric setting from DATABASE_URL's query string so the pool can be
- * tuned without a code change. Previously `max` was hardcoded here, which
- * silently overrode `connection_limit=` in the URL — changing the URL appeared
- * to do nothing.
- */
-function urlParam(connectionString: string, key: string): number | undefined {
-  const match = new RegExp(`[?&]${key}=(\\d+)`).exec(connectionString);
-  return match ? Number(match[1]) : undefined;
-}
 
 @Injectable()
 export class PrismaService
@@ -58,9 +52,29 @@ export class PrismaService
     // a pool this small under real concurrent load — raised so a
     // `$transaction` waits out brief contention instead of failing with a
     // 500 the moment every connection is briefly busy.
-    super({ adapter, transactionOptions: { maxWait: 10_000, timeout: 15_000 } });
+    super({
+      adapter,
+      transactionOptions: { maxWait: 10_000, timeout: 15_000 },
+    });
 
     this.pool = pool;
+
+    // node-postgres emits 'error' on the *pool* (not the individual client)
+    // when an already-idle, checked-in connection is severed by the network
+    // or by the far side (Supabase's pooler recycling a connection under
+    // it). With no listener registered, Node's default handling for an
+    // unhandled EventEmitter 'error' event is to throw — which crashes the
+    // entire process on what is otherwise a routine, recoverable blip (the
+    // pool transparently replaces the dead connection on the next checkout;
+    // see https://node-postgres.com/apis/pool#error). Logging here is the
+    // fix, not a no-op — it's what turns "whole server crashes" into "one
+    // line in the log."
+    this.pool.on('error', (err) => {
+      this.logger.error(
+        'Idle Postgres connection in the pool was terminated unexpectedly — pool will replace it automatically.',
+        err,
+      );
+    });
   }
 
   async onModuleInit() {
