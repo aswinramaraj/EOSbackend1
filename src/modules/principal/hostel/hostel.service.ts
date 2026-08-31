@@ -28,10 +28,14 @@ export class PrincipalHostelService {
 
   private async curfewTime(): Promise<string | null> {
     try {
+      // Cast to text in SQL — curfew_time is a `time` column, and Prisma
+      // otherwise returns it as a Date anchored at 1970-01-01, which
+      // serializes to a full ISO string and breaks the frontend's "HH:MM"
+      // parsing (rendered as "NaN:MM").
       const rows = await this.prisma.$queryRaw<
         { curfew_time: string | null }[]
       >`
-        SELECT curfew_time FROM hostel_settings LIMIT 1
+        SELECT curfew_time::text AS curfew_time FROM hostel_settings LIMIT 1
       `;
       return rows[0]?.curfew_time ?? null;
     } catch {
