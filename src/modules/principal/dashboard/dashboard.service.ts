@@ -279,12 +279,13 @@ export class PrincipalDashboardService {
    * logic — deferred rather than guessed.
    */
   async insights() {
-    const [placement, attentionFlags, campus] = await Promise.all([
+    const [placement, attentionFlags, campus, employee] = await Promise.all([
       this.placementSummary(),
       this.attentionFlags(),
       this.campusInfrastructure(),
+      this.employeeSnapshot(),
     ]);
-    return { placement, attention_flags: attentionFlags, campus };
+    return { placement, attention_flags: attentionFlags, campus, employee };
   }
 
   /**
@@ -607,6 +608,48 @@ export class PrincipalDashboardService {
         title: `Course completion behind in ${d.code}`,
         description: `${d.percentage}% of planned sessions covered so far`,
       }));
+  }
+
+  /**
+   * Employee-category snapshot (attendance/leave/appraisals) — the same
+   * grouping HoD's and Secretary's sidebar "Employee" nav section already
+   * uses, condensed into one institution-wide dashboard card instead of a
+   * full set of new pages. `pending_appraisals` mirrors HrDashboardService's
+   * own institution-wide count (appraisal_requests awaiting HR action, past
+   * HoD review) so this figure matches what HR Payroll's own dashboard shows.
+   */
+  private async employeeSnapshot() {
+    const today = startOfToday();
+
+    const [facultyTotalActive, facultyDailyRows, pendingAppraisals] =
+      await Promise.all([
+        this.prisma.faculty.count({ where: { status: 'active' } }),
+        this.prisma.faculty_daily_attendance.findMany({
+          where: { attendance_date: today },
+          select: { status: true },
+        }),
+        this.prisma.appraisal_requests.count({
+          where: { status: { in: ['hod_reviewed', 'hr_scored'] } },
+        }),
+      ]);
+
+    const reportedToday = facultyDailyRows.filter((r) =>
+      ['full_day', 'half_day', 'on_duty'].includes(r.status),
+    ).length;
+    const onLeaveToday = facultyDailyRows.filter(
+      (r) => r.status === 'on_leave',
+    ).length;
+
+    return {
+      total_active: facultyTotalActive,
+      attendance_marked_today: facultyDailyRows.length > 0,
+      attendance_percentage_today:
+        facultyDailyRows.length > 0
+          ? Math.round((reportedToday / facultyDailyRows.length) * 1000) / 10
+          : null,
+      on_leave_today: onLeaveToday,
+      pending_appraisals: pendingAppraisals,
+    };
   }
 
   private async attentionFlags() {

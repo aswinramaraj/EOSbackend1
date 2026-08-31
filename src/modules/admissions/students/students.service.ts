@@ -17,6 +17,9 @@ import { paginate } from 'src/common/dto/pagination.dto';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { AdminUpdateStudentDto } from './dto/admin-update-student.dto';
 import { AdminAttendanceSummaryQueryDto } from './dto/admin-attendance-summary-query.dto';
+import { AttendanceRiskQueryDto } from './dto/attendance-risk-query.dto';
+import type { NotifyEntityDto } from 'src/common/dto/notify-entity.dto';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { ResetStudentPasswordDto } from './dto/reset-student-password.dto';
 import { UpdateStudentAddressesDto } from './dto/update-student-addresses.dto';
 import { UpdateStudentContactsDto } from './dto/update-student-contacts.dto';
@@ -121,6 +124,7 @@ export class StudentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** GET /students (Admin only) — paginated, searchable, filterable. */
@@ -136,6 +140,14 @@ export class StudentsService {
 
     if (query.department_id) {
       where.courses = { department_id: query.department_id };
+    }
+
+    if (query.ids && query.ids.length > 0) {
+      where.id = { in: query.ids };
+    }
+
+    if (query.final_year === 'true') {
+      where.classes = { current_semester: { gte: 7 } };
     }
 
     if (query.q) {
@@ -177,6 +189,50 @@ export class StudentsService {
     return paginate(rows.map(toStudentDto), total, query);
   }
 
+  /**
+   * GET /students/attendance-risk-ids?threshold=&from=&to= (Admin only).
+   *
+   * The ids of every ACTIVE student whose overall attendance % is below
+   * `threshold` (default 75) — a single grouped aggregate over
+   * attendance_records (one SQL GROUP BY, not a per-student round trip),
+   * so this stays cheap regardless of roll size. Meant to be fed straight
+   * into GET /students?ids=... for the Admin console's "Attendance risk"
+   * view, the same way /finance-overview's topOutstandingStudents already
+   * feeds the "Fee defaulters" view — both real filters, both computed via
+   * one bulk query instead of N+1 per-student calls.
+   */
+  async getAttendanceRiskStudentIds(query: AttendanceRiskQueryDto) {
+    const threshold = query.threshold ?? 75;
+
+    const grouped = await this.prisma.attendance_records.groupBy({
+      by: ['student_id', 'status'],
+      where: {
+        students: { status: 'active' },
+        ...((query.from || query.to) && {
+          attendance_date: {
+            ...(query.from && { gte: new Date(query.from) }),
+            ...(query.to && { lte: new Date(query.to) }),
+          },
+        }),
+      },
+      _count: { _all: true },
+    });
+
+    const totalsByStudent = new Map<number, { total: number; present: number }>();
+    for (const row of grouped) {
+      const entry = totalsByStudent.get(row.student_id) ?? { total: 0, present: 0 };
+      entry.total += row._count._all;
+      if (row.status === 'present') entry.present += row._count._all;
+      totalsByStudent.set(row.student_id, entry);
+    }
+
+    const ids = [...totalsByStudent.entries()]
+      .filter(([, { total, present }]) => total > 0 && (present / total) * 100 < threshold)
+      .map(([studentId]) => studentId);
+
+    return { ids, threshold };
+  }
+
   /** GET /students/:id (Admin only) */
   async findOne(id: number) {
     const row = await this.prisma.students.findUnique({
@@ -190,6 +246,38 @@ export class StudentsService {
       });
     }
     return toStudentDto(row);
+  }
+
+  /**
+   * POST /students/:id/notify (Admin only) — an ad-hoc message pushed
+   * straight to this student's own notification inbox, via the same
+   * notify() every real notification producer in this app calls. Mirrors
+   * FacultyService.notifyFaculty exactly; kept as its own method (not a
+   * shared cross-entity helper) since resolving "this entity's user_id"
+   * is genuinely different per table, matching how every other per-entity
+   * method on this service already works.
+   */
+  async notifyStudent(studentId: number, dto: NotifyEntityDto) {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { user_id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    await this.notifications.notify({
+      user_id: student.user_id,
+      title: dto.title,
+      message: dto.message,
+      related_entity_type: 'student',
+      related_entity_id: studentId,
+    });
+
+    return { sent: true };
   }
 
   /**

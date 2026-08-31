@@ -35,6 +35,8 @@ const RESIDENT_INCLUDE = {
         include: {
           hostels: { select: { id: true, name: true, code: true } },
           hostel_room_types: { select: { name: true } },
+          hostel_blocks: { select: { id: true, name: true } },
+          hostel_floors: { select: { id: true, name: true } },
         },
       },
     },
@@ -92,7 +94,18 @@ function toResidentResponse(
     hostel: hostel
       ? { id: hostel.id, name: hostel.name, code: hostel.code }
       : null,
-    room: room ? { id: room.id, room_number: room.room_number } : null,
+    room: room
+      ? {
+          id: room.id,
+          room_number: room.room_number,
+          block: room.hostel_blocks
+            ? { id: room.hostel_blocks.id, name: room.hostel_blocks.name }
+            : null,
+          floor: room.hostel_floors
+            ? { id: room.hostel_floors.id, name: room.hostel_floors.name }
+            : null,
+        }
+      : null,
     sharing: room?.hostel_room_types?.name ?? null,
     guardian_name: family?.father_name ?? family?.mother_name ?? null,
     guardian_phone: family?.father_mobile ?? family?.mother_mobile ?? null,
@@ -117,13 +130,16 @@ export class ResidentsService {
    * library module's "members" list).
    */
   async findAll(dto: SearchResidentsDto) {
-    const { q, hostel_id, student_id, page = 1, page_size = 20 } = dto;
+    const { q, hostel_id, room_id, student_id, page = 1, page_size = 20 } = dto;
 
     const where: Prisma.studentsWhereInput = {
       ...(student_id !== undefined && { id: student_id }),
-      student_hostel_mapping: hostel_id
-        ? { hostel_rooms: { hostel_id } }
-        : { isNot: null },
+      student_hostel_mapping:
+        room_id !== undefined
+          ? { room_id }
+          : hostel_id
+            ? { hostel_rooms: { hostel_id } }
+            : { isNot: null },
     };
 
     if (student_id) {

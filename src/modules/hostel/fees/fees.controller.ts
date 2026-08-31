@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -31,5 +31,15 @@ export class HostelFeesController {
     const wardenHostelId = await resolveWardenHostelId(this.prisma, user.sub);
     if (wardenHostelId != null) query.hostel_id = wardenHostelId;
     return this.feesService.findAll(query);
+  }
+
+  /**
+   * POST /hostel/fees/reconcile — links every hostel resident to the real
+   * hostel fee structure and generates their fee demand if missing. Idempotent;
+   * safe to call again after new residents are allocated to rooms.
+   */
+  @Post('reconcile')
+  async reconcile() {
+    return this.feesService.reconcileFeeAssignments();
   }
 }

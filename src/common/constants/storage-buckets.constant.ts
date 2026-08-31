@@ -16,4 +16,8 @@
 export const STORAGE_BUCKETS = {
   STUDENT_PHOTOS: 'student_photos',
   STUDENT_DOCUMENTS: 'student_documents',
+  /** Not yet confirmed to exist in the Supabase project — created on first
+   * real upload attempt if StorageService's upload() doesn't auto-create it;
+   * see VenuesService.uploadPhoto. */
+  VENUE_PHOTOS: 'venue_photos',
 } as const;

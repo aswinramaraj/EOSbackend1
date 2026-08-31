@@ -112,6 +112,7 @@ import { AssignmentsModule } from './modules/faculty/assignments/assignments.mod
 import { AttendanceModule } from './modules/faculty/attendance/attendance.module';
 import { AttendanceCvModule } from './modules/faculty/attendance-cv/attendance-cv.module';
 import { ClassMentorsModule } from './modules/faculty/class-mentors/class-mentors.module';
+import { AdvisorExaminationsModule } from './modules/faculty/advisor-examinations/advisor-examinations.module';
 import { ExamMarksModule } from './modules/faculty/exam-marks/exam-marks.module';
 import { FacultyAttendanceModule } from './modules/faculty/faculty-attendance/faculty-attendance.module';
 import { FacultyFilesModule } from './modules/faculty/faculty-files/faculty-files.module';
@@ -160,6 +161,7 @@ import { BooksModule } from './modules/library/books/books.module';
 import { BorrowRecordsModule } from './modules/library/borrow-records/borrow-records.module';
 import { EResourcesModule } from './modules/library/e-resources/e-resources.module';
 import { StudentLookupModule } from './modules/library/student-lookup/student-lookup.module';
+import { FacultyLookupModule } from './modules/library/faculty-lookup/faculty-lookup.module';
 import { LibraryDashboardModule } from './modules/library/dashboard/dashboard.module';
 import { MembersModule } from './modules/library/members/members.module';
 import { LibrarySettingsModule } from './modules/library/settings/settings.module';
@@ -244,6 +246,9 @@ import { AlumniModule } from './modules/alumni/alumni.module';
 import { AchievementsModule } from './modules/achievements/achievements.module';
 
 import { HostelsModule } from './modules/hostel/hostels/hostels.module';
+import { HostelBlocksModule } from './modules/hostel/hostel-blocks/hostel-blocks.module';
+import { HostelWardensModule } from './modules/hostel/hostel-wardens/hostel-wardens.module';
+import { HostelFloorsModule } from './modules/hostel/hostel-floors/hostel-floors.module';
 import { ResidentsModule } from './modules/hostel/residents/residents.module';
 import { OutingsModule } from './modules/hostel/outings/outings.module';
 import { LeaveRequestsModule } from './modules/hostel/leave-requests/leave-requests.module';
@@ -371,6 +376,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     AttendanceModule,
     AttendanceCvModule,
     ClassMentorsModule,
+    AdvisorExaminationsModule,
     ExamMarksModule,
     FacultyAttendanceModule,
     FacultyFilesModule,
@@ -419,6 +425,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     BorrowRecordsModule,
     EResourcesModule,
     StudentLookupModule,
+    FacultyLookupModule,
     LibraryDashboardModule,
     MembersModule,
     LibrarySettingsModule,
@@ -502,6 +509,9 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     AchievementsModule,
 
     HostelsModule,
+    HostelBlocksModule,
+    HostelWardensModule,
+    HostelFloorsModule,
     ResidentsModule,
     OutingsModule,
     LeaveRequestsModule,

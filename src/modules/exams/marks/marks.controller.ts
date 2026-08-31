@@ -42,9 +42,12 @@ export class MarksController {
   // panel) always scopes to one student_id; FACULTY kept alongside ADMIN
   // since they already have write access to marks via this same controller.
   // COE added read-only, the same @Roles()-guard pattern used everywhere
-  // else in this codebase (e.g. HOD/faculty/HR routes).
+  // else in this codebase (e.g. HOD/faculty/HR routes). HOD, PRINCIPAL and
+  // SECRETARY added read-only so the shared SubjectMarksTable (student-profile
+  // consolidation) can source real per-subject/per-exam-type marks from this
+  // one endpoint for every role instead of each building its own query.
   @Get()
-  @Roles(ROLES.ADMIN, ROLES.FACULTY, ROLES.COE)
+  @Roles(ROLES.ADMIN, ROLES.FACULTY, ROLES.COE, ROLES.HOD, ROLES.PRINCIPAL, ROLES.SECRETARY)
   async findAll(@Query() query: ListExamMarksQueryDto) {
     const marks = await this.marksService.findAll(query);
     return ApiResponse.ok(marks, 'Marks fetched successfully.');

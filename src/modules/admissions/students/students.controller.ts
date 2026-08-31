@@ -2,6 +2,8 @@ import {
   BadRequestException,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Patch,
   Post,
   Delete,
@@ -22,6 +24,10 @@ import { StudentsService } from './students.service';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { AdminUpdateStudentDto } from './dto/admin-update-student.dto';
 import { AdminAttendanceSummaryQueryDto } from './dto/admin-attendance-summary-query.dto';
+import { AttendanceRiskQueryDto } from './dto/attendance-risk-query.dto';
+import { NotifyEntityDto } from 'src/common/dto/notify-entity.dto';
+import { ListStudentIdCardStatusQueryDto } from './dto/list-student-id-card-status-query.dto';
+import { StudentIdCardService } from './student-id-card.service';
 import { ResetStudentPasswordDto } from './dto/reset-student-password.dto';
 import { UpdateStudentAddressesDto } from './dto/update-student-addresses.dto';
 import { UpdateStudentContactsDto } from './dto/update-student-contacts.dto';
@@ -41,16 +47,38 @@ const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 @Roles(ROLES.ADMIN)
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class StudentsController {
-  constructor(private readonly studentsService: StudentsService) {}
+  constructor(
+    private readonly studentsService: StudentsService,
+    private readonly studentIdCardService: StudentIdCardService,
+  ) {}
 
   @Get()
   findAll(@Query() query: ListStudentsQueryDto) {
     return this.studentsService.findAll(query);
   }
 
+  /** Declared before ':id' so this literal segment isn't captured as an id. */
+  @Get('attendance-risk-ids')
+  getAttendanceRiskStudentIds(@Query() query: AttendanceRiskQueryDto) {
+    return this.studentsService.getAttendanceRiskStudentIds(query);
+  }
+
+  /** Declared before ':id' so this literal segment isn't captured as an id. */
+  @Get('id-card/status')
+  getIdCardBulkStatus(@Query() query: ListStudentIdCardStatusQueryDto) {
+    return this.studentIdCardService.getBulkStatus(query.student_ids);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.studentsService.findOne(id);
+  }
+
+  /** POST /students/:id/notify — sends an ad-hoc message to this student's notification inbox. */
+  @Post(':id/notify')
+  @HttpCode(HttpStatus.OK)
+  notify(@Param('id', ParseIntPipe) id: number, @Body() dto: NotifyEntityDto) {
+    return this.studentsService.notifyStudent(id, dto);
   }
 
   @Get(':id/attendance-summary')
@@ -188,6 +216,16 @@ export class StudentsController {
     @CurrentUser() admin: JwtPayload,
   ) {
     return this.studentsService.resetPassword(id, dto, admin.sub);
+  }
+
+  /** POST /students/:id/id-card/issue — logs a new ID card issuance for this student. */
+  @Post(':id/id-card/issue')
+  @HttpCode(HttpStatus.CREATED)
+  issueIdCard(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.studentIdCardService.issue(id, admin.sub);
   }
 
   @Patch(':id')

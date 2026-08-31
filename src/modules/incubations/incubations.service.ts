@@ -15,7 +15,10 @@ interface StudentSummarySource {
   student_id_no: string;
   soa_applications: { first_name: string; last_name: string | null } | null;
   users: { email: string };
-  classes: { section: string; departments: { code: string; name: string } } | null;
+  classes: {
+    section: string;
+    departments: { code: string; name: string };
+  } | null;
 }
 
 function resolveStudentDisplayName(student: StudentSummarySource): string {
@@ -35,7 +38,12 @@ const INCUBATION_INCLUDE = {
           student_id_no: true,
           soa_applications: { select: { first_name: true, last_name: true } },
           users: { select: { email: true } },
-          classes: { select: { section: true, departments: { select: { code: true, name: true } } } },
+          classes: {
+            select: {
+              section: true,
+              departments: { select: { code: true, name: true } },
+            },
+          },
         },
       },
     },
@@ -67,7 +75,9 @@ export class IncubationsService {
       seat: row.seat,
       incubated_since: row.incubated_since,
       mentor_faculty_id: row.mentor_faculty_id,
-      mentor_faculty_name: row.faculty ? `${row.faculty.first_name} ${row.faculty.last_name}` : null,
+      mentor_faculty_name: row.faculty
+        ? `${row.faculty.first_name} ${row.faculty.last_name}`
+        : null,
       review_attendance_note: row.review_attendance_note,
       last_review_note: row.last_review_note,
       next_review_date: row.next_review_date,
@@ -98,7 +108,7 @@ export class IncubationsService {
     };
   }
 
-  /** GET /me/incubations (EDC Coordinator only) — every incubated venture, real time. */
+  /** GET /me/incubations (EDC Coordinator, Placement) — every incubated venture, real time. Placement reads this institution-wide for its own "who's interning at EDC" oversight, same as it gets institution-wide oversight everywhere else — no scoping needed for that role. */
   async findAll() {
     try {
       const rows = await this.prisma.incubations.findMany({
@@ -115,10 +125,61 @@ export class IncubationsService {
     }
   }
 
+  /**
+   * GET /me/incubations/mine (Faculty/Advisor, read-only) — only ventures
+   * this faculty mentors, same union of "class-mentor for the venture's
+   * class" OR "directly assigned as this venture's mentor_faculty_id" that
+   * StudentEntrepreneurshipService.findAllForMentor() already uses for the
+   * EDC tab on the Advisor dashboard — kept consistent rather than
+   * re-deriving a different scoping rule for the same relationship.
+   */
+  async findAllForMentor(userId: number) {
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { user_id: userId },
+    });
+    if (!faculty) return [];
+
+    const mentorClasses = await this.prisma.class_mentors.findMany({
+      where: { faculty_id: faculty.id },
+      select: { class_id: true },
+    });
+    const classIds = mentorClasses.map((m) => m.class_id);
+
+    try {
+      const rows = await this.prisma.incubations.findMany({
+        where: {
+          student_entrepreneurship: {
+            OR: [
+              ...(classIds.length > 0
+                ? [{ students: { class_id: { in: classIds } } }]
+                : []),
+              { mentor_faculty_id: faculty.id },
+            ],
+          },
+        },
+        include: INCUBATION_INCLUDE,
+        orderBy: { created_at: 'desc' },
+      });
+      return rows.map((row) => this.toResponse(row));
+    } catch (err) {
+      this.logger.error('DB error listing incubations for mentor', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
   async findOne(id: number) {
-    const row = await this.prisma.incubations.findUnique({ where: { id }, include: INCUBATION_INCLUDE });
+    const row = await this.prisma.incubations.findUnique({
+      where: { id },
+      include: INCUBATION_INCLUDE,
+    });
     if (!row) {
-      throw new NotFoundException({ message: 'Incubation record not found', errorCode: 'INCUBATION_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Incubation record not found',
+        errorCode: 'INCUBATION_NOT_FOUND',
+      });
     }
     return this.toResponse(row);
   }
@@ -129,7 +190,10 @@ export class IncubationsService {
       where: { id: dto.student_entrepreneurship_id },
     });
     if (!venture) {
-      throw new NotFoundException({ message: 'Venture not found', errorCode: 'VENTURE_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Venture not found',
+        errorCode: 'VENTURE_NOT_FOUND',
+      });
     }
     const existing = await this.prisma.incubations.findUnique({
       where: { student_entrepreneurship_id: dto.student_entrepreneurship_id },
@@ -147,11 +211,15 @@ export class IncubationsService {
           student_entrepreneurship_id: dto.student_entrepreneurship_id,
           intake_label: dto.intake_label,
           seat: dto.seat,
-          incubated_since: dto.incubated_since ? new Date(dto.incubated_since) : undefined,
+          incubated_since: dto.incubated_since
+            ? new Date(dto.incubated_since)
+            : undefined,
           mentor_faculty_id: dto.mentor_faculty_id,
           review_attendance_note: dto.review_attendance_note,
           last_review_note: dto.last_review_note,
-          next_review_date: dto.next_review_date ? new Date(dto.next_review_date) : undefined,
+          next_review_date: dto.next_review_date
+            ? new Date(dto.next_review_date)
+            : undefined,
           grant_note: dto.grant_note,
           services_note: dto.services_note,
           created_by_user_id: createdByUserId,
@@ -183,9 +251,14 @@ export class IncubationsService {
 
   /** PATCH /me/incubations/:id — periodic review updates. */
   async update(id: number, dto: UpdateIncubationDto) {
-    const existing = await this.prisma.incubations.findUnique({ where: { id } });
+    const existing = await this.prisma.incubations.findUnique({
+      where: { id },
+    });
     if (!existing) {
-      throw new NotFoundException({ message: 'Incubation record not found', errorCode: 'INCUBATION_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Incubation record not found',
+        errorCode: 'INCUBATION_NOT_FOUND',
+      });
     }
 
     try {
@@ -197,7 +270,9 @@ export class IncubationsService {
           mentor_faculty_id: dto.mentor_faculty_id,
           review_attendance_note: dto.review_attendance_note,
           last_review_note: dto.last_review_note,
-          next_review_date: dto.next_review_date ? new Date(dto.next_review_date) : undefined,
+          next_review_date: dto.next_review_date
+            ? new Date(dto.next_review_date)
+            : undefined,
           grant_note: dto.grant_note,
           services_note: dto.services_note,
           status: dto.status,
@@ -228,9 +303,14 @@ export class IncubationsService {
    * Milestones cascade automatically (incubation_milestones.incubation_id
    * is onDelete: Cascade). Also clears the venture's is_incubated flag. */
   async remove(id: number) {
-    const existing = await this.prisma.incubations.findUnique({ where: { id } });
+    const existing = await this.prisma.incubations.findUnique({
+      where: { id },
+    });
     if (!existing) {
-      throw new NotFoundException({ message: 'Incubation record not found', errorCode: 'INCUBATION_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Incubation record not found',
+        errorCode: 'INCUBATION_NOT_FOUND',
+      });
     }
     try {
       await this.prisma.incubations.delete({ where: { id } });
@@ -250,9 +330,14 @@ export class IncubationsService {
 
   /** POST /me/incubations/:id/milestones */
   async addMilestone(incubationId: number, dto: CreateMilestoneDto) {
-    const incubation = await this.prisma.incubations.findUnique({ where: { id: incubationId } });
+    const incubation = await this.prisma.incubations.findUnique({
+      where: { id: incubationId },
+    });
     if (!incubation) {
-      throw new NotFoundException({ message: 'Incubation record not found', errorCode: 'INCUBATION_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Incubation record not found',
+        errorCode: 'INCUBATION_NOT_FOUND',
+      });
     }
     try {
       await this.prisma.incubation_milestones.create({
@@ -277,9 +362,14 @@ export class IncubationsService {
 
   /** PATCH /me/incubations/milestones/:id */
   async updateMilestone(milestoneId: number, dto: UpdateMilestoneDto) {
-    const existing = await this.prisma.incubation_milestones.findUnique({ where: { id: milestoneId } });
+    const existing = await this.prisma.incubation_milestones.findUnique({
+      where: { id: milestoneId },
+    });
     if (!existing) {
-      throw new NotFoundException({ message: 'Milestone not found', errorCode: 'MILESTONE_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Milestone not found',
+        errorCode: 'MILESTONE_NOT_FOUND',
+      });
     }
     try {
       await this.prisma.incubation_milestones.update({

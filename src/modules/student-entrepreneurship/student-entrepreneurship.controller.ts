@@ -91,3 +91,18 @@ export class MeEdcEntrepreneurshipController {
     return this.service.removeForCoordinator(id);
   }
 }
+
+/** Student-facing — a student's own venture, if they have one. Real-time,
+ * same shape as the Coordinator's read (see StudentEntrepreneurshipService.
+ * findForStudent). */
+@Controller('me/entrepreneurship')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(ROLES.STUDENT)
+export class MeEntrepreneurshipController {
+  constructor(private readonly service: StudentEntrepreneurshipService) {}
+
+  @Get()
+  findMine(@CurrentUser() user: JwtPayload) {
+    return this.service.findForStudent(user.sub);
+  }
+}

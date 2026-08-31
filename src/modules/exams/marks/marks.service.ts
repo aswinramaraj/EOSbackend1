@@ -131,12 +131,16 @@ export class MarksService {
               id: true,
               exam_id: true,
               subject_id: true,
+              is_published: true,
+              published_at: true,
               exams: {
                 select: {
                   id: true,
                   academic_year: true,
                   semester: true,
-                  exam_types: { select: { name: true } },
+                  exam_types: {
+                    select: { name: true, category: true, code: true },
+                  },
                 },
               },
               subjects: {

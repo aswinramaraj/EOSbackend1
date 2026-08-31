@@ -34,7 +34,7 @@ export class FinanceOverviewController {
   }
 
   /**
-   * GET /api/v1/finance-overview?batch=<batch name>
+   * GET /api/v1/finance-overview?batch=<batch name>&from=<ISO date>&to=<ISO date>
    *
    * Single consolidated read for the Finance Overview dashboard:
    * executiveKPIs, financialAnalytics, operationalInsights — all derived
@@ -45,6 +45,12 @@ export class FinanceOverviewController {
    * name (from GET /finance-overview/batches) to scope every section to
    * only that batch's students.
    *
+   * `from`/`to` are optional and additive — every field this endpoint has
+   * always returned is unaffected. When both are present,
+   * executiveKPIs.collectedInRange/paymentCountInRange are populated from
+   * payments whose payment_date falls in that window (Admin dashboard's
+   * Today/This term/This year toggle).
+   *
    * Error responses:
    *  401 UNAUTHORIZED   – missing/invalid access token
    *  403 FORBIDDEN      – authenticated user is not an admin
@@ -52,7 +58,17 @@ export class FinanceOverviewController {
    */
   @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('finance-overview')
-  getOverview(@Query('batch') batch?: string) {
-    return this.financeOverviewService.getOverview(batch);
+  getOverview(
+    @Query('batch') batch?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('top_outstanding_limit') topOutstandingLimit?: string,
+  ) {
+    return this.financeOverviewService.getOverview(
+      batch,
+      from ? new Date(from) : undefined,
+      to ? new Date(to) : undefined,
+      topOutstandingLimit ? Number(topOutstandingLimit) : undefined,
+    );
   }
 }

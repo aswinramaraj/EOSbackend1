@@ -13,6 +13,7 @@ import { PurchaseRequestsModule } from 'src/modules/procurement/purchase-request
 import { ServiceRequestsModule } from 'src/modules/procurement/service-requests/service-requests.module';
 import { TimetableModule } from 'src/modules/faculty/timetable/timetable.module';
 import { LibrarySettingsModule } from 'src/modules/library/settings/settings.module';
+import { ExamResultsGridModule } from 'src/modules/academic-structure/exam-results/exam-results-grid.module';
 
 import { HodController } from './hod.controller';
 import { HodService } from './hod.service';
@@ -64,6 +65,7 @@ import { HodStudentProfileService } from './hod-student-profile.service';
     ServiceRequestsModule,
     TimetableModule,
     LibrarySettingsModule,
+    ExamResultsGridModule,
   ],
   controllers: [
     HodController,

@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -10,6 +21,11 @@ import { AddDevelopmentProgramEntryDto } from './dto/add-development-program-ent
 import { AddResearchEntryDto } from './dto/add-research-entry.dto';
 import { AddPatentEntryDto } from './dto/add-patent-entry.dto';
 import { AddFacultyCertificationEntryDto } from './dto/add-faculty-certification-entry.dto';
+import { UpdateDevelopmentProgramEntryDto } from './dto/update-development-program-entry.dto';
+import { UpdateFacultyCertificationEntryDto } from './dto/update-faculty-certification-entry.dto';
+import { UpdatePublicationEntryDto } from './dto/update-publication-entry.dto';
+import { UpdateResearchEntryDto } from './dto/update-research-entry.dto';
+import { UpdatePatentEntryDto } from './dto/update-patent-entry.dto';
 import { IqacFacultyDevelopmentService } from './iqac-faculty-development.service';
 
 /**
@@ -66,6 +82,19 @@ export class IqacFacultyDevelopmentController {
     return this.facultyDevelopment.addPublicationEntry(dto);
   }
 
+  @Patch('publications/:id')
+  updatePublicationEntry(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePublicationEntryDto,
+  ) {
+    return this.facultyDevelopment.updatePublicationEntry(id, dto);
+  }
+
+  @Delete('publications/:id')
+  removePublicationEntry(@Param('id', ParseIntPipe) id: number) {
+    return this.facultyDevelopment.removePublicationEntry(id);
+  }
+
   @Get('fdp/quality')
   fdpQuality() {
     return this.facultyDevelopment.fdpQuality();
@@ -73,12 +102,27 @@ export class IqacFacultyDevelopmentController {
 
   @Get('fdp')
   fdp(@Query('department_id') departmentId?: string) {
-    return this.facultyDevelopment.fdp(departmentId ? Number(departmentId) : undefined);
+    return this.facultyDevelopment.fdp(
+      departmentId ? Number(departmentId) : undefined,
+    );
   }
 
   @Post('fdp')
   addFdpEntry(@Body() dto: AddDevelopmentProgramEntryDto) {
     return this.facultyDevelopment.addFdpEntry(dto);
+  }
+
+  @Patch('fdp/:id')
+  updateFdpEntry(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateDevelopmentProgramEntryDto,
+  ) {
+    return this.facultyDevelopment.updateDevelopmentProgramEntry(id, dto);
+  }
+
+  @Delete('fdp/:id')
+  removeFdpEntry(@Param('id', ParseIntPipe) id: number) {
+    return this.facultyDevelopment.removeDevelopmentProgramEntry(id);
   }
 
   @Get('sttp/quality')
@@ -88,12 +132,27 @@ export class IqacFacultyDevelopmentController {
 
   @Get('sttp')
   sttp(@Query('department_id') departmentId?: string) {
-    return this.facultyDevelopment.sttp(departmentId ? Number(departmentId) : undefined);
+    return this.facultyDevelopment.sttp(
+      departmentId ? Number(departmentId) : undefined,
+    );
   }
 
   @Post('sttp')
   addSttpEntry(@Body() dto: AddDevelopmentProgramEntryDto) {
     return this.facultyDevelopment.addSttpEntry(dto);
+  }
+
+  @Patch('sttp/:id')
+  updateSttpEntry(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateDevelopmentProgramEntryDto,
+  ) {
+    return this.facultyDevelopment.updateDevelopmentProgramEntry(id, dto);
+  }
+
+  @Delete('sttp/:id')
+  removeSttpEntry(@Param('id', ParseIntPipe) id: number) {
+    return this.facultyDevelopment.removeDevelopmentProgramEntry(id);
   }
 
   @Get('research/quality')
@@ -103,12 +162,27 @@ export class IqacFacultyDevelopmentController {
 
   @Get('research')
   research(@Query('department_id') departmentId?: string) {
-    return this.facultyDevelopment.research(departmentId ? Number(departmentId) : undefined);
+    return this.facultyDevelopment.research(
+      departmentId ? Number(departmentId) : undefined,
+    );
   }
 
   @Post('research')
   addResearchEntry(@Body() dto: AddResearchEntryDto) {
     return this.facultyDevelopment.addResearchEntry(dto);
+  }
+
+  @Patch('research/:id')
+  updateResearchEntry(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateResearchEntryDto,
+  ) {
+    return this.facultyDevelopment.updateResearchEntry(id, dto);
+  }
+
+  @Delete('research/:id')
+  removeResearchEntry(@Param('id', ParseIntPipe) id: number) {
+    return this.facultyDevelopment.removeResearchEntry(id);
   }
 
   @Get('patents/quality')
@@ -118,12 +192,27 @@ export class IqacFacultyDevelopmentController {
 
   @Get('patents')
   patents(@Query('department_id') departmentId?: string) {
-    return this.facultyDevelopment.patents(departmentId ? Number(departmentId) : undefined);
+    return this.facultyDevelopment.patents(
+      departmentId ? Number(departmentId) : undefined,
+    );
   }
 
   @Post('patents')
   addPatentEntry(@Body() dto: AddPatentEntryDto) {
     return this.facultyDevelopment.addPatentEntry(dto);
+  }
+
+  @Patch('patents/:id')
+  updatePatentEntry(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePatentEntryDto,
+  ) {
+    return this.facultyDevelopment.updatePatentEntry(id, dto);
+  }
+
+  @Delete('patents/:id')
+  removePatentEntry(@Param('id', ParseIntPipe) id: number) {
+    return this.facultyDevelopment.removePatentEntry(id);
   }
 
   @Get('certifications/quality')
@@ -133,11 +222,26 @@ export class IqacFacultyDevelopmentController {
 
   @Get('certifications')
   facultyCertifications(@Query('department_id') departmentId?: string) {
-    return this.facultyDevelopment.facultyCertifications(departmentId ? Number(departmentId) : undefined);
+    return this.facultyDevelopment.facultyCertifications(
+      departmentId ? Number(departmentId) : undefined,
+    );
   }
 
   @Post('certifications')
   addFacultyCertificationEntry(@Body() dto: AddFacultyCertificationEntryDto) {
     return this.facultyDevelopment.addFacultyCertificationEntry(dto);
+  }
+
+  @Patch('certifications/:id')
+  updateFacultyCertificationEntry(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateFacultyCertificationEntryDto,
+  ) {
+    return this.facultyDevelopment.updateFacultyCertificationEntry(id, dto);
+  }
+
+  @Delete('certifications/:id')
+  removeFacultyCertificationEntry(@Param('id', ParseIntPipe) id: number) {
+    return this.facultyDevelopment.removeFacultyCertificationEntry(id);
   }
 }

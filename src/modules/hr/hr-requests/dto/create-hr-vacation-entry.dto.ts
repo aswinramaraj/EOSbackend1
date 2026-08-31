@@ -11,8 +11,9 @@ import {
  * POST /hr/requests (HR Payroll only) — HR recording a leave/OD entry
  * directly on a faculty member's behalf (e.g. from the Vacation Management
  * calendar), bypassing the normal self-service + HOD/HR approval flow since
- * HR is entering an already-known, single-day absence rather than routing a
- * new request through review.
+ * HR is entering an already-known absence rather than routing a new request
+ * through review. Accepts a real from/to range (a single day is just
+ * from_date === to_date) — mirrors CreateFacultyLeafDto's own from/to shape.
  */
 export class CreateHrVacationEntryDto {
   @IsInt()
@@ -22,8 +23,16 @@ export class CreateHrVacationEntryDto {
   kind: 'leave' | 'od';
 
   @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be in YYYY-MM-DD format' })
-  date: string;
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'from_date must be in YYYY-MM-DD format',
+  })
+  from_date: string;
+
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'to_date must be in YYYY-MM-DD format',
+  })
+  to_date: string;
 
   @IsOptional()
   @IsString()

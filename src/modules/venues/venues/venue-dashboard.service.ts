@@ -39,26 +39,29 @@ export class VenueDashboardService {
     const todayEnd = endOfDay(now);
 
     const [todayBookings, pendingCount, totalVenues, occupiedNowVenueIds] =
-      await this.prisma.$transaction([
-        this.prisma.venue_bookings.count({
-          where: {
-            status: { not: 'rejected' },
-            from_datetime: { lte: todayEnd },
-            to_datetime: { gte: todayStart },
-          },
-        }),
-        this.prisma.venue_bookings.count({ where: { status: 'pending' } }),
-        this.prisma.venues.count(),
-        this.prisma.venue_bookings.findMany({
-          where: {
-            status: { not: 'rejected' },
-            from_datetime: { lte: now },
-            to_datetime: { gte: now },
-          },
-          select: { venue_id: true },
-          distinct: ['venue_id'],
-        }),
-      ], TRANSACTION_OPTIONS);
+      await this.prisma.$transaction(
+        [
+          this.prisma.venue_bookings.count({
+            where: {
+              status: { not: 'rejected' },
+              from_datetime: { lte: todayEnd },
+              to_datetime: { gte: todayStart },
+            },
+          }),
+          this.prisma.venue_bookings.count({ where: { status: 'pending' } }),
+          this.prisma.venues.count(),
+          this.prisma.venue_bookings.findMany({
+            where: {
+              status: { not: 'rejected' },
+              from_datetime: { lte: now },
+              to_datetime: { gte: now },
+            },
+            select: { venue_id: true },
+            distinct: ['venue_id'],
+          }),
+        ],
+        TRANSACTION_OPTIONS,
+      );
 
     return {
       today_bookings: todayBookings,
@@ -78,29 +81,32 @@ export class VenueDashboardService {
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
 
-    const [todayBookings, venues] = await this.prisma.$transaction([
-      this.prisma.venue_bookings.findMany({
-        where: {
-          status: { not: 'rejected' },
-          from_datetime: { lte: todayEnd },
-          to_datetime: { gte: todayStart },
-        },
-        orderBy: { from_datetime: 'asc' },
-        select: {
-          id: true,
-          purpose: true,
-          from_datetime: true,
-          to_datetime: true,
-          venue_id: true,
-          accommodating_strength: true,
-          venues_venue_bookings_venue_idTovenues: { select: { name: true } },
-        },
-      }),
-      this.prisma.venues.findMany({
-        select: { id: true, name: true },
-        orderBy: { id: 'asc' },
-      }),
-    ], TRANSACTION_OPTIONS);
+    const [todayBookings, venues] = await this.prisma.$transaction(
+      [
+        this.prisma.venue_bookings.findMany({
+          where: {
+            status: { not: 'rejected' },
+            from_datetime: { lte: todayEnd },
+            to_datetime: { gte: todayStart },
+          },
+          orderBy: { from_datetime: 'asc' },
+          select: {
+            id: true,
+            purpose: true,
+            from_datetime: true,
+            to_datetime: true,
+            venue_id: true,
+            accommodating_strength: true,
+            venues_venue_bookings_venue_idTovenues: { select: { name: true } },
+          },
+        }),
+        this.prisma.venues.findMany({
+          select: { id: true, name: true },
+          orderBy: { id: 'asc' },
+        }),
+      ],
+      TRANSACTION_OPTIONS,
+    );
 
     const schedule = todayBookings.map((b) => ({
       id: b.id,
@@ -131,7 +137,9 @@ export class VenueDashboardService {
         state: active ? 'in_use' : 'free',
         note: active
           ? `Occupied until ${active.to_datetime.toISOString()}${
-              active.accommodating_strength ? ` · ${active.accommodating_strength} seated` : ''
+              active.accommodating_strength
+                ? ` · ${active.accommodating_strength} seated`
+                : ''
             }`
           : 'Free all day',
       };

@@ -59,7 +59,12 @@ export class FinanceOverviewService {
    * are scoped the same way, via the demand mappings that survive the
    * batch filter (they have no direct batch column of their own).
    */
-  async getOverview(batchName?: string): Promise<FinanceOverviewResponseDto> {
+  async getOverview(
+    batchName?: string,
+    from?: Date,
+    to?: Date,
+    topOutstandingLimit: number = TOP_OUTSTANDING_STUDENTS_LIMIT,
+  ): Promise<FinanceOverviewResponseDto> {
     let mappings: Awaited<ReturnType<typeof this.queryMappings>>;
     let educationLoanDds: Awaited<
       ReturnType<typeof this.queryEducationLoanDds>
@@ -151,6 +156,9 @@ export class FinanceOverviewService {
         perMapping,
         educationLoanDds,
         activeFeeStructures,
+        mappings,
+        from,
+        to,
       ),
       financialAnalytics: {
         demandVsCollection: this.buildDemandVsCollection(perMapping),
@@ -162,7 +170,7 @@ export class FinanceOverviewService {
       },
       operationalInsights: {
         recentPayments: this.buildRecentPayments(mappings),
-        topOutstandingStudents: this.buildTopOutstandingStudents(perMapping),
+        topOutstandingStudents: this.buildTopOutstandingStudents(perMapping, topOutstandingLimit),
         concessionSummary: this.buildConcessionSummary(concessions),
         educationLoanDDSummary:
           this.buildEducationLoanDdSummary(educationLoanDds),
@@ -275,6 +283,9 @@ export class FinanceOverviewService {
     }[],
     educationLoanDds: { status: string }[],
     activeFeeStructures: number,
+    mappings: Awaited<ReturnType<typeof this.queryMappings>>,
+    from?: Date,
+    to?: Date,
   ): ExecutiveKpisDto {
     const totalFeeDemand = perMapping.reduce(
       (sum, m) => sum.plus(m.totalAmount),
@@ -301,6 +312,18 @@ export class FinanceOverviewService {
       (dd) => dd.status === 'received',
     ).length;
 
+    let collectedInRange: string | undefined;
+    let paymentCountInRange: number | undefined;
+    if (from && to) {
+      const paymentsInRange = mappings
+        .flatMap((m) => m.fee_payments)
+        .filter((p) => p.payment_date >= from && p.payment_date <= to);
+      collectedInRange = paymentsInRange
+        .reduce((sum, p) => sum.plus(p.amount_paid), new Prisma.Decimal(0))
+        .toString();
+      paymentCountInRange = paymentsInRange.length;
+    }
+
     return {
       totalFeeDemand: totalFeeDemand.toString(),
       totalCollected: totalCollected.toString(),
@@ -308,6 +331,8 @@ export class FinanceOverviewService {
       collectionPercentage,
       pendingEducationLoanDD,
       activeFeeStructures,
+      collectedInRange,
+      paymentCountInRange,
     };
   }
 
@@ -475,6 +500,7 @@ export class FinanceOverviewService {
       mapping: Awaited<ReturnType<typeof this.queryMappings>>[number];
       outstandingAmount: Prisma.Decimal;
     }[],
+    limit: number = TOP_OUTSTANDING_STUDENTS_LIMIT,
   ): TopOutstandingStudentItemDto[] {
     const totalsByStudent = new Map<
       number,
@@ -517,7 +543,7 @@ export class FinanceOverviewService {
       }))
       .filter((entry) => Number(entry.total_outstanding) > 0)
       .sort((a, b) => Number(b.total_outstanding) - Number(a.total_outstanding))
-      .slice(0, TOP_OUTSTANDING_STUDENTS_LIMIT);
+      .slice(0, limit);
   }
 
   private buildConcessionSummary(
