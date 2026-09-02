@@ -160,7 +160,7 @@ export class PrincipalExamsService {
       const revaluationRows = await this.prisma.$queryRaw<RevaluationRow[]>(Prisma.sql`
         SELECT
           COUNT(*)::bigint AS total,
-          COUNT(*) FILTER (WHERE status IN ('requested', 'under_review'))::bigint AS pending
+          COUNT(*) FILTER (WHERE rr.status IN ('requested', 'under_review'))::bigint AS pending
         FROM revaluation_requests rr
         ${departmentId !== undefined ? Prisma.sql`JOIN students st ON st.id = rr.student_id JOIN classes cl ON cl.id = st.class_id WHERE cl.department_id = ${departmentId}` : Prisma.empty}
       `);

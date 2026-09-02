@@ -9,6 +9,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { StorageService } from 'src/common/storage/storage.service';
+import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { CreateDocumentDto } from './dto/create-document.dto';
@@ -134,8 +135,9 @@ export class DocumentsService {
       file.originalname,
       file.buffer,
       file.mimetype,
+      STORAGE_BUCKETS.DEPARTMENT_DOCUMENTS,
     );
-    const url = this.storage.getPublicUrl(key);
+    const url = this.storage.getPublicUrl(key, STORAGE_BUCKETS.DEPARTMENT_DOCUMENTS);
     return {
       file_key: key,
       file_name: file.originalname,

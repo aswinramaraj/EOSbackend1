@@ -20,4 +20,7 @@ export const STORAGE_BUCKETS = {
    * real upload attempt if StorageService's upload() doesn't auto-create it;
    * see VenuesService.uploadPhoto. */
   VENUE_PHOTOS: 'venue_photos',
+  /** Department Document Management uploads (Secretary Portal) — dedicated
+   * bucket, public, created via the Supabase Storage Management API. */
+  DEPARTMENT_DOCUMENTS: 'department_documents',
 } as const;

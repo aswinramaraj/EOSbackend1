@@ -112,6 +112,7 @@ export class PrincipalStudentsService {
         st.register_no ILIKE ${term} OR
         soa.first_name ILIKE ${term} OR
         soa.last_name ILIKE ${term} OR
+        (soa.first_name || ' ' || soa.last_name) ILIKE ${term} OR
         u.email ILIKE ${term}
       )`);
     }

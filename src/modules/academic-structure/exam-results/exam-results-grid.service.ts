@@ -50,7 +50,7 @@ export class ExamResultsGridService {
       }
       const examType = await this.prisma.exam_types.findUnique({
         where: { id: examTypeId },
-        select: { id: true, name: true },
+        select: { id: true, name: true, category: true },
       });
       if (!examType) {
         throw new NotFoundException({
@@ -58,6 +58,20 @@ export class ExamResultsGridService {
           errorCode: 'EXAM_TYPE_NOT_FOUND',
         });
       }
+      // University/external exams are graded, not scored — the mapping
+      // owner (COE) never surfaces raw marks to faculty for these, only the
+      // letter grade (see faculty/exam-marks assertInternalExam()).
+      const isExternal = examType.category === 'external';
+      const gradeBands = isExternal
+        ? await this.prisma.grade_bands.findMany({
+            orderBy: { min_percentage: 'desc' },
+          })
+        : [];
+      const gradeForPercent = (pct: number | null): string | null => {
+        if (pct == null) return null;
+        const band = gradeBands.find((b) => pct >= Number(b.min_percentage));
+        return band?.grade_label ?? null;
+      };
 
       // The specific exam (this class, this exam type) — most recent one if
       // several exist across academic years.
@@ -141,6 +155,7 @@ export class ExamResultsGridService {
           register_no: s.register_no ?? '—',
           name: nameByStudent.get(s.id) ?? null,
           marks,
+          grades: isExternal ? marks.map(gradeForPercent) : null,
           average_percent:
             scored.length > 0
               ? Math.round(
@@ -163,7 +178,11 @@ export class ExamResultsGridService {
           year_label: yearLabel(cls.current_semester),
           batch_label: cls.batches?.name ?? '—',
         },
-        exam_type: { id: examType.id, name: examType.name },
+        exam_type: {
+          id: examType.id,
+          name: examType.name,
+          category: examType.category,
+        },
         candidates: students.length,
         papers: mappings.length,
         subjects: mappings.map((m) => ({
@@ -208,7 +227,8 @@ export class ExamResultsGridService {
         average_percent: row.average_percent ?? '—',
       };
       grid.subjects.forEach((s, i) => {
-        record[`subject_${s.id}`] = row.marks[i] ?? '—';
+        record[`subject_${s.id}`] =
+          (row.grades ? row.grades[i] : row.marks[i]) ?? '—';
       });
       return record;
     });
