@@ -3,6 +3,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import type { ListNoDueStudentsQueryDto } from '../faculty/no-due/dto/list-no-due-students-query.dto';
 import { NoDueService } from '../faculty/no-due/no-due.service';
+import { SubjectNoDueService } from '../faculty/subject-no-due/subject-no-due.service';
 
 function yearLabel(semester: number | null): string {
   if (semester == null) return '—';
@@ -15,20 +16,24 @@ function yearLabel(semester: number | null): string {
  * dues, no stored "cleared" column anywhere). Every field here traces back
  * to that real computation.
  *
- * Known, documented simplification: the frontend's fixed 5-category boolean
- * model (library/laboratory/fees/hostel/sports) doesn't match the real
+ * Known, documented simplification: the frontend's fixed category-boolean
+ * model (library/laboratory/fees/hostel/academics) doesn't match the real
  * service's dynamic, data-driven fee-category list (whatever
  * `demand_categories` rows actually exist — not a fixed set). `library_cleared`
  * maps directly (the real service has a dedicated library computation).
  * `fees_cleared` is true only if every real fee category for that student
- * is cleared. `laboratory_cleared`/`hostel_cleared`/`sports_cleared` look
- * for a real fee category whose name contains that word; if no such
- * category exists for a student, there is nothing owed in it, so it's
- * honestly reported as cleared (not fabricated true — genuinely no due).
+ * is cleared. `laboratory_cleared`/`hostel_cleared` look for a real fee
+ * category whose name contains that word; if no such category exists for a
+ * student, there is nothing owed in it, so it's honestly reported as
+ * cleared (not fabricated true — genuinely no due). `academics_cleared`
+ * comes from SubjectNoDueService — true only if every subject-handling
+ * faculty for the student's currently-taken subjects has manually signed
+ * off (see subject_academic_clearance / no_due.query.md #1); an unassigned
+ * subject can never be cleared there, unlike the fee-keyword categories.
  * The PATCH action only supports `issue` (the real "approve override"
- * action) — the other boolean fields have no real per-category override in
- * the schema, so a patch touching only those fields is a no-op; only
- * `issue` calls the real backend.
+ * action) — none of the category booleans have a real per-category
+ * override in the schema, so a patch touching only those fields is a
+ * no-op; only `issue` calls the real backend.
  */
 @Injectable()
 export class HodNoDueService {
@@ -37,6 +42,7 @@ export class HodNoDueService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly noDue: NoDueService,
+    private readonly subjectNoDue: SubjectNoDueService,
   ) {}
 
   private async resolveDepartment(user: JwtPayload) {
@@ -129,6 +135,11 @@ export class HodNoDueService {
     );
     const all = [...pending.data, ...cleared.data];
 
+    const academicsByStudent = await this.subjectNoDue.getAcademicsClearedMap(
+      classId,
+      all.map((s) => s.id),
+    );
+
     const rows = all.map((s) => ({
       student_id: s.id,
       student_id_no: s.student_id_no,
@@ -138,7 +149,7 @@ export class HodNoDueService {
       laboratory_cleared: this.categoryCleared(s.fees, 'lab'),
       fees_cleared: s.fees.every((f) => f.cleared),
       hostel_cleared: this.categoryCleared(s.fees, 'hostel'),
-      sports_cleared: this.categoryCleared(s.fees, 'sport'),
+      academics_cleared: academicsByStudent.get(s.id) ?? false,
       issued: s.override_approved,
     }));
 
