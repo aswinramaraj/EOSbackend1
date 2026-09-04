@@ -38,6 +38,25 @@ function daysBetween(later: Date | string, earlier: Date | string) {
   );
 }
 
+// UTC-midnight "today", N days out — deliberately NOT startOfDay() above,
+// which normalizes via local-time setHours() (correct for comparing two
+// already-local-midnight Date objects read back from the DB, e.g.
+// daysBetween). Prisma serializes a Date written to a @db.Date column via
+// its UTC value, so a *local* midnight on any positive-UTC-offset machine
+// (e.g. IST) silently truncates back to the previous calendar day on write
+// — the exact bug this caused here once (due_date landed a day early).
+// Building at UTC midnight from local calendar-date components sidesteps
+// that mismatch entirely.
+function todayPlusDaysUtc(days: number): Date {
+  const now = new Date();
+  const utcMidnightToday = Date.UTC(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  );
+  return new Date(utcMidnightToday + days * MS_PER_DAY);
+}
+
 const RECORD_INCLUDE = {
   books: {
     select: {
@@ -329,6 +348,14 @@ export class BorrowRecordsService {
         throw new ConflictException('No copies available for borrowing.');
       }
 
+      // due_date defaults from library_settings when the caller doesn't name
+      // one — the librarian's Issue page always supplies its own (staff may
+      // want to override per-book), but student self-checkout has no reason
+      // to know/compute this itself.
+      const dueDate = dto.due_date
+        ? new Date(dto.due_date)
+        : todayPlusDaysUtc(rules.defaultBorrowingDays);
+
       const borrow = await tx.book_borrow_records.create({
         data: {
           book_id: dto.book_id,
@@ -336,7 +363,7 @@ export class BorrowRecordsService {
           student_id: studentId,
           faculty_id: facultyId,
           staff_user_id: staffUserId,
-          due_date: new Date(dto.due_date),
+          due_date: dueDate,
         },
         include: RECORD_INCLUDE,
       });
