@@ -94,7 +94,23 @@ export class PrismaService
     const clients: PoolClient[] = [];
     try {
       for (let i = 0; i < POOL_SIZE; i++) {
-        clients.push(await this.pool.connect());
+        const client = await this.pool.connect();
+        // A checked-out client emits its own 'error' event — separate from
+        // the pool-level handler above, which only covers connections
+        // already idle/checked back in. While this loop is still opening
+        // the rest of the pool, every earlier client sits here checked out
+        // and unlistened; if the network severs one mid-warm-up, Node's
+        // default handling for an unlistened EventEmitter 'error' is to
+        // crash the whole process — reproduced live during a bout of
+        // pooler connection contention. release() below hands it back to
+        // the pool, where the handler above takes over from here.
+        client.on('error', (err) => {
+          this.logger.error(
+            'A connection being warmed was severed before it could be released back to the pool.',
+            err,
+          );
+        });
+        clients.push(client);
       }
       this.logger.log(`Pre-warmed ${clients.length} database connections.`);
     } catch (error) {

@@ -23,12 +23,12 @@ import { ListPersonalCalendarEntriesQueryDto } from './dto/list-personal-calenda
 
 /**
  * Private planner entries on top of the read-only institution calendar -
- * Principal only for now. Every route is scoped to the caller's own
+ * Principal and Student for now. Every route is scoped to the caller's own
  * user_id inside the service - never a client-supplied one.
  */
 @Controller('me/personal-calendar-entries')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.STUDENT)
 export class PersonalCalendarController {
   constructor(private readonly personalCalendarService: PersonalCalendarService) {}
 

@@ -1,4 +1,11 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  ParseIntPipe,
+  UseGuards,
+} from '@nestjs/common';
 import { DrivesService } from './drives.service';
 import { JwtAuthGuard } from '../../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../auth/guards/roles.guard';
@@ -22,10 +29,19 @@ export class StudentDrivesController {
     return this.drivesService.getUpcomingForStudent(user);
   }
 
-  /** Posted drives not yet shortlisted for — see getPostedForStudent for why this is read-only. */
+  /** Posted drives not yet shortlisted/applied for — filtered by registration window and (once real) department eligibility, see getPostedForStudentId. */
   @Get('posted')
   posted(@CurrentUser() user: JwtPayload) {
     return this.drivesService.getPostedForStudent(user);
+  }
+
+  /** Self-service application onto a posted drive — see applyToDrive for eligibility/resume checks. */
+  @Post(':id/apply')
+  apply(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.drivesService.applyToDrive(user, id);
   }
 
   @Get('history')

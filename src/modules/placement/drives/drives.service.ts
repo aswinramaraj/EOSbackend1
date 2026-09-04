@@ -23,6 +23,7 @@ import { UpdateDriveDto } from './dto/update-drive.dto';
 import { ListDrivesQueryDto } from './dto/list-drives-query.dto';
 import { CreateDriveApplicationDto } from './dto/create-drive-application.dto';
 import { UpdateDriveApplicationStatusDto } from './dto/update-drive-application-status.dto';
+import type { CareerPath } from '../../admissions/students/me-profile/dto/update-career-path.dto';
 import type { ReportTable } from './report-export.util';
 
 /** Midnight-truncated Date for comparisons against @db.Date columns. */
@@ -566,40 +567,42 @@ export class DrivesService {
    * memory, instead of one request per student.
    */
   async getStudentReport(batchId?: number) {
-    const [students, applications, placementFlags] = await Promise.all([
-      this.prisma.students.findMany({
-        where: batchId ? { batch_id: batchId } : undefined,
-        select: {
-          id: true,
-          student_id_no: true,
-          roll_no: true,
-          register_no: true,
-          classes: {
-            select: {
-              section: true,
-              current_semester: true,
-              departments: { select: { name: true, code: true } },
+    const [students, applications, placementFlags, careerPaths] =
+      await Promise.all([
+        this.prisma.students.findMany({
+          where: batchId ? { batch_id: batchId } : undefined,
+          select: {
+            id: true,
+            student_id_no: true,
+            roll_no: true,
+            register_no: true,
+            classes: {
+              select: {
+                section: true,
+                current_semester: true,
+                departments: { select: { name: true, code: true } },
+              },
+            },
+            soa_applications: { select: { first_name: true, last_name: true } },
+            users: { select: { email: true } },
+          },
+          orderBy: { student_id_no: 'asc' },
+        }),
+        this.prisma.student_drive_applications.findMany({
+          select: {
+            student_id: true,
+            status: true,
+            last_cleared_round: true,
+            updated_at: true,
+            offer_response: true,
+            placement_drives: {
+              select: { companies: { select: { name: true } } },
             },
           },
-          soa_applications: { select: { first_name: true, last_name: true } },
-          users: { select: { email: true } },
-        },
-        orderBy: { student_id_no: 'asc' },
-      }),
-      this.prisma.student_drive_applications.findMany({
-        select: {
-          student_id: true,
-          status: true,
-          last_cleared_round: true,
-          updated_at: true,
-          offer_response: true,
-          placement_drives: {
-            select: { companies: { select: { name: true } } },
-          },
-        },
-      }),
-      this.loadAllPlacementFlags(),
-    ]);
+        }),
+        this.loadAllPlacementFlags(),
+        this.loadAllCareerPaths(),
+      ]);
 
     const appsByStudent = new Map<number, typeof applications>();
     for (const a of applications) {
@@ -629,6 +632,7 @@ export class DrivesService {
         register_no: s.register_no,
         placement_eligible: flags.placement_eligible,
         placement_opted_out: flags.placement_opted_out,
+        career_path: careerPaths.get(s.id) ?? null,
         name:
           soa?.first_name || soa?.last_name
             ? [soa?.first_name, soa?.last_name].filter(Boolean).join(' ')
@@ -1465,6 +1469,70 @@ export class DrivesService {
     return { id: studentId, ...(flags.get(studentId) ?? NO_PLACEMENT_FLAGS) };
   }
 
+  /**
+   * `students.career_path` — same column MeCareerPathService reads/writes
+   * for a student's own self-view of "which path shows in my sidebar", but
+   * here it's the Placement Officer setting it on someone else's record
+   * (per the Students page's "Placement / Venture / Higher Studies" action —
+   * staff-driven, not student self-service). Read via `$queryRaw` since the
+   * column predates a `prisma db pull`, same as loadAllPlacementFlags above.
+   */
+  private async loadAllCareerPaths(): Promise<Map<number, CareerPath>> {
+    try {
+      const rows = await this.prisma.$queryRaw<
+        { id: number; career_path: CareerPath | null }[]
+      >`
+        SELECT id, career_path FROM students WHERE career_path IS NOT NULL
+      `;
+      return new Map(
+        rows
+          .filter(
+            (r): r is { id: number; career_path: CareerPath } =>
+              r.career_path !== null,
+          )
+          .map((r) => [r.id, r.career_path]),
+      );
+    } catch {
+      return new Map();
+    }
+  }
+
+  /**
+   * PATCH /drives/students/:id/career-path — Placement Officer marks a
+   * student as pursuing Placement, or (their way of recording "not
+   * interested in placement") Venture or Higher Studies. Drives which one
+   * of those three tabs shows in that student's own sidebar (see
+   * MeCareerPathService.getMyCareerPath, read-only from the student side).
+   */
+  async setStudentCareerPath(studentId: number, careerPath: CareerPath) {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: `Student ${studentId} not found`,
+        errorCode: 'NOT_FOUND',
+      });
+    }
+
+    try {
+      await this.prisma.$executeRaw`
+        UPDATE students SET career_path = ${careerPath} WHERE id = ${studentId}
+      `;
+    } catch (err) {
+      this.logger.error(
+        `Failed to set career_path for student ${studentId}`,
+        err,
+      );
+      throw new UnprocessableEntityException({
+        message: 'This feature is not enabled yet.',
+        errorCode: 'FEATURE_NOT_ENABLED',
+      });
+    }
+
+    return { id: studentId, career_path: careerPath };
+  }
+
   // ───────────────────────────── Student-facing history ─────────────────────────────
   // ───────────────────────────── Student-facing upcoming/history ─────────────────────────────
 
@@ -1502,19 +1570,23 @@ export class DrivesService {
   }
 
   /**
-   * GET /drives/student/posted — every currently-open drive the placement
-   * cell has posted that this student has NOT been shortlisted for yet
-   * (no student_drive_applications row). Read-only/informational: shortlisting
-   * students onto a drive stays a placement-cell action (addApplication/
-   * importApplications) — this only makes a posted drive visible before that
-   * step happens, it does not let a student add themselves.
+   * GET /drives/student/posted — every currently-open, currently-in-window
+   * drive the placement cell has posted that this student is eligible for
+   * and has NOT been shortlisted/applied for yet (no
+   * student_drive_applications row). Applying (see applyToDrive below)
+   * creates that row itself, so a drive naturally moves from this list to
+   * "upcoming" the moment a student applies.
    *
-   * There's no real per-drive department/CGPA eligibility data to filter
-   * this by yet — `eligible_department_codes`/`eligibility_cgpa` are columns
-   * this service already reads (see loadDriveExtras), but they don't exist
-   * in the live DB (query.md #14 not run), so every drive currently reads as
-   * institution-wide. Once that migration lands, filter this list by the
-   * caller's own department code the same way loadDriveExtras degrades today.
+   * Eligibility here is deliberately limited to what's honestly real today:
+   *  - registration_start/registration_end are real columns, enforced below.
+   *  - eligible_department_codes is read via loadAllDriveExtras() the same
+   *    way every other consumer of it does — it degrades to "no restriction"
+   *    (every department passes) until query.md #14 actually adds the
+   *    column, then activates automatically with no further code change.
+   *  - eligibility_cgpa is a real column but there is no live, computed CGPA
+   *    for a currently-enrolled student anywhere in this schema to check it
+   *    against — it is surfaced on each drive for information only, never
+   *    used to filter this list.
    */
   async getPostedForStudent(user: JwtPayload) {
     const student = await this.findStudentOrThrow(user.sub);
@@ -1522,22 +1594,56 @@ export class DrivesService {
   }
 
   private async getPostedForStudentId(studentId: number) {
-    const shortlisted = await this.prisma.student_drive_applications.findMany({
-      where: { student_id: studentId },
-      select: { drive_id: true },
-    });
+    const [shortlisted, student] = await Promise.all([
+      this.prisma.student_drive_applications.findMany({
+        where: { student_id: studentId },
+        select: { drive_id: true },
+      }),
+      this.prisma.students.findUnique({
+        where: { id: studentId },
+        select: {
+          classes: { select: { departments: { select: { code: true } } } },
+        },
+      }),
+    ]);
+    const myDepartmentCode =
+      student?.classes?.departments.code?.toUpperCase() ?? null;
+    const now = today();
 
     const drives = await this.prisma.placement_drives.findMany({
       where: {
         status: 'scheduled',
-        scheduled_date: { gte: today() },
+        scheduled_date: { gte: now },
         id: { notIn: shortlisted.map((s) => s.drive_id) },
+        AND: [
+          {
+            OR: [
+              { registration_start: null },
+              { registration_start: { lte: now } },
+            ],
+          },
+          {
+            OR: [
+              { registration_end: null },
+              { registration_end: { gte: now } },
+            ],
+          },
+        ],
       },
       include: { companies: true },
       orderBy: { scheduled_date: 'asc' },
     });
+    if (drives.length === 0) return [];
 
-    return drives.map((drive) => ({
+    const extrasById = await this.loadAllDriveExtras();
+    const eligibleDrives = drives.filter((drive) => {
+      const codes = extrasById.get(drive.id)?.eligible_department_codes;
+      if (!codes) return true;
+      const allowed = codes.split(',').map((c) => c.trim().toUpperCase());
+      return myDepartmentCode !== null && allowed.includes(myDepartmentCode);
+    });
+
+    return eligibleDrives.map((drive) => ({
       drive_id: drive.id,
       company_name: this.resolveCompanyName(drive),
       company_profile_info: drive.is_disclosed
@@ -1551,7 +1657,100 @@ export class DrivesService {
       job_role: drive.job_role,
       package_lpa:
         drive.package_lpa === null ? null : Number(drive.package_lpa),
+      eligibility_cgpa:
+        drive.eligibility_cgpa === null ? null : Number(drive.eligibility_cgpa),
+      registration_start: drive.registration_start,
+      registration_end: drive.registration_end,
     }));
+  }
+
+  /**
+   * POST /drives/student/:id/apply — self-service application. Idempotent:
+   * an application that already exists (whether created by this same
+   * endpoint or by the placement cell shortlisting the student directly)
+   * is returned as-is rather than raising a conflict.
+   *
+   * Re-checks the same registration-window and department-eligibility rules
+   * getPostedForStudentId already filters the list by, as defense in depth
+   * against a stale/forged drive id, plus a resume-completeness gate that
+   * list doesn't need. Error cases:
+   *  404 STUDENT_NOT_FOUND     – caller has no linked student record
+   *  404 (drive not found)     – via findOrThrow
+   *  422 DRIVE_NOT_OPEN        – drive status isn't 'scheduled'
+   *  422 REGISTRATION_NOT_OPEN / REGISTRATION_CLOSED
+   *  403 NOT_ELIGIBLE          – student's department isn't in eligible_department_codes
+   *  422 RESUME_INCOMPLETE     – no resume link on the student's placement profile
+   */
+  async applyToDrive(user: JwtPayload, driveId: number) {
+    const student = await this.findStudentOrThrow(user.sub);
+    return this.applyToDriveForStudentId(student.id, driveId);
+  }
+
+  private async applyToDriveForStudentId(studentId: number, driveId: number) {
+    const existing = await this.prisma.student_drive_applications.findUnique({
+      where: {
+        drive_id_student_id: { drive_id: driveId, student_id: studentId },
+      },
+    });
+    if (existing) return existing;
+
+    const drive = await this.findOrThrow(driveId);
+
+    if (drive.status !== 'scheduled') {
+      throw new UnprocessableEntityException({
+        message: 'This drive is no longer accepting applications',
+        errorCode: 'DRIVE_NOT_OPEN',
+      });
+    }
+
+    const now = today();
+    if (drive.registration_start && now < drive.registration_start) {
+      throw new UnprocessableEntityException({
+        message: 'Registration for this drive has not opened yet',
+        errorCode: 'REGISTRATION_NOT_OPEN',
+      });
+    }
+    if (drive.registration_end && now > drive.registration_end) {
+      throw new UnprocessableEntityException({
+        message: 'Registration for this drive has closed',
+        errorCode: 'REGISTRATION_CLOSED',
+      });
+    }
+
+    const extras = await this.loadDriveExtras(driveId);
+    if (extras.eligible_department_codes) {
+      const student = await this.prisma.students.findUnique({
+        where: { id: studentId },
+        select: {
+          classes: { select: { departments: { select: { code: true } } } },
+        },
+      });
+      const allowed = extras.eligible_department_codes
+        .split(',')
+        .map((c) => c.trim().toUpperCase());
+      const myCode = student?.classes?.departments.code?.toUpperCase();
+      if (!myCode || !allowed.includes(myCode)) {
+        throw new ForbiddenException({
+          message: 'You are not eligible for this drive',
+          errorCode: 'NOT_ELIGIBLE',
+        });
+      }
+    }
+
+    const profile = await this.prisma.student_profiles.findUnique({
+      where: { student_id: studentId },
+      select: { resume_url: true },
+    });
+    if (!profile?.resume_url) {
+      throw new UnprocessableEntityException({
+        message: 'Add a resume link to your placement profile before applying',
+        errorCode: 'RESUME_INCOMPLETE',
+      });
+    }
+
+    return this.prisma.student_drive_applications.create({
+      data: { drive_id: driveId, student_id: studentId },
+    });
   }
 
   /** GET /drives/student/history — drives where this student has a final outcome (placed/rejected). */
@@ -1652,7 +1851,8 @@ export class DrivesService {
       job_role: drive.job_role,
       venue: drive.venue,
       status: drive.status,
-      eligibility_cgpa: drive.eligibility_cgpa === null ? null : Number(drive.eligibility_cgpa),
+      eligibility_cgpa:
+        drive.eligibility_cgpa === null ? null : Number(drive.eligibility_cgpa),
       registered_count: drive._count.student_drive_applications,
     }));
   }
@@ -1744,7 +1944,8 @@ export class DrivesService {
       status: app.status,
       last_cleared_round: app.last_cleared_round,
       offer_response: app.offer_response,
-      offered_package: app.offered_package === null ? null : Number(app.offered_package),
+      offered_package:
+        app.offered_package === null ? null : Number(app.offered_package),
     }));
   }
 

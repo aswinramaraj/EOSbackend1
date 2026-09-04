@@ -119,7 +119,12 @@ export class FeePaymentService {
       return rows.map((p) => {
         const student = p.student_fee_demand_mapping.students;
         const studentName = student.soa_applications
-          ? [student.soa_applications.first_name, student.soa_applications.last_name].filter(Boolean).join(' ')
+          ? [
+              student.soa_applications.first_name,
+              student.soa_applications.last_name,
+            ]
+              .filter(Boolean)
+              .join(' ')
           : null;
         return {
           id: p.id,
@@ -128,8 +133,10 @@ export class FeePaymentService {
           student_name: studentName,
           register_number: student.register_no,
           department: student.courses.departments.name,
-          demand_category_name: p.fee_structure_items?.demand_categories?.name ?? null,
-          fee_structure_name: p.fee_structure_items?.fee_structures.name ?? null,
+          demand_category_name:
+            p.fee_structure_items?.demand_categories?.name ?? null,
+          fee_structure_name:
+            p.fee_structure_items?.fee_structures.name ?? null,
           amount_paid: p.amount_paid.toString(),
           payment_date: p.payment_date,
           payment_mode: p.payment_mode,
@@ -255,17 +262,43 @@ export class FeePaymentService {
       });
     }
 
-    return mapping.fee_structures.fee_structure_items.map((item) => {
-      // mapping.fee_payments is already scoped to this one
-      // student_fee_demand_mapping_id via the relation it was loaded
-      // through — filtering by item.id here adds the fee_structure_item_id
-      // half of the required two-column scope, never the only one.
-      const alreadyPaid = mapping.fee_payments
-        .filter((payment) => payment.fee_structure_item_id === item.id)
-        .reduce(
-          (sum, payment) => sum.plus(payment.amount_paid),
-          new Prisma.Decimal(0),
+    // mapping.fee_payments is already scoped to this one
+    // student_fee_demand_mapping_id via the relation it was loaded through.
+    // A whole-demand payment (fee_structure_item_id: null — the mapping-level
+    // Razorpay flow's shape, see createMappingLevelPayment below) settles
+    // every category at once on a real receipt; distributing it across items
+    // in order (not pro-rated) here — same logic as
+    // MeFeesService.computeFees() on the student-facing side — keeps this
+    // breakdown from showing every category "pending" right next to a
+    // demand that's already fully paid.
+    const directPaidByItemId = new Map<number, Prisma.Decimal>();
+    let lumpSumRemaining = new Prisma.Decimal(0);
+    for (const payment of mapping.fee_payments) {
+      if (payment.fee_structure_item_id === null) {
+        lumpSumRemaining = lumpSumRemaining.plus(payment.amount_paid);
+      } else {
+        const existing =
+          directPaidByItemId.get(payment.fee_structure_item_id) ??
+          new Prisma.Decimal(0);
+        directPaidByItemId.set(
+          payment.fee_structure_item_id,
+          existing.plus(payment.amount_paid),
         );
+      }
+    }
+
+    return mapping.fee_structures.fee_structure_items.map((item) => {
+      const directPaid =
+        directPaidByItemId.get(item.id) ?? new Prisma.Decimal(0);
+      const capacityRaw = item.amount.minus(directPaid);
+      const capacity = capacityRaw.isNegative()
+        ? new Prisma.Decimal(0)
+        : capacityRaw;
+      const fromLumpSum = lumpSumRemaining.greaterThan(capacity)
+        ? capacity
+        : lumpSumRemaining;
+      lumpSumRemaining = lumpSumRemaining.minus(fromLumpSum);
+      const alreadyPaid = directPaid.plus(fromLumpSum);
 
       const outstanding = computeOutstanding(item.amount, alreadyPaid);
 
@@ -1586,7 +1619,10 @@ export class FeePaymentService {
         select: { id: true },
       });
     } catch (err) {
-      this.logger.error('DB error while validating fee payments for receipt number', err);
+      this.logger.error(
+        'DB error while validating fee payments for receipt number',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

@@ -83,11 +83,39 @@ export class MeFeesService {
       // student_fee_demand_mapping_id, so filtering those rows by
       // fee_structure_item_id here never crosses into another student's
       // payments against the same shared fee_structure_items row.
+      //
+      // A payment recorded against the whole demand (fee_structure_item_id:
+      // null — the "pay full due" gateway flow's shape, see
+      // FeePaymentService's mapping-level payment methods) would otherwise
+      // be invisible to every line item here even though it fully settled
+      // the demand overall: total/paid/due above already reflects it, but
+      // this loop used to only ever match direct per-item payments, so
+      // every item kept showing "pending" next to an already-paid demand.
+      // Distributing it across items in order (not pro-rated) fixes that
+      // while keeping the result simple to read: earlier items settle
+      // first, a partial lump sum leaves the remaining items honestly due.
+      const directPaidByItemId = new Map<number, number>();
+      let lumpSumRemaining = 0;
+      for (const payment of mapping.fee_payments) {
+        const amount = Number(payment.amount_paid);
+        if (payment.fee_structure_item_id === null) {
+          lumpSumRemaining += amount;
+        } else {
+          directPaidByItemId.set(
+            payment.fee_structure_item_id,
+            (directPaidByItemId.get(payment.fee_structure_item_id) ?? 0) +
+              amount,
+          );
+        }
+      }
+
       const items = mapping.fee_structures.fee_structure_items.map((item) => {
         const itemTotal = Number(item.amount);
-        const itemPaid = mapping.fee_payments
-          .filter((payment) => payment.fee_structure_item_id === item.id)
-          .reduce((sum, payment) => sum + Number(payment.amount_paid), 0);
+        const directPaid = directPaidByItemId.get(item.id) ?? 0;
+        const capacity = Math.max(0, itemTotal - directPaid);
+        const fromLumpSum = Math.min(capacity, lumpSumRemaining);
+        lumpSumRemaining -= fromLumpSum;
+        const itemPaid = directPaid + fromLumpSum;
         const itemDue = round2(itemTotal - itemPaid);
         const itemStatus: 'paid' | 'partial' | 'pending' =
           itemDue <= 0 && itemTotal > 0

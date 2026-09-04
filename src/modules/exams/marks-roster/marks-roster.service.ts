@@ -66,6 +66,50 @@ export class MarksRosterService {
     });
   }
 
+  /**
+   * Batched form of findInternalMapping for N (class_id, subject_id) pairs
+   * sharing the same academic_year/semester — one query for every pair
+   * instead of one query per pair (the 3 call sites below used to issue one
+   * findInternalMapping round trip per class×subject combination, N+1 for
+   * a whole department/semester's worth of papers).
+   */
+  private async findInternalMappingsBatch(
+    pairs: { classId: number; subjectId: number; excludeMappingId: number }[],
+    academicYear: string,
+    semester: number,
+  ): Promise<Map<string, { id: number; exam_id: number } | null>> {
+    const result = new Map<string, { id: number; exam_id: number } | null>();
+    if (pairs.length === 0) return result;
+
+    const classIds = [...new Set(pairs.map((p) => p.classId))];
+    const subjectIds = [...new Set(pairs.map((p) => p.subjectId))];
+
+    const candidates = await this.prisma.exam_subject_mapping.findMany({
+      where: {
+        class_id: { in: classIds },
+        subject_id: { in: subjectIds },
+        exams: { academic_year: academicYear, semester, exam_types: { category: 'internal' } },
+      },
+      orderBy: { exam_id: 'desc' },
+      select: { id: true, exam_id: true, class_id: true, subject_id: true },
+    });
+
+    const byPairKey = new Map<string, { id: number; exam_id: number }[]>();
+    for (const c of candidates) {
+      const key = `${c.class_id}|${c.subject_id}`;
+      const arr = byPairKey.get(key) ?? [];
+      arr.push({ id: c.id, exam_id: c.exam_id });
+      byPairKey.set(key, arr);
+    }
+
+    for (const p of pairs) {
+      const key = `${p.classId}|${p.subjectId}`;
+      const candidatesForPair = byPairKey.get(key) ?? [];
+      result.set(key, candidatesForPair.find((c) => c.id !== p.excludeMappingId) ?? null);
+    }
+    return result;
+  }
+
   async getRoster(query: MarksRosterQueryDto) {
     const mapping = await this.prisma.exam_subject_mapping.findUnique({
       where: { id: query.exam_subject_mapping_id },
@@ -197,22 +241,24 @@ export class MarksRosterService {
     const subjectsById = new Map(mappings.map((m) => [m.subject_id, m.subjects]));
     const papers = [...subjectsById.values()].sort((a, b) => a.subject_code.localeCompare(b.subject_code));
 
-    const [students, externalMarks, internalMappings] = await Promise.all([
+    const [students, externalMarks, internalMappingByPair] = await Promise.all([
       this.prisma.students.findMany({
         where: { class_id: { in: classIds }, status: 'active' },
         select: { ...STUDENT_SELECT, classes: { select: { section: true, departments: { select: { code: true } } } } },
         orderBy: { register_no: 'asc' },
       }),
       this.prisma.exam_marks.findMany({ where: { exam_subject_mapping_id: { in: mappings.map((m) => m.id) } } }),
-      Promise.all(
-        mappings.map((m) =>
-          this.findInternalMapping(m.class_id, m.subject_id, exam.academic_year, exam.semester, m.id).then((im) => ({ mappingId: m.id, internalId: im?.id ?? null })),
-        ),
+      this.findInternalMappingsBatch(
+        mappings.map((m) => ({ classId: m.class_id, subjectId: m.subject_id, excludeMappingId: m.id })),
+        exam.academic_year,
+        exam.semester,
       ),
     ]);
 
-    const internalIdByMapping = new Map(internalMappings.map((r) => [r.mappingId, r.internalId]));
-    const internalMappingIds = internalMappings.map((r) => r.internalId).filter((id): id is number => id != null);
+    const internalIdByMapping = new Map(
+      mappings.map((m) => [m.id, internalMappingByPair.get(`${m.class_id}|${m.subject_id}`)?.id ?? null]),
+    );
+    const internalMappingIds = [...internalIdByMapping.values()].filter((id): id is number => id != null);
     const internalMarks = internalMappingIds.length
       ? await this.prisma.exam_marks.findMany({ where: { exam_subject_mapping_id: { in: internalMappingIds } } })
       : [];
@@ -402,14 +448,17 @@ export class MarksRosterService {
     const mappingIds = mappings.map((m) => m.id);
     const externalMarks = await this.prisma.exam_marks.findMany({ where: { exam_subject_mapping_id: { in: mappingIds } } });
 
-    const internalMappingByKey = new Map<string, number | null>();
-    for (const m of mappings) {
-      const key = `${m.class_id}|${m.subject_id}`;
-      if (!internalMappingByKey.has(key)) {
-        const im = await this.findInternalMapping(m.class_id, m.subject_id, exam.academic_year, exam.semester, m.id);
-        internalMappingByKey.set(key, im?.id ?? null);
-      }
-    }
+    const internalMappingByPair = await this.findInternalMappingsBatch(
+      mappings.map((m) => ({ classId: m.class_id, subjectId: m.subject_id, excludeMappingId: m.id })),
+      exam.academic_year,
+      exam.semester,
+    );
+    const internalMappingByKey = new Map<string, number | null>(
+      mappings.map((m) => {
+        const key = `${m.class_id}|${m.subject_id}`;
+        return [key, internalMappingByPair.get(key)?.id ?? null];
+      }),
+    );
     const internalMappingIds = [...new Set([...internalMappingByKey.values()].filter((id): id is number => id != null))];
     const internalMarks = internalMappingIds.length
       ? await this.prisma.exam_marks.findMany({ where: { exam_subject_mapping_id: { in: internalMappingIds } } })
@@ -557,12 +606,13 @@ export class MarksRosterService {
     });
     if (mappings.length === 0) return { exam_id: examId, rows: [] };
 
-    const internalByMainId = new Map<number, { id: number; exam_id: number } | null>();
-    await Promise.all(
-      mappings.map(async (m) => {
-        const im = await this.findInternalMapping(m.class_id, m.subject_id, exam.academic_year, exam.semester, m.id);
-        internalByMainId.set(m.id, im);
-      }),
+    const internalMappingByPair = await this.findInternalMappingsBatch(
+      mappings.map((m) => ({ classId: m.class_id, subjectId: m.subject_id, excludeMappingId: m.id })),
+      exam.academic_year,
+      exam.semester,
+    );
+    const internalByMainId = new Map<number, { id: number; exam_id: number } | null>(
+      mappings.map((m) => [m.id, internalMappingByPair.get(`${m.class_id}|${m.subject_id}`) ?? null]),
     );
 
     const internalMappings = [...internalByMainId.values()].filter((im): im is { id: number; exam_id: number } => im != null);

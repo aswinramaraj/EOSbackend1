@@ -40,7 +40,7 @@ export class MeExamScheduleService {
   async getMyExamSchedule(userId: number) {
     const student = await this.prisma.students.findUnique({
       where: { user_id: userId },
-      select: { class_id: true },
+      select: { id: true, class_id: true },
     });
 
     if (!student) {
@@ -54,21 +54,39 @@ export class MeExamScheduleService {
       return [];
     }
 
-    const rows = await this.fetchSchedule(userId, student.class_id);
+    const [rows, seatingByKey] = await Promise.all([
+      this.fetchSchedule(userId, student.class_id),
+      this.fetchSeatingByExamDate(userId, student.id),
+    ]);
 
-    return rows.map((row) => ({
-      id: row.id,
-      exam_type: row.exam_subject_mapping.exams.exam_types.name,
-      academic_year: row.exam_subject_mapping.exams.academic_year,
-      semester: row.exam_subject_mapping.exams.semester,
-      subject_name: row.exam_subject_mapping.subjects.name,
-      subject_code: row.exam_subject_mapping.subjects.subject_code,
-      exam_date: toDateOnly(row.exam_date),
-      start_time: toTimeOnly(row.start_time),
-      end_time: toTimeOnly(row.end_time),
-      session: row.session,
-      venue_name: row.venues?.name ?? null,
-    }));
+    return rows.map((row) => {
+      // Keyed by exam_id *and* exam_date, not exam_id alone — a single exam
+      // (e.g. "Semester 1 Quiz") schedules one exam_subject_mapping/date per
+      // subject under the same exam_id, so an exam_id-only key would collide
+      // and silently show every subject the same, last-written seat.
+      const seating = seatingByKey.get(
+        `${row.exam_subject_mapping.exams.id}:${toDateOnly(row.exam_date)}`,
+      );
+      return {
+        id: row.id,
+        exam_type: row.exam_subject_mapping.exams.exam_types.name,
+        academic_year: row.exam_subject_mapping.exams.academic_year,
+        semester: row.exam_subject_mapping.exams.semester,
+        subject_name: row.exam_subject_mapping.subjects.name,
+        subject_code: row.exam_subject_mapping.subjects.subject_code,
+        exam_date: toDateOnly(row.exam_date),
+        start_time: toTimeOnly(row.start_time),
+        end_time: toTimeOnly(row.end_time),
+        session: row.session,
+        // hall_plans (via the student's own seating_arrangements row) is the
+        // real source of the assigned venue, same as HallTicketsService.getSchedule() —
+        // exam_timetable.venue_id is a separate, effectively-unused column
+        // that's never populated by the actual seat-allocation workflow, so
+        // it's kept only as a fallback for a row that happens to have it set.
+        venue_name: seating?.venue_name ?? row.venues?.name ?? null,
+        seat_number: seating?.seat_number ?? null,
+      };
+    });
   }
 
   private async fetchSchedule(userId: number, classId: number) {
@@ -92,6 +110,7 @@ export class MeExamScheduleService {
               subjects: { select: { name: true, subject_code: true } },
               exams: {
                 select: {
+                  id: true,
                   academic_year: true,
                   semester: true,
                   exam_types: { select: { name: true } },
@@ -111,6 +130,49 @@ export class MeExamScheduleService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
+    }
+  }
+
+  /**
+   * Real per-student seat + venue, keyed by "exam_id:exam_date" — same
+   * seating_arrangements -> hall_plans -> venues join and per-date keying
+   * HallTicketsService.getSchedule() already uses for the COE-facing hall-ticket
+   * preview (that one scopes to a single exam_id so a bare date key is enough;
+   * this endpoint spans every exam the student has, so the key includes
+   * exam_id too). Most exams have no hall_plans row yet (seat allocation is a
+   * separate, later step from timetable publishing), so this is a best-effort
+   * map, not a join that would drop schedule rows with no seat assigned.
+   */
+  private async fetchSeatingByExamDate(
+    userId: number,
+    studentId: number,
+  ): Promise<Map<string, { seat_number: string; venue_name: string | null }>> {
+    try {
+      const seating = await this.prisma.seating_arrangements.findMany({
+        where: { student_id: studentId },
+        select: {
+          seat_number: true,
+          hall_plans: {
+            select: {
+              exam_id: true,
+              exam_date: true,
+              venues: { select: { name: true } },
+            },
+          },
+        },
+      });
+      return new Map(
+        seating.map((s) => [
+          `${s.hall_plans.exam_id}:${toDateOnly(s.hall_plans.exam_date)}`,
+          {
+            seat_number: s.seat_number,
+            venue_name: s.hall_plans.venues?.name ?? null,
+          },
+        ]),
+      );
+    } catch (err) {
+      this.logger.error(`Failed to fetch exam seating for user ${userId}`, err);
+      return new Map();
     }
   }
 }
