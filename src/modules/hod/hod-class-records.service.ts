@@ -60,28 +60,23 @@ export class HodClassRecordsService {
         orderBy: [{ current_semester: 'asc' }, { section: 'asc' }],
       });
 
-      const results: {
-        class_id: number;
-        section: string;
-        year: string;
-        semester: number;
-        student_count: number;
-      }[] = [];
-      // Sequential — one count() per class, same pooler-capacity discipline
-      // as every other hod service.
-      for (const cl of classes) {
-        const studentCount = await this.prisma.students.count({
-          where: { class_id: cl.id, status: 'active' },
-        });
-        results.push({
-          class_id: cl.id,
-          section: cl.section,
-          year: yearLabel(cl.current_semester) ?? '—',
-          semester: cl.current_semester ?? 0,
-          student_count: studentCount,
-        });
-      }
-      return results;
+      // One groupBy for every class's student count instead of one count()
+      // round trip per class — same result, a single query regardless of how
+      // many classes this department has.
+      const counts = await this.prisma.students.groupBy({
+        by: ['class_id'],
+        where: { class_id: { in: classes.map((cl) => cl.id) }, status: 'active' },
+        _count: { _all: true },
+      });
+      const countByClassId = new Map(counts.map((c) => [c.class_id, c._count._all]));
+
+      return classes.map((cl) => ({
+        class_id: cl.id,
+        section: cl.section,
+        year: yearLabel(cl.current_semester) ?? '—',
+        semester: cl.current_semester ?? 0,
+        student_count: countByClassId.get(cl.id) ?? 0,
+      }));
     } catch (err) {
       if (err instanceof NotFoundException) throw err;
       this.logger.error('DB error listing HoD class records', err);

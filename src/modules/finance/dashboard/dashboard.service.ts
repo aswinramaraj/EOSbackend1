@@ -5,6 +5,7 @@ import {
   type finance_ledger_source_enum,
 } from 'generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { TtlCache } from 'src/common/utils/ttl-cache.util';
 
 export interface FinanceFundSummary {
   id: number;
@@ -73,12 +74,23 @@ export interface FinanceDashboardView {
 export class FinanceDashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * GET /finance/dashboard — every figure below is derived from real rows;
-   * nothing is sampled or hardcoded. Queries run in parallel because none of
-   * them depends on another's result.
-   */
+  // 60s TTL: several finance staff hitting this dashboard within the same
+  // minute all currently trigger independent full-institution aggregates —
+  // a value up to a minute stale is normal/expected for a summary dashboard,
+  // not a correctness issue, and this directly cuts that repeated DB load.
+  private readonly overviewCache = new TtlCache<FinanceDashboardView>(60_000);
+
+  /** GET /finance/dashboard — cached for 60s; see computeOverview() for the real query. */
   async overview(): Promise<FinanceDashboardView> {
+    return this.overviewCache.get(() => this.computeOverview());
+  }
+
+  /**
+   * Every figure below is derived from real rows; nothing is sampled or
+   * hardcoded. Queries run in parallel because none of them depends on
+   * another's result.
+   */
+  private async computeOverview(): Promise<FinanceDashboardView> {
     // Every fund year, so the headline figures cover the whole institution
     // rather than whichever year happens to sort last.
     const allFunds = await this.prisma.finance_funds.findMany({
@@ -126,32 +138,55 @@ export class FinanceDashboardService {
     const popRejected = countOf(popByStatus, 'rejected');
     const sopRejected = countOf(sopByStatus, 'rejected');
 
-    const [trackingRows, ledgerRows, recent] = await Promise.all([
-      this.prisma.finance_order_tracking.findMany({
-        select: {
-          delivery_status: true,
-          quantity_delivered: true,
-          finance_order_allotments: { select: { quantity: true } },
-        },
-      }),
-      // Spend and movements span every fund year, matching the totals above.
-      this.prisma.finance_ledger_entries.findMany({
-        where: { entry_type: 'debit' },
-        select: { amount: true, created_at: true },
-      }),
-      this.prisma.finance_ledger_entries.findMany({
-        orderBy: { created_at: 'desc' },
-        take: 8,
-        select: {
-          id: true,
-          entry_type: true,
-          source: true,
-          amount: true,
-          narration: true,
-          created_at: true,
-        },
-      }),
-    ]);
+    // committed_this_year is (despite its name, per the spend shape below) an
+    // all-time total spanning every fund year, matching fund_years' totals —
+    // so this still needs one all-time aggregate; the fix is doing it as a
+    // SQL SUM instead of fetching every debit row ever and reducing in JS.
+    // last_30_days/by_month only ever need the last ~6 months, computed by
+    // the same aggregate query rather than a second full-table fetch.
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 6);
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const [trackingRows, [allTimeSpend], last30Row, monthlyRows, recent] =
+      await Promise.all([
+        this.prisma.finance_order_tracking.findMany({
+          select: {
+            delivery_status: true,
+            quantity_delivered: true,
+            finance_order_allotments: { select: { quantity: true } },
+          },
+        }),
+        this.prisma.$queryRaw<{ total: string | null }[]>`
+          SELECT COALESCE(SUM(amount), 0) AS total
+          FROM finance_ledger_entries
+          WHERE entry_type = 'debit'
+        `,
+        this.prisma.$queryRaw<{ total: string | null }[]>`
+          SELECT COALESCE(SUM(amount), 0) AS total
+          FROM finance_ledger_entries
+          WHERE entry_type = 'debit' AND created_at >= ${thirtyDaysAgo}
+        `,
+        this.prisma.$queryRaw<{ month: string; amount: string }[]>`
+          SELECT to_char(created_at, 'YYYY-MM') AS month, SUM(amount) AS amount
+          FROM finance_ledger_entries
+          WHERE entry_type = 'debit' AND created_at >= ${sixMonthsAgo}
+          GROUP BY 1
+          ORDER BY 1
+        `,
+        this.prisma.finance_ledger_entries.findMany({
+          orderBy: { created_at: 'desc' },
+          take: 8,
+          select: {
+            id: true,
+            entry_type: true,
+            source: true,
+            amount: true,
+            narration: true,
+            created_at: true,
+          },
+        }),
+      ]);
 
     // Institution-wide totals: the sum of every fund year.
     const total = fundYears.reduce((s, f) => s + f.total_amount, 0);
@@ -183,16 +218,6 @@ export class FinanceDashboardService {
 
     const topDepartments = await this.topDepartments();
 
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    let last30 = 0;
-    const monthly = new Map<string, number>();
-    for (const l of ledgerRows) {
-      const amt = Number(l.amount);
-      if (l.created_at >= thirtyDaysAgo) last30 += amt;
-      const key = `${l.created_at.getFullYear()}-${String(l.created_at.getMonth() + 1).padStart(2, '0')}`;
-      monthly.set(key, (monthly.get(key) ?? 0) + amt);
-    }
-
     return {
       fund: currentFund
         ? {
@@ -215,12 +240,9 @@ export class FinanceDashboardService {
       },
       delivery,
       spend: {
-        committed_this_year: ledgerRows.reduce((s, l) => s + Number(l.amount), 0),
-        last_30_days: last30,
-        by_month: [...monthly.entries()]
-          .sort(([a], [b]) => a.localeCompare(b))
-          .slice(-6)
-          .map(([month, amount]) => ({ month, amount })),
+        committed_this_year: Number(allTimeSpend?.total ?? 0),
+        last_30_days: Number(last30Row[0]?.total ?? 0),
+        by_month: monthlyRows.slice(-6).map((r) => ({ month: r.month, amount: Number(r.amount) })),
       },
       recent_movements: recent.map((r) => ({
         id: r.id.toString(),
@@ -242,32 +264,34 @@ export class FinanceDashboardService {
    * figures are the real approved amounts, not indent estimates.
    */
   private async topDepartments() {
-    const debits = await this.prisma.finance_ledger_entries.findMany({
-      where: { entry_type: 'debit', source: { in: ['pop_approval', 'sop_approval'] } },
-      select: {
-        amount: true,
-        purchase_order_proposals: {
-          select: { purchase_indents: { select: { departments: { select: { name: true } } } } },
-        },
-        service_order_proposals: {
-          select: { service_indents: { select: { departments: { select: { name: true } } } } },
-        },
-      },
-    });
+    const rows = await this.prisma.$queryRaw<
+      { department: string; amount: string; orders: bigint }[]
+    >`
+      SELECT department, COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS orders
+      FROM (
+        SELECT d.name AS department, fle.amount
+        FROM finance_ledger_entries fle
+        JOIN purchase_order_proposals pop ON pop.id = fle.purchase_order_proposal_id
+        JOIN purchase_indents pi ON pi.id = pop.indent_id
+        JOIN departments d ON d.id = pi.department_id
+        WHERE fle.entry_type = 'debit' AND fle.source = 'pop_approval'
+        UNION ALL
+        SELECT d.name AS department, fle.amount
+        FROM finance_ledger_entries fle
+        JOIN service_order_proposals sop ON sop.id = fle.service_order_proposal_id
+        JOIN service_indents si ON si.id = sop.indent_id
+        JOIN departments d ON d.id = si.department_id
+        WHERE fle.entry_type = 'debit' AND fle.source = 'sop_approval'
+      ) x
+      GROUP BY department
+      ORDER BY amount DESC
+      LIMIT 6
+    `;
 
-    const totals = new Map<string, { amount: number; orders: number }>();
-    for (const d of debits) {
-      const name =
-        d.purchase_order_proposals?.purchase_indents?.departments?.name ??
-        d.service_order_proposals?.service_indents?.departments?.name;
-      if (!name) continue;
-      const prev = totals.get(name) ?? { amount: 0, orders: 0 };
-      totals.set(name, { amount: prev.amount + Number(d.amount), orders: prev.orders + 1 });
-    }
-
-    return [...totals.entries()]
-      .map(([department, v]) => ({ department, amount: v.amount, orders: v.orders }))
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 6);
+    return rows.map((r) => ({
+      department: r.department,
+      amount: Number(r.amount),
+      orders: Number(r.orders),
+    }));
   }
 }

@@ -424,38 +424,35 @@ export class HodFacultyStaffService {
           })
         : [];
 
-      const subjects: {
-        subject_id: number;
-        code: string;
-        name: string;
-        class_id: number;
-        semester: number | null;
-        year_label: string | null;
-        section: string;
-        periods_per_week: number;
-      }[] = [];
-      // Sequential — one count() per subject mapping, same pooler-capacity
-      // discipline as every other hod service.
-      for (const m of mappings) {
-        const periodsPerWeek = await this.prisma.timetable_slots.count({
-          where: {
-            faculty_id: facultyId,
-            subject_id: m.subject_id,
-            class_id: m.class_id,
-            academic_year: academicYear!,
-          },
-        });
-        subjects.push({
-          subject_id: m.subject_id,
-          code: m.subjects.subject_code,
-          name: m.subjects.name,
-          class_id: m.class_id,
-          semester: m.classes.current_semester,
-          year_label: yearLabel(m.classes.current_semester),
-          section: m.classes.section,
-          periods_per_week: periodsPerWeek,
-        });
-      }
+      // One groupBy for every mapping's periods-per-week instead of one
+      // count() round trip per subject mapping — same result, a single query
+      // regardless of how many subjects this faculty teaches.
+      const periodCounts = mappings.length
+        ? await this.prisma.timetable_slots.groupBy({
+            by: ['subject_id', 'class_id'],
+            where: {
+              faculty_id: facultyId,
+              academic_year: academicYear!,
+              subject_id: { in: [...new Set(mappings.map((m) => m.subject_id))] },
+              class_id: { in: [...new Set(mappings.map((m) => m.class_id))] },
+            },
+            _count: { _all: true },
+          })
+        : [];
+      const periodsByPair = new Map(
+        periodCounts.map((c) => [`${c.subject_id}|${c.class_id}`, c._count._all]),
+      );
+
+      const subjects = mappings.map((m) => ({
+        subject_id: m.subject_id,
+        code: m.subjects.subject_code,
+        name: m.subjects.name,
+        class_id: m.class_id,
+        semester: m.classes.current_semester,
+        year_label: yearLabel(m.classes.current_semester),
+        section: m.classes.section,
+        periods_per_week: periodsByPair.get(`${m.subject_id}|${m.class_id}`) ?? 0,
+      }));
       const totalPeriodsPerWeek = subjects.reduce(
         (sum, s) => sum + s.periods_per_week,
         0,

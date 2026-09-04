@@ -124,36 +124,13 @@ export class PrincipalStudentsService {
     };
   }
 
+  /** Delegates to PrincipalDashboardService.computeFeesOutstanding() — one shared SQL aggregate instead of this service independently re-fetching and re-summing every demand/payment row itself. */
   private async feesOutstanding() {
-    const [demandMappings, paidByMapping] = await Promise.all([
-      this.prisma.student_fee_demand_mapping.findMany({
-        select: { id: true, student_id: true, total_amount: true },
-      }),
-      this.prisma.fee_payments.groupBy({
-        by: ['student_fee_demand_mapping_id'],
-        _sum: { amount_paid: true },
-      }),
-    ]);
-
-    const paidMap = new Map(
-      paidByMapping.map((p) => [
-        p.student_fee_demand_mapping_id,
-        Number(p._sum.amount_paid ?? 0),
-      ]),
-    );
-
-    let totalOutstanding = 0;
-    const studentsWithOutstanding = new Set<number>();
-    for (const m of demandMappings) {
-      const outstanding = Number(m.total_amount) - (paidMap.get(m.id) ?? 0);
-      if (outstanding > 0) {
-        totalOutstanding += outstanding;
-        studentsWithOutstanding.add(m.student_id);
-      }
-    }
+    const { totalOutstanding, studentsWithOutstanding } =
+      await this.dashboard.computeFeesOutstanding();
 
     return {
-      students_pending: studentsWithOutstanding.size,
+      students_pending: studentsWithOutstanding,
       total_outstanding: Math.round(totalOutstanding),
     };
   }
@@ -231,44 +208,48 @@ export class PrincipalStudentsService {
       ];
     }
 
-    const rows = await this.prisma.students.findMany({
-      where,
-      orderBy: { id: 'desc' },
-      select: {
-        id: true,
-        student_id_no: true,
-        roll_no: true,
-        register_no: true,
-        status: true,
-        batches: { select: { id: true, name: true, start_year: true } },
-        classes: {
-          select: {
-            section: true,
-            current_semester: true,
-            departments: { select: { id: true, name: true, code: true } },
-          },
+    const STUDENT_SELECT = {
+      id: true,
+      student_id_no: true,
+      roll_no: true,
+      register_no: true,
+      status: true,
+      batches: { select: { id: true, name: true, start_year: true } },
+      classes: {
+        select: {
+          section: true,
+          current_semester: true,
+          departments: { select: { id: true, name: true, code: true } },
         },
-        courses: {
-          select: {
-            departments: { select: { id: true, name: true, code: true } },
-          },
-        },
-        users: { select: { email: true } },
-        soa_applications: { select: { first_name: true, last_name: true } },
-        faculty: { select: { id: true, first_name: true, last_name: true } },
       },
-    });
+      courses: {
+        select: {
+          departments: { select: { id: true, name: true, code: true } },
+        },
+      },
+      users: { select: { email: true } },
+      soa_applications: { select: { first_name: true, last_name: true } },
+      faculty: { select: { id: true, first_name: true, last_name: true } },
+    } satisfies NonNullable<
+      Parameters<typeof this.prisma.students.findMany>[0]
+    >['select'];
 
-    const ids = rows.map((r) => r.id);
-    const [attendanceByStudent, feeByStudent, placementByStudent, cgpaByStudent] =
-      await Promise.all([
-        this.attendanceByStudent(ids),
-        this.feesByStudent(ids),
-        this.placementByStudent(ids),
-        this.cgpaByStudent(ids),
-      ]);
+    type StudentRow = Awaited<
+      ReturnType<
+        typeof this.prisma.students.findMany<{
+          where: typeof where;
+          select: typeof STUDENT_SELECT;
+        }>
+      >
+    >[number];
 
-    let students = rows.map((row) => {
+    const toResponseRow = (
+      row: StudentRow,
+      attendanceByStudent: Map<number, number>,
+      feeByStudent: Map<number, 'paid' | 'partial' | 'pending' | 'not_billed'>,
+      placementByStudent: Map<number, 'placed' | 'applied' | 'not_registered'>,
+      cgpaByStudent: Map<number, { cgpa: number | null; arrear_count: number }>,
+    ) => {
       const name =
         row.soa_applications?.first_name || row.soa_applications?.last_name
           ? [row.soa_applications?.first_name, row.soa_applications?.last_name]
@@ -298,7 +279,86 @@ export class PrincipalStudentsService {
           ? { id: row.faculty.id, name: `${row.faculty.first_name} ${row.faculty.last_name}` }
           : null,
       };
+    };
+
+    const limit = query.limit ?? DEFAULT_PAGE_SIZE;
+    const page = query.page ?? 1;
+
+    // Fast path: no derived-metric filter requested (the common case — plain
+    // browsing/search). SQL does the sort and pagination directly, and the
+    // 4 bulk lookups below only ever run against this page's ~15 ids instead
+    // of every matching student institution-wide.
+    if (!query.filter || query.filter === 'all') {
+      const [rows, total] = await this.prisma.$transaction([
+        this.prisma.students.findMany({
+          where,
+          select: STUDENT_SELECT,
+          // Batch-wise register order: most recently admitted batch (current
+          // 1st years) first, then department code, then section, then
+          // register/roll number — matches the paper register's real filing
+          // order. Prisma can't coalesce classes.departments/courses.departments
+          // into one sort key, so this orders by the (far more common)
+          // classes.departments path; a student on the rarer courses-only
+          // path sorts by department last instead of by its actual code —
+          // a documented, low-risk approximation, not a correctness bug
+          // (every student still appears exactly once, on the right page).
+          orderBy: [
+            { batches: { start_year: 'desc' } },
+            { classes: { departments: { code: 'asc' } } },
+            { classes: { section: 'asc' } },
+            { register_no: 'asc' },
+            { roll_no: 'asc' },
+          ],
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+        this.prisma.students.count({ where }),
+      ]);
+
+      const ids = rows.map((r) => r.id);
+      const [attendanceByStudent, feeByStudent, placementByStudent, cgpaByStudent] =
+        await Promise.all([
+          this.attendanceByStudent(ids),
+          this.feesByStudent(ids),
+          this.placementByStudent(ids),
+          this.cgpaByStudent(ids),
+        ]);
+
+      return {
+        total,
+        page,
+        limit,
+        total_pages: Math.max(Math.ceil(total / limit), 1),
+        students: rows.map((row) =>
+          toResponseRow(row, attendanceByStudent, feeByStudent, placementByStudent, cgpaByStudent),
+        ),
+      };
+    }
+
+    // Slow path: a derived-metric filter (attendance/fees/cgpa/arrears) is
+    // requested. Computing these correctly in SQL would need a materialized
+    // rollup this schema doesn't have, so every matching student is fetched,
+    // the derived fields computed, then filtered/sorted/paginated in memory —
+    // unavoidable for this specific request shape, but no longer paid by the
+    // default "no filter" page load above.
+    const rows = await this.prisma.students.findMany({
+      where,
+      orderBy: { id: 'desc' },
+      select: STUDENT_SELECT,
     });
+
+    const ids = rows.map((r) => r.id);
+    const [attendanceByStudent, feeByStudent, placementByStudent, cgpaByStudent] =
+      await Promise.all([
+        this.attendanceByStudent(ids),
+        this.feesByStudent(ids),
+        this.placementByStudent(ids),
+        this.cgpaByStudent(ids),
+      ]);
+
+    let students = rows.map((row) =>
+      toResponseRow(row, attendanceByStudent, feeByStudent, placementByStudent, cgpaByStudent),
+    );
 
     if (query.filter === 'attendance_below_75') {
       students = students.filter(
@@ -339,8 +399,6 @@ export class PrincipalStudentsService {
     });
 
     const total = students.length;
-    const limit = query.limit ?? DEFAULT_PAGE_SIZE;
-    const page = query.page ?? 1;
     const offset = (page - 1) * limit;
     const pageStudents = students.slice(offset, offset + limit);
 

@@ -649,15 +649,22 @@ export class AttendanceService {
       };
     }
 
+    await this.applyRoleScoping(where, currentUser, query.student_id);
+
     // is_published isn't a schema.prisma field — for STUDENT/PARENT, resolve
     // the set of published ids via raw SQL first and constrain the typed
     // query to just those, instead of filtering in the where clause itself.
+    // Scoped by student_id (now resolved by applyRoleScoping above) so this
+    // is an indexed per-student/per-children lookup instead of a full scan
+    // of every published attendance record institution-wide.
     if (currentUser.role === ROLES.STUDENT || currentUser.role === ROLES.PARENT) {
-      const publishedIds = await this.prisma.$queryRaw<{ id: number }[]>`SELECT id FROM attendance_records WHERE is_published = true`;
+      const studentIdFilter = where.student_id;
+      const publishedIds =
+        typeof studentIdFilter === 'number'
+          ? await this.prisma.$queryRaw<{ id: number }[]>`SELECT id FROM attendance_records WHERE is_published = true AND student_id = ${studentIdFilter}`
+          : await this.prisma.$queryRaw<{ id: number }[]>`SELECT id FROM attendance_records WHERE is_published = true AND student_id = ANY(${(studentIdFilter as { in: number[] }).in})`;
       where.id = { in: publishedIds.map((r) => r.id) };
     }
-
-    await this.applyRoleScoping(where, currentUser, query.student_id);
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.attendance_records.findMany({
