@@ -9,7 +9,24 @@ import { PrismaClient } from '../../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool, type PoolClient } from 'pg';
 
-const POOL_SIZE = 20;
+// The Supabase pooler this project points at caps out at 15 total
+// concurrent SESSION-MODE connections - a Supavisor-level concurrency
+// limit enforced before Postgres ever sees the connection (confirmed live:
+// pg_stat_activity shows only Supabase's own internal sessions, nothing
+// app-related, well under Postgres's own connection ceiling - the 15 cap
+// is Supavisor's own accounting, not something a stuck backend session can
+// be killed to free). That 15 is shared across everything that connects
+// this way at once - the deployed backend, anyone's local dev server,
+// Prisma Studio, ad-hoc scripts - not 15 per instance. warmPool() below
+// claims this many connections *permanently* (idleTimeoutMillis: 0), so a
+// single instance claiming anywhere close to the full 15 starves every
+// other connector, including a second instance of this same service.
+// Overridable via DB_POOL_SIZE for an environment that's alone against the
+// database and can afford more (or one on a higher-tier Supabase plan with
+// a bigger ceiling); the default is deliberately conservative so local dev
+// and the deployed instance can both be alive at once without this exact
+// starvation.
+const POOL_SIZE = Number(process.env.DB_POOL_SIZE) || 5;
 
 @Injectable()
 export class PrismaService

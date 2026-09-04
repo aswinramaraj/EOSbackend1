@@ -2570,6 +2570,7 @@ model users {
   visitor_logs                                                                      visitor_logs[]
   wallet_transactions                                                               wallet_transactions[]
   wallets                                                                           wallets?
+  stationary_requests                                                               stationary_requests[]
 }
 
 model vendor_quotations {
@@ -6664,4 +6665,62 @@ enum script_bundle_status_enum {
   allotted
   under_valuation
   submitted
+}
+
+enum stationary_orientation_enum {
+  portrait
+  landscape
+}
+
+enum stationary_color_mode_enum {
+  color
+  bw
+}
+
+enum stationary_pages_enum {
+  all
+  even
+  odd
+}
+
+// 'draft' rows exist only so a request that was paid for from an
+// already-saved draft can be traced back to it - the mobile app itself
+// still keeps drafts client-side (on-device, per user) rather than
+// syncing them here; only a request that's actually gone through
+// checkout ever gets written to this table. See StationaryService.
+enum stationary_request_status_enum {
+  pending_payment
+  paid
+}
+
+/// A print/xerox shop request (see amenity/stationary in the mobile app) -
+/// file/copies/orientation/color/pages chosen client-side, this table only
+/// exists from the point a request actually goes to checkout. Mirrors
+/// wallet_transactions' Razorpay order/verify shape exactly (see
+/// WalletService.createTopupOrder/verifyTopup) - createOrder() stages a
+/// 'pending_payment' row with a real Razorpay order, verifyPayment()
+/// recomputes the HMAC signature server-side and only then flips it to
+/// 'paid'. amount is computed server-side from a flat per-copy rate (see
+/// StationaryService.PRICING) - there's no per-document page count
+/// available anywhere in this schema to price against, so this is
+/// necessarily a placeholder scheme until real page-count extraction
+/// exists.
+model stationary_requests {
+  id                  Int                             @id @default(autoincrement())
+  user_id             Int
+  file_name           String?                         @db.VarChar(255)
+  copies              Int
+  orientation         stationary_orientation_enum
+  color_mode          stationary_color_mode_enum
+  pages               stationary_pages_enum
+  amount              Decimal                         @db.Decimal(10, 2)
+  status              stationary_request_status_enum  @default(pending_payment)
+  razorpay_order_id   String?                         @unique @db.VarChar(100)
+  razorpay_payment_id String?                         @db.VarChar(100)
+  razorpay_signature  String?                         @db.VarChar(255)
+  created_at          DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime                        @default(now()) @db.Timestamptz(6)
+  users               users                           @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([user_id, created_at])
 }
