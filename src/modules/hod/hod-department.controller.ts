@@ -129,8 +129,9 @@ export class HodDepartmentController {
     @CurrentUser() user: JwtPayload,
     @Query('class_id', ParseIntPipe) classId: number,
     @Query('exam_type_id', ParseIntPipe) examTypeId: number,
+    @Query('semester', ParseIntPipe) semester: number,
   ) {
-    return this.examinations.getGrid(user, classId, examTypeId);
+    return this.examinations.getGrid(user, classId, examTypeId, semester);
   }
 
   /** GET /hod/examinations/grid/export — same grid as above, as a real .xlsx download. */
@@ -140,12 +141,14 @@ export class HodDepartmentController {
     @CurrentUser() user: JwtPayload,
     @Query('class_id', ParseIntPipe) classId: number,
     @Query('exam_type_id', ParseIntPipe) examTypeId: number,
+    @Query('semester', ParseIntPipe) semester: number,
     @Res() res: Response,
   ) {
     const table = await this.examinations.getGridExportTable(
       user,
       classId,
       examTypeId,
+      semester,
     );
     const buffer = await renderExcel(table);
     res.set({

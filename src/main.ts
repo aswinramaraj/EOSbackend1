@@ -70,24 +70,34 @@ async function bootstrap() {
   );
 
   // ── Swagger / OpenAPI docs ───────────────────────────────────────────────────
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('EOS Backend API')
-    .setDescription('REST API for the EOS school-management backend')
-    .setVersion('1.0')
-    .addBearerAuth(
-      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
-      'access-token',
-    )
-    .build();
-  const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, swaggerDocument);
+  // Dev/staging only — this was previously mounted unconditionally, publicly
+  // exposing the full API schema (every route, every DTO shape) to anyone,
+  // in whatever environment this happened to run in. NODE_ENV=production is
+  // set automatically by every real deployment target (Render included);
+  // local `npm run start:dev` and CI never set it, so this stays available
+  // exactly where it's useful.
+  if (process.env.NODE_ENV !== 'production') {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('EOS Backend API')
+      .setDescription('REST API for the EOS school-management backend')
+      .setVersion('1.0')
+      .addBearerAuth(
+        { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+        'access-token',
+      )
+      .build();
+    const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, swaggerDocument);
+  }
 
   // ── Start ────────────────────────────────────────────────────────────────────
   const port = parseInt(process.env.PORT || '3001', 10);
   await app.listen(port);
   const localUrl = `http://localhost:${port}`;
   logger.log(`🚀 EOS Backend running on ${localUrl}/api/v1`);
-  logger.log(`📘 Swagger docs available at ${localUrl}/api/docs`);
+  if (process.env.NODE_ENV !== 'production') {
+    logger.log(`📘 Swagger docs available at ${localUrl}/api/docs`);
+  }
   // RENDER_EXTERNAL_URL is auto-injected by Render on every web service —
   // unset in local dev, so this block only logs there.
   const renderUrl = process.env.RENDER_EXTERNAL_URL;

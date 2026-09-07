@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsDateString,
   IsEnum,
   IsInt,
   IsNotEmpty,
@@ -29,6 +30,15 @@ export class CreateFeeStructureDto {
   @IsString()
   @IsNotEmpty()
   academic_year: string;
+
+  /**
+   * Universal — applies to every student demanded against this one
+   * structure, not set per student. Optional: an undated structure keeps
+   * working exactly as before, simply never triggers a reminder.
+   */
+  @IsOptional()
+  @IsDateString()
+  due_date?: string;
 
   @IsArray()
   @ArrayMinSize(1)

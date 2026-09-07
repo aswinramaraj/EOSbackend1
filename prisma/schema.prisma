@@ -305,35 +305,36 @@ model bonafide_requests {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model book_borrow_records {
-  id                                                                Int                @id @default(autoincrement())
+  id                                                                Int                    @id @default(autoincrement())
   book_id                                                           Int
   borrower_type                                                     borrower_type_enum
   student_id                                                        Int?
   faculty_id                                                        Int?
-  borrowed_date                                                     DateTime           @default(dbgenerated("CURRENT_DATE")) @db.Date
-  due_date                                                          DateTime           @db.Date
-  returned_date                                                     DateTime?          @db.Date
-  status                                                            borrow_status_enum @default(borrowed)
-  renewal_count                                                     Int                @default(0) @db.SmallInt
-  last_renewed_at                                                   DateTime?          @db.Timestamptz(6)
-  damage_lost_charge_amount                                         Decimal?           @db.Decimal(10, 2)
+  borrowed_date                                                     DateTime               @default(dbgenerated("CURRENT_DATE")) @db.Date
+  due_date                                                          DateTime               @db.Date
+  returned_date                                                     DateTime?              @db.Date
+  status                                                            borrow_status_enum     @default(borrowed)
+  renewal_count                                                     Int                    @default(0) @db.SmallInt
+  last_renewed_at                                                   DateTime?              @db.Timestamptz(6)
+  damage_lost_charge_amount                                         Decimal?               @db.Decimal(10, 2)
   damage_lost_collected_by_user_id                                  Int?
-  damage_lost_declared_at                                           DateTime?          @db.Timestamptz(6)
-  damage_lost_settled                                               Boolean            @default(false)
-  damage_lost_settled_at                                            DateTime?          @db.Timestamptz(6)
+  damage_lost_declared_at                                           DateTime?              @db.Timestamptz(6)
+  damage_lost_settled                                               Boolean                @default(false)
+  damage_lost_settled_at                                            DateTime?              @db.Timestamptz(6)
   fine_collected_by_user_id                                         Int?
-  fine_paid                                                         Boolean            @default(false)
-  fine_paid_amount                                                  Decimal?           @db.Decimal(10, 2)
-  fine_paid_at                                                      DateTime?          @db.Timestamptz(6)
-  replacement_indent_id                                             Int?               @unique
+  fine_paid                                                         Boolean                @default(false)
+  fine_paid_amount                                                  Decimal?               @db.Decimal(10, 2)
+  fine_paid_at                                                      DateTime?              @db.Timestamptz(6)
+  replacement_indent_id                                             Int?                   @unique
   staff_user_id                                                     Int?
-  books                                                             books              @relation(fields: [book_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_book_borrow_records_damage_lost_collected_by_user_idTousers users?             @relation("book_borrow_records_damage_lost_collected_by_user_idTousers", fields: [damage_lost_collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  faculty                                                           faculty?           @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_book_borrow_records_fine_collected_by_user_idTousers        users?             @relation("book_borrow_records_fine_collected_by_user_idTousers", fields: [fine_collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  purchase_indents                                                  purchase_indents?  @relation(fields: [replacement_indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users_book_borrow_records_staff_user_idTousers                    users?             @relation("book_borrow_records_staff_user_idTousers", fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students                                                          students?          @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  books                                                             books                  @relation(fields: [book_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_book_borrow_records_damage_lost_collected_by_user_idTousers users?                 @relation("book_borrow_records_damage_lost_collected_by_user_idTousers", fields: [damage_lost_collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty                                                           faculty?               @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_book_borrow_records_fine_collected_by_user_idTousers        users?                 @relation("book_borrow_records_fine_collected_by_user_idTousers", fields: [fine_collected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_indents                                                  purchase_indents?      @relation(fields: [replacement_indent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_book_borrow_records_staff_user_idTousers                    users?                 @relation("book_borrow_records_staff_user_idTousers", fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students                                                          students?              @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  book_borrow_requests                                              book_borrow_requests[]
 
   @@index([status], map: "idx_book_borrow_status")
 }
@@ -346,25 +347,26 @@ model book_categories {
 }
 
 model books {
-  id                  Int                   @id @default(autoincrement())
-  qr_code             String                @unique @db.VarChar(100)
-  title               String                @db.VarChar(255)
-  author              String?               @db.VarChar(255)
-  category_id         Int
-  total_copies        Int                   @default(1)
-  available_copies    Int                   @default(1)
-  department_id       Int?
-  edition             String?               @db.VarChar(50)
-  isbn                String?               @db.VarChar(30)
-  price_per_copy      Decimal?              @db.Decimal(10, 2)
-  publisher           String?               @db.VarChar(255)
-  vendor_fund         String?               @db.VarChar(255)
-  rack_id             Int?
-  deleted_at          DateTime?             @db.Timestamptz(6)
-  book_borrow_records book_borrow_records[]
-  book_categories     book_categories       @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  departments         departments?          @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  library_racks       library_racks?        @relation(fields: [rack_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                   Int                    @id @default(autoincrement())
+  qr_code              String                 @unique @db.VarChar(100)
+  title                String                 @db.VarChar(255)
+  author               String?                @db.VarChar(255)
+  category_id          Int
+  total_copies         Int                    @default(1)
+  available_copies     Int                    @default(1)
+  department_id        Int?
+  edition              String?                @db.VarChar(50)
+  isbn                 String?                @db.VarChar(30)
+  price_per_copy       Decimal?               @db.Decimal(10, 2)
+  publisher            String?                @db.VarChar(255)
+  vendor_fund          String?                @db.VarChar(255)
+  rack_id              Int?
+  deleted_at           DateTime?              @db.Timestamptz(6)
+  book_borrow_records  book_borrow_records[]
+  book_borrow_requests book_borrow_requests[]
+  book_categories      book_categories        @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  departments          departments?           @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  library_racks        library_racks?         @relation(fields: [rack_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model bus_live_locations {
@@ -800,6 +802,7 @@ model faculty {
   attendance_records                                                                         attendance_records[]
   bonafide_requests                                                                          bonafide_requests[]
   book_borrow_records                                                                        book_borrow_records[]
+  book_borrow_requests                                                                       book_borrow_requests[]
   campus_outing_requests                                                                     campus_outing_requests[]
   class_mentors                                                                              class_mentors[]
   department_events                                                                          department_events[]
@@ -867,6 +870,7 @@ model faculty {
   student_leaves                                                                             student_leaves[]
   student_projects                                                                           student_projects[]
   students                                                                                   students[]
+  subject_academic_clearance                                                                 subject_academic_clearance[]
   timetable_slots                                                                            timetable_slots[]
 
   @@index([department_id], map: "idx_faculty_department")
@@ -939,6 +943,7 @@ model faculty_subject_class_mapping {
   subjects                                                             subjects                     @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   faculty_faculty_subject_class_mapping_substitute_faculty_idTofaculty faculty?                     @relation("faculty_subject_class_mapping_substitute_faculty_idTofaculty", fields: [substitute_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   feedback_faculty_responses                                           feedback_faculty_responses[]
+  subject_academic_clearance                                           subject_academic_clearance[]
 
   @@unique([subject_id, class_id, academic_year])
 }
@@ -972,6 +977,8 @@ model fee_payments {
 
   @@index([student_fee_demand_mapping_id], map: "idx_fee_payments_demand")
   @@index([fee_structure_item_id], map: "idx_fee_payments_fee_structure_item")
+  @@index([collected_by_user_id], map: "idx_fee_payments_collected_by")
+  @@index([payment_date], map: "idx_fee_payments_payment_date")
 }
 
 model fee_receipt_number_payments {
@@ -1017,6 +1024,7 @@ model fee_structures {
   quota_id                   Int?
   academic_year              String                        @db.VarChar(20)
   created_at                 DateTime                      @default(now()) @db.Timestamptz(6)
+  due_date                   DateTime?                     @db.Date
   faculty_hostel_mapping     faculty_hostel_mapping[]
   fee_concessions            fee_concessions[]
   fee_structure_items        fee_structure_items[]
@@ -2078,6 +2086,8 @@ model student_fee_demand_mapping {
   students                   students                     @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([student_id], map: "idx_fee_demand_student")
+  @@index([demand_category], map: "idx_student_fee_demand_mapping_category")
+  @@index([fee_structure_id], map: "idx_student_fee_demand_mapping_fee_structure")
 }
 
 model student_hostel_mapping {
@@ -2214,10 +2224,12 @@ model students {
   face_enrolled_at                                                  DateTime?                               @db.Timestamptz(6)
   mentor_faculty_id                                                 Int?
   is_class_rep                                                      Boolean                                 @default(false)
+  career_path                                                       String?                                 @db.VarChar(20)
   alumni_members                                                    alumni_members?
   attendance_records                                                attendance_records[]
   bonafide_requests                                                 bonafide_requests[]
   book_borrow_records                                               book_borrow_records[]
+  book_borrow_requests                                              book_borrow_requests[]
   campus_outing_requests                                            campus_outing_requests[]
   certificate_requests                                              certificate_requests[]
   condonation_requests                                              condonation_requests[]
@@ -2303,6 +2315,7 @@ model students {
   quotas                                                            quotas                                  @relation(fields: [quota_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   soa_applications                                                  soa_applications?                       @relation(fields: [soa_application_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                                                             users                                   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subject_academic_clearance                                        subject_academic_clearance[]
 
   @@index([batch_id], map: "idx_students_batch")
   @@index([class_id], map: "idx_students_class")
@@ -2416,6 +2429,7 @@ model users {
   book_borrow_records_book_borrow_records_damage_lost_collected_by_user_idTousers   book_borrow_records[]                   @relation("book_borrow_records_damage_lost_collected_by_user_idTousers")
   book_borrow_records_book_borrow_records_fine_collected_by_user_idTousers          book_borrow_records[]                   @relation("book_borrow_records_fine_collected_by_user_idTousers")
   book_borrow_records_book_borrow_records_staff_user_idTousers                      book_borrow_records[]                   @relation("book_borrow_records_staff_user_idTousers")
+  book_borrow_requests                                                              book_borrow_requests[]
   bus_fuel_logs                                                                     bus_fuel_logs[]
   bus_service_logs                                                                  bus_service_logs[]
   calendar_events                                                                   calendar_events[]
@@ -2550,6 +2564,7 @@ model users {
   sports_reports                                                                    sports_reports[]
   sports_session_attendance                                                         sports_session_attendance[]
   startup_ideas                                                                     startup_ideas[]
+  stationary_requests                                                               stationary_requests[]
   student_drive_applications                                                        student_drive_applications[]
   student_escalations                                                               student_escalations[]
   student_id_card_issuances                                                         student_id_card_issuances[]
@@ -5797,6 +5812,71 @@ model student_id_card_issuances {
   @@index([student_id, issued_at], map: "idx_student_id_card_issuances_student_id")
 }
 
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model book_borrow_requests {
+  id                  Int                  @id @default(autoincrement())
+  book_id             Int
+  student_id          Int?
+  status              approval_status_enum @default(pending)
+  requested_at        DateTime             @default(now()) @db.Timestamptz(6)
+  reviewed_by_user_id Int?
+  reviewed_at         DateTime?            @db.Timestamptz(6)
+  borrow_record_id    Int?
+  faculty_id          Int?
+  borrower_type       borrower_type_enum   @default(student)
+  books               books                @relation(fields: [book_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  book_borrow_records book_borrow_records? @relation(fields: [borrow_record_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty             faculty?             @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               users?               @relation(fields: [reviewed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students            students?            @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([book_id, faculty_id], map: "idx_book_borrow_requests_pending_unique_faculty", where: raw("((status = 'pending'::approval_status_enum) AND (faculty_id IS NOT NULL))"))
+  @@unique([book_id, student_id], map: "idx_book_borrow_requests_pending_unique_student", where: raw("((status = 'pending'::approval_status_enum) AND (student_id IS NOT NULL))"))
+  @@index([status], map: "idx_book_borrow_requests_status")
+  @@index([student_id], map: "idx_book_borrow_requests_student")
+  @@index([faculty_id], map: "idx_book_borrow_requests_faculty")
+}
+
+model stationary_requests {
+  id                  Int                            @id @default(autoincrement())
+  user_id             Int
+  file_name           String?                        @db.VarChar(255)
+  copies              Int
+  orientation         stationary_orientation_enum
+  color_mode          stationary_color_mode_enum
+  pages               stationary_pages_enum
+  amount              Decimal                        @db.Decimal(10, 2)
+  status              stationary_request_status_enum @default(pending_payment)
+  razorpay_order_id   String?                        @unique @db.VarChar(100)
+  razorpay_payment_id String?                        @db.VarChar(100)
+  razorpay_signature  String?                        @db.VarChar(255)
+  created_at          DateTime                       @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime                       @default(now()) @db.Timestamptz(6)
+  users               users                          @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([user_id, created_at])
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model subject_academic_clearance {
+  id                               BigInt                        @id @default(autoincrement())
+  student_id                       Int
+  faculty_subject_class_mapping_id Int
+  internal1_cleared                Boolean                       @default(false)
+  internal2_cleared                Boolean                       @default(false)
+  project_cleared                  Boolean                       @default(false)
+  assignment_cleared               Boolean                       @default(false)
+  quiz_cleared                     Boolean                       @default(false)
+  updated_by_faculty_id            Int?
+  updated_at                       DateTime                      @default(now()) @db.Timestamptz(6)
+  faculty_subject_class_mapping    faculty_subject_class_mapping @relation(fields: [faculty_subject_class_mapping_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  students                         students                      @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  faculty                          faculty?                      @relation(fields: [updated_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([student_id, faculty_subject_class_mapping_id])
+  @@index([faculty_subject_class_mapping_id], map: "idx_subject_academic_clearance_mapping")
+}
+
 enum achievement_media_type_enum {
   photo
   video
@@ -6287,6 +6367,7 @@ enum notification_type_enum {
   exam_timetable_updated
   revaluation_status_updated
   invigilation_duty_assigned
+  fee_overdue_reminder
 }
 
 enum coordinator_calendar_entry_type_enum {
@@ -6664,4 +6745,25 @@ enum script_bundle_status_enum {
   allotted
   under_valuation
   submitted
+}
+
+enum stationary_color_mode_enum {
+  color
+  bw
+}
+
+enum stationary_orientation_enum {
+  portrait
+  landscape
+}
+
+enum stationary_pages_enum {
+  all
+  even
+  odd
+}
+
+enum stationary_request_status_enum {
+  pending_payment
+  paid
 }

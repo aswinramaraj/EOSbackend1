@@ -8,12 +8,15 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { withDbRetry } from 'src/modules/finance/db-retry';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { Prisma } from '../../../../generated/prisma/client';
+import { notification_type_enum } from '../../../../generated/prisma/enums';
 import { CreateFeePaymentDto } from './dto/create-fee-payment.dto';
 import { UpdateFeePaymentDto } from './dto/update-fee-payment.dto';
 import { CreateFeePaymentOrderDto } from './dto/create-fee-payment-order.dto';
@@ -27,6 +30,20 @@ import { CategoryBreakdownItemDto } from './dto/fee-payment-category-breakdown.d
 import { IssueReceiptNumberDto } from './dto/issue-receipt-number.dto';
 
 type DueStatus = 'paid' | 'partial' | 'pending';
+
+/**
+ * One row per still-unpaid student_fee_demand_mapping whose fee_structures
+ * .due_date matched the reminder query's date window — see
+ * FeePaymentService.notifyFeeReminderRows().
+ */
+interface FeeReminderRow {
+  mapping_id: number;
+  user_id: number;
+  fee_structure_name: string;
+  due_date: Date;
+  total_amount: Prisma.Decimal | number | string;
+  paid_amount: Prisma.Decimal | number | string;
+}
 
 function computeDueStatus(
   totalDemand: Prisma.Decimal,
@@ -1661,5 +1678,139 @@ export class FeePaymentService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  private readonly FEE_DUE_SOON_WINDOW_DAYS = 7;
+
+  /**
+   * Daily @Cron — the automatic producer behind sendFeeDueSoonReminders()/
+   * sendFeeOverdueReminders() below, so students are actually notified
+   * without anyone needing to remember to trigger it (unlike the library
+   * module's equivalent reminders — send-overdue-reminders/
+   * send-due-soon-reminders on BorrowRecordsService — which are POST-only
+   * with no scheduler of their own). Wrapped with withDbRetry
+   * (src/modules/finance/db-retry.ts) since none of this app's existing
+   * every-minute @Cron jobs (announcements, COE broadcasts, exam results)
+   * retry a transient DB fault on their own the way HTTP requests do via
+   * TransientDbRetryInterceptor — reusing the existing helper rather than
+   * duplicating that gap a 4th time.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_8AM)
+  async runFeeDueDateReminders(): Promise<void> {
+    await withDbRetry(
+      () => this.sendFeeDueSoonReminders(),
+      'sending fee due-soon reminders',
+      this.logger,
+    );
+    await withDbRetry(
+      () => this.sendFeeOverdueReminders(),
+      'sending fee overdue reminders',
+      this.logger,
+    );
+  }
+
+  /**
+   * POST /fee-payments/send-due-soon-reminders — still-unpaid demands whose
+   * fee_structures.due_date falls within the next FEE_DUE_SOON_WINDOW_DAYS
+   * days. due_date lives on fee_structures (not per-student) so setting it
+   * once covers every student demanded against that structure.
+   *
+   * Notifies each student_fee_demand_mapping at most once ever for this
+   * reminder type (see notifyFeeReminderRows below) — unlike the library
+   * reminders (fine to re-fire every time since a human decides when to
+   * click them), this runs on an unattended daily cron and must not
+   * re-notify the same student every single day the fee stays due-soon.
+   */
+  async sendFeeDueSoonReminders() {
+    return this.notifyFeeReminderRows(
+      Prisma.sql`fs.due_date >= CURRENT_DATE AND fs.due_date <= (CURRENT_DATE + make_interval(days => ${this.FEE_DUE_SOON_WINDOW_DAYS}))`,
+      notification_type_enum.fee_due_reminder,
+      () => 'Fee payment due soon',
+      (row) =>
+        `Your "${row.fee_structure_name}" fee of ₹${(Number(row.total_amount) - Number(row.paid_amount)).toFixed(2)} is due on ${row.due_date.toISOString().slice(0, 10)}.`,
+    );
+  }
+
+  /**
+   * POST /fee-payments/send-overdue-reminders — the past-due sibling of
+   * sendFeeDueSoonReminders() above. Same shape, same one-notification-ever
+   * dedup, different date window and notification type.
+   */
+  async sendFeeOverdueReminders() {
+    return this.notifyFeeReminderRows(
+      Prisma.sql`fs.due_date < CURRENT_DATE`,
+      notification_type_enum.fee_overdue_reminder,
+      () => 'Fee payment overdue',
+      (row) =>
+        `Your "${row.fee_structure_name}" fee of ₹${(Number(row.total_amount) - Number(row.paid_amount)).toFixed(2)} was due on ${row.due_date.toISOString().slice(0, 10)}. Please pay at the earliest.`,
+    );
+  }
+
+  /**
+   * Shared query-then-notify body for both reminder methods above — finds
+   * every still-unpaid student_fee_demand_mapping whose parent
+   * fee_structures.due_date matches `dateCondition`, then notifies each
+   * affected student exactly once ever per (student, notificationType,
+   * this exact demand mapping) — checked via a plain lookup against
+   * `notifications` rather than a DB constraint, matching this app's
+   * existing effort level for reminder de-duplication (no multi-instance
+   * deployment currently exists to race against).
+   *
+   * $queryRaw rather than the query builder: this is a join + GROUP BY +
+   * HAVING aggregate across three tables, which Prisma's high-level API
+   * (groupBy operates on a single model) can't express directly.
+   */
+  private async notifyFeeReminderRows(
+    dateCondition: Prisma.Sql,
+    notificationType: notification_type_enum,
+    title: (row: FeeReminderRow) => string,
+    message: (row: FeeReminderRow) => string,
+  ): Promise<{ message: string; sent: number; checked: number }> {
+    const rows = await this.prisma.$queryRaw<FeeReminderRow[]>`
+        SELECT
+          sfdm.id AS mapping_id,
+          s.user_id AS user_id,
+          fs.name AS fee_structure_name,
+          fs.due_date AS due_date,
+          sfdm.total_amount AS total_amount,
+          COALESCE(SUM(fp.amount_paid), 0) AS paid_amount
+        FROM fee_structures fs
+        JOIN student_fee_demand_mapping sfdm ON sfdm.fee_structure_id = fs.id
+        JOIN students s ON s.id = sfdm.student_id
+        LEFT JOIN fee_payments fp ON fp.student_fee_demand_mapping_id = sfdm.id
+        WHERE fs.due_date IS NOT NULL AND ${dateCondition}
+        GROUP BY sfdm.id, s.user_id, fs.name, fs.due_date, sfdm.total_amount
+        HAVING sfdm.total_amount > COALESCE(SUM(fp.amount_paid), 0)
+      `;
+
+    let sent = 0;
+    for (const row of rows) {
+      const alreadySent = await this.prisma.notifications.findFirst({
+        where: {
+          user_id: row.user_id,
+          type: notificationType,
+          related_entity_type: 'student_fee_demand_mapping',
+          related_entity_id: row.mapping_id,
+        },
+        select: { id: true },
+      });
+      if (alreadySent) continue;
+
+      await this.notifications.notify({
+        user_id: row.user_id,
+        title: title(row),
+        message: message(row),
+        type: notificationType,
+        related_entity_type: 'student_fee_demand_mapping',
+        related_entity_id: row.mapping_id,
+      });
+      sent++;
+    }
+
+    return {
+      message: `Sent ${sent} reminder(s).`,
+      sent,
+      checked: rows.length,
+    };
   }
 }

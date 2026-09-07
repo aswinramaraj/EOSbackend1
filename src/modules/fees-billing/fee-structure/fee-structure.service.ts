@@ -13,6 +13,19 @@ import { AddConcessionDto } from './dto/add-concession.dto';
 import { CreateFeeStructureDto } from './dto/create-fee-structure.dto';
 import { UpdateFeeStructureDto } from './dto/update-fee-structure.dto';
 
+/**
+ * fee_structures.due_date is a plain `@db.Date` column — Prisma returns it
+ * as a full JS Date, which JSON.stringify would otherwise serialize as a
+ * full ISO timestamp (`...T00:00:00.000Z`). The frontend (and this same
+ * field's own `@IsDateString()` input validation) works in plain
+ * YYYY-MM-DD, matching the existing convention for date-only columns
+ * elsewhere (see MeFeesService.toDateOnly for the identical pattern on
+ * fee_payments.payment_date).
+ */
+function toDateOnly(date: Date | null): string | null {
+  return date ? date.toISOString().slice(0, 10) : null;
+}
+
 @Injectable()
 export class FeeStructureService {
   private readonly logger = new Logger(FeeStructureService.name);
@@ -69,6 +82,7 @@ export class FeeStructureService {
             applies_to: dto.applies_to,
             quota_id: dto.quota_id,
             academic_year: dto.academic_year,
+            due_date: dto.due_date ? new Date(dto.due_date) : null,
           },
         });
 
@@ -107,14 +121,21 @@ export class FeeStructureService {
         };
       });
 
-      await this.recordFeeStructureAudit('created', result.id, performedByUserId, undefined, {
-        name: result.name,
-        applies_to: result.applies_to,
-        academic_year: result.academic_year,
-        items_count: result.fee_structure_items.length,
-      });
+      await this.recordFeeStructureAudit(
+        'created',
+        result.id,
+        performedByUserId,
+        undefined,
+        {
+          name: result.name,
+          applies_to: result.applies_to,
+          academic_year: result.academic_year,
+          items_count: result.fee_structure_items.length,
+          due_date: toDateOnly(result.due_date),
+        },
+      );
 
-      return result;
+      return { ...result, due_date: toDateOnly(result.due_date) };
     } catch (err) {
       this.logger.error('DB error while creating fee structure', err);
       throw new InternalServerErrorException({
@@ -201,10 +222,11 @@ export class FeeStructureService {
    */
   async findAll() {
     try {
-      return await this.prisma.fee_structures.findMany({
+      const rows = await this.prisma.fee_structures.findMany({
         include: { fee_structure_items: true, fee_concessions: true },
         orderBy: { created_at: 'desc' },
       });
+      return rows.map((r) => ({ ...r, due_date: toDateOnly(r.due_date) }));
     } catch (err) {
       this.logger.error('DB error while fetching fee structures', err);
       throw new InternalServerErrorException({
@@ -256,6 +278,8 @@ export class FeeStructureService {
           applies_to: dto.applies_to,
           quota_id: dto.quota_id,
           academic_year: dto.academic_year,
+          due_date:
+            dto.due_date !== undefined ? new Date(dto.due_date) : undefined,
         },
       });
 
@@ -267,15 +291,17 @@ export class FeeStructureService {
           name: feeStructure.name,
           applies_to: feeStructure.applies_to,
           academic_year: feeStructure.academic_year,
+          due_date: feeStructure.due_date,
         },
         {
           name: updated.name,
           applies_to: updated.applies_to,
           academic_year: updated.academic_year,
+          due_date: toDateOnly(updated.due_date),
         },
       );
 
-      return updated;
+      return { ...updated, due_date: toDateOnly(updated.due_date) };
     } catch (err) {
       this.logger.error('DB error while updating fee structure', err);
       throw new InternalServerErrorException({
@@ -305,11 +331,16 @@ export class FeeStructureService {
         return tx.fee_structures.delete({ where: { id } });
       });
 
-      await this.recordFeeStructureAudit('deleted', deleted.id, performedByUserId, {
-        name: feeStructure.name,
-        applies_to: feeStructure.applies_to,
-        academic_year: feeStructure.academic_year,
-      });
+      await this.recordFeeStructureAudit(
+        'deleted',
+        deleted.id,
+        performedByUserId,
+        {
+          name: feeStructure.name,
+          applies_to: feeStructure.applies_to,
+          academic_year: feeStructure.academic_year,
+        },
+      );
 
       return deleted;
     } catch (err) {
@@ -346,7 +377,7 @@ export class FeeStructureService {
       });
     }
 
-    return feeStructure;
+    return { ...feeStructure, due_date: toDateOnly(feeStructure.due_date) };
   }
 
   private async assertFeeStructureNotInUse(id: number) {
@@ -472,7 +503,8 @@ export class FeeStructureService {
   }
 
   private async assertItemSourcesExist(
-    idField: 'demand_category_id' | 'hostel_room_type_id' | 'transport_stage_id',
+    idField:
+      'demand_category_id' | 'hostel_room_type_id' | 'transport_stage_id',
     ids: number[],
   ) {
     let found: { id: number }[];
@@ -495,7 +527,10 @@ export class FeeStructureService {
         });
       }
     } catch (err) {
-      this.logger.error('DB error during fee structure item source lookup', err);
+      this.logger.error(
+        'DB error during fee structure item source lookup',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong while creating the fee structure.',
         errorCode: 'INTERNAL_ERROR',

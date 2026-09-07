@@ -1884,6 +1884,11 @@ export class DrivesService {
         classes: {
           select: { section: true, departments: { select: { name: true } } },
         },
+        // Real total application count, any status — the Student Records
+        // tab's DRIVES column means "drives this mentee has applied to" and
+        // must include still-in-progress applications too, not just the
+        // concluded (placed/rejected) ones buildHistoryForStudentId returns.
+        _count: { select: { student_drive_applications: true } },
       },
       orderBy: { student_id_no: 'asc' },
     });
@@ -1894,6 +1899,7 @@ export class DrivesService {
       name: this.resolveStudentDisplayName(s),
       section: s.classes?.section ?? null,
       department_name: s.classes?.departments.name ?? null,
+      total_applications: s._count.student_drive_applications,
     }));
   }
 
@@ -2167,6 +2173,10 @@ export class DrivesService {
         classes: {
           select: { section: true, departments: { select: { name: true } } },
         },
+        // Same total-applications fix as getMentoredStudents (Faculty) —
+        // kept consistent so a future HoD Student Records view isn't built
+        // on the same concluded-only undercount.
+        _count: { select: { student_drive_applications: true } },
       },
       orderBy: { student_id_no: 'asc' },
     });
@@ -2177,6 +2187,7 @@ export class DrivesService {
       name: this.resolveStudentDisplayName(s),
       section: s.classes?.section ?? null,
       department_name: s.classes?.departments.name ?? null,
+      total_applications: s._count.student_drive_applications,
     }));
   }
 

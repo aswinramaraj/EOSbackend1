@@ -160,6 +160,7 @@ import { TransportStageModule } from './modules/fees-billing/transport-stages/tr
 import { BookCategoriesModule } from './modules/library/book-categories/book-categories.module';
 import { BooksModule } from './modules/library/books/books.module';
 import { BorrowRecordsModule } from './modules/library/borrow-records/borrow-records.module';
+import { BorrowRequestsModule } from './modules/library/borrow-requests/borrow-requests.module';
 import { EResourcesModule } from './modules/library/e-resources/e-resources.module';
 import { StudentLookupModule } from './modules/library/student-lookup/student-lookup.module';
 import { FacultyLookupModule } from './modules/library/faculty-lookup/faculty-lookup.module';
@@ -425,6 +426,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     BookCategoriesModule,
     BooksModule,
     BorrowRecordsModule,
+    BorrowRequestsModule,
     EResourcesModule,
     StudentLookupModule,
     FacultyLookupModule,
