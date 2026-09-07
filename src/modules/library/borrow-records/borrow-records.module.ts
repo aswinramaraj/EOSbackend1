@@ -9,5 +9,8 @@ import { NotificationsModule } from '../../notifications/notifications/notificat
   imports: [PrismaModule, LibrarySettingsModule, NotificationsModule],
   controllers: [BorrowRecordsController],
   providers: [BorrowRecordsService],
+  // Exported so BorrowRequestsModule can reuse create() end-to-end for its
+  // "accept" step instead of duplicating any of its borrow-side checks.
+  exports: [BorrowRecordsService],
 })
 export class BorrowRecordsModule {}

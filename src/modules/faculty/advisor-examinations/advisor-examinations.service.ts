@@ -9,6 +9,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import type { ReportTable } from 'src/common/utils/report-export.util';
 import { ExamResultsGridService } from 'src/modules/academic-structure/exam-results/exam-results-grid.service';
+import { sortExamTypesForFilter } from 'src/modules/academic-structure/exam-results/exam-type-order.util';
 
 function yearLabel(semester: number | null): string {
   if (semester == null) return '—';
@@ -61,7 +62,7 @@ export class AdvisorExaminationsService {
     try {
       const classIds = await this.menteeClassIds(facultyId);
       if (classIds.length === 0) {
-        return { classes: [], exam_types: [] };
+        return { classes: [], semesters: [], exam_types: [] };
       }
 
       const classes = await this.prisma.classes.findMany({
@@ -80,30 +81,53 @@ export class AdvisorExaminationsService {
       // array here, and raw SQL's tagged-template interpolation would
       // parameterize a joined "1,2,3" string as a single value (not an
       // expanded IN list), silently matching nothing.
-      const usedExamTypes = await this.prisma.exams.findMany({
-        where: { exam_subject_mapping: { some: { class_id: { in: classIds } } } },
-        select: { exam_type_id: true },
-        distinct: ['exam_type_id'],
+      const examsForClasses = await this.prisma.exams.findMany({
+        where: {
+          exam_subject_mapping: { some: { class_id: { in: classIds } } },
+        },
+        select: { exam_type_id: true, semester: true },
       });
-      const examTypeIds = usedExamTypes.map((r) => r.exam_type_id);
+      const examTypeIds = [
+        ...new Set(examsForClasses.map((e) => e.exam_type_id)),
+      ];
       const examTypes = examTypeIds.length
         ? await this.prisma.exam_types.findMany({
             where: { id: { in: examTypeIds } },
             select: { id: true, name: true, category: true },
           })
         : [];
+      // Real semesters that have actual exam data for at least one of this
+      // advisor's mentee classes — a class's own current_semester is only
+      // ever "today's" semester, not every semester it's ever had exams in.
+      const semesters = [
+        ...new Set(examsForClasses.map((e) => e.semester)),
+      ].sort((a, b) => a - b);
 
       return {
         classes: classes.map((c) => ({
           class_id: c.id,
           batch_id: c.batches?.id ?? null,
           batch_label: c.batches?.name ?? '—',
-          department: c.departments ? { id: c.departments.id, name: c.departments.name, code: c.departments.code } : null,
+          department: c.departments
+            ? {
+                id: c.departments.id,
+                name: c.departments.name,
+                code: c.departments.code,
+              }
+            : null,
           semester: c.current_semester ?? 0,
           year_label: yearLabel(c.current_semester),
           section: c.section,
         })),
-        exam_types: examTypes.map((t) => ({ id: t.id, name: t.name, category: t.category })),
+        semesters: semesters.map((s) => ({
+          semester: s,
+          year_label: yearLabel(s),
+        })),
+        exam_types: sortExamTypesForFilter(examTypes).map((t) => ({
+          id: t.id,
+          name: t.name,
+          category: t.category,
+        })),
       };
     } catch (err) {
       if (err instanceof NotFoundException) throw err;
@@ -115,7 +139,10 @@ export class AdvisorExaminationsService {
     }
   }
 
-  private async assertMentorsClass(user: JwtPayload, classId: number): Promise<void> {
+  private async assertMentorsClass(
+    user: JwtPayload,
+    classId: number,
+  ): Promise<void> {
     const facultyId = await this.resolveFacultyId(user);
     const classIds = await this.menteeClassIds(facultyId);
     if (!classIds.includes(classId)) {
@@ -126,13 +153,27 @@ export class AdvisorExaminationsService {
     }
   }
 
-  async getGrid(user: JwtPayload, classId: number, examTypeId: number) {
+  async getGrid(
+    user: JwtPayload,
+    classId: number,
+    examTypeId: number,
+    semester: number,
+  ) {
     await this.assertMentorsClass(user, classId);
-    return this.examResultsGrid.buildGrid(classId, examTypeId);
+    return this.examResultsGrid.buildGrid(classId, examTypeId, semester);
   }
 
-  async getGridExportTable(user: JwtPayload, classId: number, examTypeId: number): Promise<ReportTable> {
+  async getGridExportTable(
+    user: JwtPayload,
+    classId: number,
+    examTypeId: number,
+    semester: number,
+  ): Promise<ReportTable> {
     await this.assertMentorsClass(user, classId);
-    return this.examResultsGrid.buildGridExportTable(classId, examTypeId);
+    return this.examResultsGrid.buildGridExportTable(
+      classId,
+      examTypeId,
+      semester,
+    );
   }
 }

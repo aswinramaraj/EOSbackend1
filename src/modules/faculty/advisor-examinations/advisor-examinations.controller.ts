@@ -1,4 +1,11 @@
-import { Controller, Get, ParseIntPipe, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  ParseIntPipe,
+  Query,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
@@ -33,8 +40,9 @@ export class AdvisorExaminationsController {
     @CurrentUser() user: JwtPayload,
     @Query('class_id', ParseIntPipe) classId: number,
     @Query('exam_type_id', ParseIntPipe) examTypeId: number,
+    @Query('semester', ParseIntPipe) semester: number,
   ) {
-    return this.examinations.getGrid(user, classId, examTypeId);
+    return this.examinations.getGrid(user, classId, examTypeId, semester);
   }
 
   @Get('grid/export')
@@ -42,12 +50,19 @@ export class AdvisorExaminationsController {
     @CurrentUser() user: JwtPayload,
     @Query('class_id', ParseIntPipe) classId: number,
     @Query('exam_type_id', ParseIntPipe) examTypeId: number,
+    @Query('semester', ParseIntPipe) semester: number,
     @Res() res: Response,
   ) {
-    const table = await this.examinations.getGridExportTable(user, classId, examTypeId);
+    const table = await this.examinations.getGridExportTable(
+      user,
+      classId,
+      examTypeId,
+      semester,
+    );
     const buffer = await renderExcel(table);
     res.set({
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': `attachment; filename="${slugify(table.title)}.xlsx"`,
       'Content-Length': String(buffer.length),
     });

@@ -8,6 +8,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import type { ReportTable } from 'src/common/utils/report-export.util';
 import { ExamResultsGridService } from 'src/modules/academic-structure/exam-results/exam-results-grid.service';
+import { sortExamTypesForFilter } from 'src/modules/academic-structure/exam-results/exam-type-order.util';
 
 function yearLabel(semester: number | null): string {
   if (semester == null) return '—';
@@ -77,24 +78,29 @@ export class HodExaminationsService {
           })
         : [];
 
-      // Only exam types actually used by exams that touch this department's
-      // classes — not the full institution-wide catalog.
-      const usedExamTypeIds = await this.prisma.$queryRaw<
-        { exam_type_id: number }[]
+      // Only exam types (and semesters) actually used by exams that touch
+      // this department's classes — not the full institution-wide catalog.
+      const examsForDept = await this.prisma.$queryRaw<
+        { exam_type_id: number; semester: number }[]
       >`
-        SELECT DISTINCT e.exam_type_id
+        SELECT DISTINCT e.exam_type_id, e.semester
         FROM exams e
         JOIN exam_subject_mapping esm ON esm.exam_id = e.id
         JOIN classes cl ON cl.id = esm.class_id
         WHERE cl.department_id = ${departmentId}
       `;
-      const examTypeIds = usedExamTypeIds.map((r) => r.exam_type_id);
+      const examTypeIds = [...new Set(examsForDept.map((r) => r.exam_type_id))];
       const examTypes = examTypeIds.length
         ? await this.prisma.exam_types.findMany({
             where: { id: { in: examTypeIds } },
             select: { id: true, name: true, category: true },
           })
         : [];
+      // Real semesters with actual exam data anywhere in the department — a
+      // class's own current_semester is only ever "today's" semester.
+      const semesters = [...new Set(examsForDept.map((r) => r.semester))].sort(
+        (a, b) => a - b,
+      );
 
       return {
         department: {
@@ -110,7 +116,11 @@ export class HodExaminationsService {
           year_label: yearLabel(c.current_semester),
           section: c.section,
         })),
-        exam_types: examTypes.map((t) => ({
+        semesters: semesters.map((s) => ({
+          semester: s,
+          year_label: yearLabel(s),
+        })),
+        exam_types: sortExamTypesForFilter(examTypes).map((t) => ({
           id: t.id,
           name: t.name,
           category: t.category,
@@ -126,7 +136,10 @@ export class HodExaminationsService {
     }
   }
 
-  private async assertOwnsClass(user: JwtPayload, classId: number): Promise<void> {
+  private async assertOwnsClass(
+    user: JwtPayload,
+    classId: number,
+  ): Promise<void> {
     const departmentId = await this.resolveDepartmentId(user);
     const cls = await this.prisma.classes.findUnique({
       where: { id: classId },
@@ -140,9 +153,14 @@ export class HodExaminationsService {
     }
   }
 
-  async getGrid(user: JwtPayload, classId: number, examTypeId: number) {
+  async getGrid(
+    user: JwtPayload,
+    classId: number,
+    examTypeId: number,
+    semester: number,
+  ) {
     await this.assertOwnsClass(user, classId);
-    return this.examResultsGrid.buildGrid(classId, examTypeId);
+    return this.examResultsGrid.buildGrid(classId, examTypeId, semester);
   }
 
   /**
@@ -155,8 +173,13 @@ export class HodExaminationsService {
     user: JwtPayload,
     classId: number,
     examTypeId: number,
+    semester: number,
   ): Promise<ReportTable> {
     await this.assertOwnsClass(user, classId);
-    return this.examResultsGrid.buildGridExportTable(classId, examTypeId);
+    return this.examResultsGrid.buildGridExportTable(
+      classId,
+      examTypeId,
+      semester,
+    );
   }
 }

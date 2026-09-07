@@ -29,7 +29,7 @@ export class ExamResultsGridService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async buildGrid(classId: number, examTypeId: number) {
+  async buildGrid(classId: number, examTypeId: number, semester: number) {
     try {
       const cls = await this.prisma.classes.findUnique({
         where: { id: classId },
@@ -73,11 +73,17 @@ export class ExamResultsGridService {
         return band?.grade_label ?? null;
       };
 
-      // The specific exam (this class, this exam type) — most recent one if
-      // several exist across academic years.
+      // The specific exam (this class, this exam type, this semester) —
+      // most recent one if several exist within that semester across
+      // academic years. semester is a real column on exams, independent of
+      // classes.current_semester (which only ever tracks *today's*
+      // semester for the class) — without this filter, a class with CIA1
+      // exams recorded in multiple semesters would always resolve to
+      // whichever is most recently created, never an earlier semester's.
       const exam = await this.prisma.exams.findFirst({
         where: {
           exam_type_id: examTypeId,
+          semester,
           exam_subject_mapping: { some: { class_id: classId } },
         },
         orderBy: { created_at: 'desc' },
@@ -174,8 +180,11 @@ export class ExamResultsGridService {
         class: {
           id: cls.id,
           section: cls.section,
-          semester: cls.current_semester ?? 0,
-          year_label: yearLabel(cls.current_semester),
+          // The requested semester, not cls.current_semester — a class
+          // keeps the same id across its whole run, so "today's" semester
+          // would otherwise mislabel a past semester's grid.
+          semester,
+          year_label: yearLabel(semester),
           batch_label: cls.batches?.name ?? '—',
         },
         exam_type: {
@@ -206,8 +215,9 @@ export class ExamResultsGridService {
   async buildGridExportTable(
     classId: number,
     examTypeId: number,
+    semester: number,
   ): Promise<ReportTable> {
-    const grid = await this.buildGrid(classId, examTypeId);
+    const grid = await this.buildGrid(classId, examTypeId, semester);
 
     const columns: ReportTable['columns'] = [
       { header: 'Register No.', key: 'register_no', width: 16 },
