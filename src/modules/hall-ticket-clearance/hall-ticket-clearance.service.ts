@@ -255,9 +255,13 @@ export class HallTicketClearanceService {
     return paginate(rows.map(toResponse), total, query);
   }
 
-  /** GET /hall-ticket-clearance/pending (HoD only). */
-  async findPending(query: ListClearanceQueryDto) {
-    const where = { status: 'pending' as const };
+  /** GET /hall-ticket-clearance/pending (HoD only — confined to their own department). */
+  async findPending(query: ListClearanceQueryDto, hodUserId: number) {
+    const departmentId = await this.resolveHodDepartmentId(hodUserId);
+    const where = {
+      status: 'pending' as const,
+      students: { courses: { department_id: departmentId } },
+    };
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.hall_ticket_clearance_exceptions.findMany({
@@ -300,6 +304,10 @@ export class HallTicketClearanceService {
         );
       }
     } else {
+      const departmentId = await this.resolveHodDepartmentId(currentUser.sub);
+      if (request.students.courses.departments.id !== departmentId) {
+        throw new NotFoundException('Clearance request not found');
+      }
       const others =
         await this.prisma.hall_ticket_clearance_exceptions.findMany({
           where: { student_id: request.student_id, id: { not: id } },
@@ -312,15 +320,9 @@ export class HallTicketClearanceService {
     return { ...toResponse(request), previous_requests: previousRequests };
   }
 
-  /** PATCH /hall-ticket-clearance/:id/approve (HoD only — pending requests only). */
+  /** PATCH /hall-ticket-clearance/:id/approve (HoD only — pending requests, own department only). */
   async approve(id: number, dto: ApproveClearanceDto, hodUserId: number) {
-    const existing =
-      await this.prisma.hall_ticket_clearance_exceptions.findUnique({
-        where: { id },
-      });
-    if (!existing) {
-      throw new NotFoundException('Clearance request not found');
-    }
+    const existing = await this.findOwnDepartmentPendingTarget(id, hodUserId);
     if (existing.status !== 'pending') {
       throw new ConflictException({
         message: 'Only a pending request can be approved',
@@ -346,15 +348,9 @@ export class HallTicketClearanceService {
     return toResponse(request);
   }
 
-  /** PATCH /hall-ticket-clearance/:id/reject (HoD only — pending requests only). */
+  /** PATCH /hall-ticket-clearance/:id/reject (HoD only — pending requests, own department only). */
   async reject(id: number, _dto: RejectClearanceDto, hodUserId: number) {
-    const existing =
-      await this.prisma.hall_ticket_clearance_exceptions.findUnique({
-        where: { id },
-      });
-    if (!existing) {
-      throw new NotFoundException('Clearance request not found');
-    }
+    const existing = await this.findOwnDepartmentPendingTarget(id, hodUserId);
     if (existing.status !== 'pending') {
       throw new ConflictException({
         message: 'Only a pending request can be rejected',
@@ -388,5 +384,39 @@ export class HallTicketClearanceService {
       );
     }
     return student;
+  }
+
+  /** HoD's own department_id, resolved server-side — never trust a client-supplied department for this role. */
+  private async resolveHodDepartmentId(userId: number): Promise<number> {
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { user_id: userId },
+      select: { department_id: true },
+    });
+    if (!faculty?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this HoD account',
+        errorCode: 'HOD_NO_DEPARTMENT',
+      });
+    }
+    return faculty.department_id;
+  }
+
+  /** Shared by approve()/reject() — 404s (not 403) on a real request outside the caller's own department, to avoid confirming existence. */
+  private async findOwnDepartmentPendingTarget(id: number, hodUserId: number) {
+    const departmentId = await this.resolveHodDepartmentId(hodUserId);
+    const existing =
+      await this.prisma.hall_ticket_clearance_exceptions.findUnique({
+        where: { id },
+        select: {
+          status: true,
+          students: {
+            select: { courses: { select: { department_id: true } } },
+          },
+        },
+      });
+    if (!existing || existing.students.courses.department_id !== departmentId) {
+      throw new NotFoundException('Clearance request not found');
+    }
+    return existing;
   }
 }

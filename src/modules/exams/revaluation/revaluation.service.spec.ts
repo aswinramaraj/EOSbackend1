@@ -55,9 +55,18 @@ describe('RevaluationService', () => {
   });
 
   describe('create', () => {
+    const coeUser = { sub: 9, email: 'coe@sece.ac.in', role: 'coe', roleId: 1 };
+
     beforeEach(() => {
-      prisma.exam_marks.findUnique.mockResolvedValue({ id: 1, max_marks: 100 });
-      prisma.students.findUnique.mockResolvedValue({ id: 5, student_id_no: '23EC056' });
+      prisma.exam_marks.findUnique.mockResolvedValue({
+        id: 1,
+        max_marks: 100,
+        student_id: 5,
+      });
+      prisma.students.findUnique.mockResolvedValue({
+        id: 5,
+        student_id_no: '23EC056',
+      });
       prisma.revaluation_requests.findFirst.mockResolvedValue(null);
       prisma.revaluation_requests.create.mockResolvedValue({ id: 77 });
     });
@@ -65,7 +74,7 @@ describe('RevaluationService', () => {
     it('notifies every COE-role user of the new request', async () => {
       prisma.users.findMany.mockResolvedValue([{ id: 900 }, { id: 901 }]);
 
-      await service.create({ exam_marks_id: 1, student_id: 5 } as any);
+      await service.create({ exam_marks_id: 1, student_id: 5 }, coeUser);
 
       expect(prisma.users.findMany).toHaveBeenCalledWith({
         where: { roles: { name: 'coe' } },
@@ -85,7 +94,9 @@ describe('RevaluationService', () => {
     it('409s when a request already exists for this exam mark, and never notifies', async () => {
       prisma.revaluation_requests.findFirst.mockResolvedValue({ id: 1 });
 
-      await expect(service.create({ exam_marks_id: 1, student_id: 5 } as any)).rejects.toMatchObject({
+      await expect(
+        service.create({ exam_marks_id: 1, student_id: 5 }, coeUser),
+      ).rejects.toMatchObject({
         response: { errorCode: 'REVALUATION_REQUEST_EXISTS' },
       });
       expect(notifications.notify).not.toHaveBeenCalled();

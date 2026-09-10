@@ -39,11 +39,11 @@ export class FacultyController {
 
   /**
    * GET /api/v1/faculty — Admin/HoD/HR Payroll/Secretary. Paginated list,
-   * filterable by department_id/status. Secretary is now department-scoped
-   * (one account per department, mirroring HOD) — forced to her own
-   * department server-side inside FacultyService.findAll(), regardless of
-   * any client-supplied department_id; every other role's behavior is
-   * unchanged.
+   * filterable by department_id/status. Secretary and HoD are both
+   * department-scoped (one account per department) — each is forced to
+   * their own department server-side inside
+   * FacultyService.resolveEffectiveDepartmentId(), regardless of any
+   * client-supplied department_id; Admin/HR Payroll behavior is unchanged.
    */
   @Get('faculty')
   @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
@@ -74,6 +74,7 @@ export class FacultyController {
    * GET /api/v1/faculty/:id — Admin/HoD/HR Payroll. Sensitive HR
    * information (Aadhaar/PAN/bank details) is included only for
    * Admin/HR Payroll callers — see findOneForAdmin()'s own doc comment.
+   * HoD callers are also confined server-side to their own department.
    */
   @Get('faculty/:id')
   @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
@@ -81,7 +82,7 @@ export class FacultyController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.facultyService.findOneForAdmin(id, user.role);
+    return this.facultyService.findOneForAdmin(id, user);
   }
 
   /** PATCH /api/v1/faculty/:id — Admin/HR Payroll. Distinct from the faculty's own /profile update. */
@@ -105,11 +106,18 @@ export class FacultyController {
     return this.facultyService.removeByAdmin(id, user.sub);
   }
 
-  /** GET /api/v1/faculty/:id/activity — Admin/HoD/HR Payroll. Most recent audit-trail entries for this faculty. */
+  /**
+   * GET /api/v1/faculty/:id/activity — Admin/HoD/HR Payroll. Most recent
+   * audit-trail entries for this faculty. HoD callers are confined
+   * server-side to their own department, same as findOne() above.
+   */
   @Get('faculty/:id/activity')
   @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
-  listActivity(@Param('id', ParseIntPipe) id: number) {
-    return this.facultyService.listActivity(id);
+  listActivity(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.facultyService.listActivity(id, user);
   }
 
   /** POST /api/v1/faculty/:id/notify — Admin/HR Payroll. Sends an ad-hoc message to this faculty member's notification inbox. */

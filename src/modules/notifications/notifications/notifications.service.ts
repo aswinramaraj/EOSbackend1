@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { PushNotificationService } from './push-notification.service';
@@ -172,6 +177,10 @@ export class NotificationsService {
     return this.prisma.notifications.findMany({
       where: { user_id: userId },
       orderBy: { created_at: 'desc' },
+      // Same safety ceiling as announcements.findAll() — unfiltered history
+      // with no cap grows unbounded per user over years of real use. 500 is
+      // comfortably above any realistic single user's current volume.
+      take: 500,
     });
   }
 
@@ -191,7 +200,9 @@ export class NotificationsService {
    *  403 NOT_OWNER              - exists, but belongs to someone else (never leaked as 404 - see below)
    */
   async markAsRead(id: number, userId: number) {
-    const notification = await this.prisma.notifications.findUnique({ where: { id } });
+    const notification = await this.prisma.notifications.findUnique({
+      where: { id },
+    });
     if (!notification) {
       throw new NotFoundException({
         message: 'Notification not found',

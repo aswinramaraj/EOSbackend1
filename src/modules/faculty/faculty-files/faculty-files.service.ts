@@ -10,8 +10,8 @@ import { StorageProvider } from 'src/modules/storage/storage-provider';
 const PHOTO_BUCKET = 'faculty_photos';
 const DOCUMENT_BUCKET = 'faculty_documents';
 
-const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
-const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
+export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 
 const ALLOWED_PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const ALLOWED_DOCUMENT_MIME_TYPES = [

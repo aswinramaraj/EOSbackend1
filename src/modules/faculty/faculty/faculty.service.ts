@@ -94,23 +94,43 @@ export class FacultyService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  /** Secretary is always forced to her own department; other roles keep whatever was requested. */
+  /** Secretary and HoD are always forced to their own department; other roles keep whatever was requested. */
   private async resolveEffectiveDepartmentId(
     user: JwtPayload,
     requested?: number,
   ): Promise<number | undefined> {
-    if (user.role !== ROLES.SECRETARY) return requested;
-    const staff = await this.prisma.non_teaching_staff.findFirst({
-      where: { user_id: user.sub },
+    if (user.role === ROLES.SECRETARY) {
+      const staff = await this.prisma.non_teaching_staff.findFirst({
+        where: { user_id: user.sub },
+        select: { department_id: true },
+      });
+      if (!staff?.department_id) {
+        throw new ForbiddenException({
+          message: 'No department is assigned to this secretary account',
+          errorCode: 'SECRETARY_NO_DEPARTMENT',
+        });
+      }
+      return staff.department_id;
+    }
+    if (user.role === ROLES.HOD) {
+      return this.resolveHodDepartmentId(user.sub);
+    }
+    return requested;
+  }
+
+  /** HoD's own department_id, resolved server-side — never trust a client-supplied department_id for this role. */
+  private async resolveHodDepartmentId(userId: number): Promise<number> {
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { user_id: userId },
       select: { department_id: true },
     });
-    if (!staff?.department_id) {
+    if (!faculty?.department_id) {
       throw new ForbiddenException({
-        message: 'No department is assigned to this secretary account',
-        errorCode: 'SECRETARY_NO_DEPARTMENT',
+        message: 'No department is assigned to this HoD account',
+        errorCode: 'HOD_NO_DEPARTMENT',
       });
     }
-    return staff.department_id;
+    return faculty.department_id;
   }
 
   /**
@@ -396,9 +416,9 @@ export class FacultyService {
    * anything else leaves `sensitive_info` off the response entirely — not
    * masked, not present at all.
    */
-  async findOneForAdmin(id: number, callerRole: string) {
+  async findOneForAdmin(id: number, user: JwtPayload) {
     const canSeeSensitiveInfo =
-      callerRole === ROLES.ADMIN || callerRole === ROLES.HR_PAYROLL;
+      user.role === ROLES.ADMIN || user.role === ROLES.HR_PAYROLL;
 
     const faculty = await this.prisma.faculty.findUnique({
       where: { id },
@@ -410,6 +430,7 @@ export class FacultyService {
         date_of_joining: true,
         status: true,
         created_at: true,
+        department_id: true,
         departments: {
           select: { id: true, name: true, code: true },
         },
@@ -429,6 +450,15 @@ export class FacultyService {
 
     if (!faculty) {
       throw new NotFoundException('Faculty not found');
+    }
+
+    // HoD is confined to their own department — a 404 here (not 403) avoids
+    // confirming a faculty id exists in some other department at all.
+    if (user.role === ROLES.HOD) {
+      const callerDepartmentId = await this.resolveHodDepartmentId(user.sub);
+      if (faculty.department_id !== callerDepartmentId) {
+        throw new NotFoundException('Faculty not found');
+      }
     }
 
     return {
@@ -586,13 +616,20 @@ export class FacultyService {
    * database (see FACULTY_MODULE_UPDATE.md) — returns an empty list rather
    * than a 500 if the table isn't there right now.
    */
-  async listActivity(facultyId: number) {
+  async listActivity(facultyId: number, user: JwtPayload) {
     const exists = await this.prisma.faculty.findUnique({
       where: { id: facultyId },
-      select: { id: true },
+      select: { id: true, department_id: true },
     });
     if (!exists) {
       throw new NotFoundException('Faculty not found');
+    }
+
+    if (user.role === ROLES.HOD) {
+      const callerDepartmentId = await this.resolveHodDepartmentId(user.sub);
+      if (exists.department_id !== callerDepartmentId) {
+        throw new NotFoundException('Faculty not found');
+      }
     }
 
     try {

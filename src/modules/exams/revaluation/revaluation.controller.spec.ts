@@ -37,8 +37,11 @@ describe('RevaluationController', () => {
     revaluationService.remove.mockResolvedValue({ id: 1 });
     revaluationService.publishRevaluation.mockResolvedValue({ id: 2 });
 
-    await controller.create({ exam_marks_id: 1, student_id: 5 } as any);
-    expect(revaluationService.create).toHaveBeenCalledWith({ exam_marks_id: 1, student_id: 5 });
+    await controller.create({ exam_marks_id: 1, student_id: 5 }, user);
+    expect(revaluationService.create).toHaveBeenCalledWith(
+      { exam_marks_id: 1, student_id: 5 },
+      user,
+    );
 
     await controller.findAll('requested');
     expect(revaluationService.findAll).toHaveBeenCalledWith('requested');

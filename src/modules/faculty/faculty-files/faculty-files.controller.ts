@@ -18,10 +18,26 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
-import { FacultyFilesService } from './faculty-files.service';
+import {
+  FacultyFilesService,
+  MAX_DOCUMENT_BYTES,
+  MAX_PHOTO_BYTES,
+} from './faculty-files.service';
 import { UploadDocumentDto } from './dto/upload-document.dto';
 
-const memoryUpload = { storage: memoryStorage() };
+// Unlike every other upload endpoint in this codebase, these two previously
+// had no fileSize limit — a large multipart body was fully buffered into
+// memory before FacultyFilesService.assertFile() ever got a chance to reject
+// it. Bounding it here (matching the service's own MAX_*_BYTES) rejects an
+// oversized upload during streaming instead of after fully buffering it.
+const photoUpload = {
+  storage: memoryStorage(),
+  limits: { fileSize: MAX_PHOTO_BYTES },
+};
+const documentUpload = {
+  storage: memoryStorage(),
+  limits: { fileSize: MAX_DOCUMENT_BYTES },
+};
 
 /**
  * Profile photo + document uploads (Admin/HR Payroll) for a faculty record.
@@ -35,7 +51,7 @@ export class FacultyFilesController {
 
   @Post(':id/photo')
   @Roles(ROLES.ADMIN, ROLES.HR_PAYROLL)
-  @UseInterceptors(FileInterceptor('file', memoryUpload))
+  @UseInterceptors(FileInterceptor('file', photoUpload))
   uploadPhoto(
     @Param('id', ParseIntPipe) id: number,
     @UploadedFile() file: Express.Multer.File,
@@ -57,7 +73,7 @@ export class FacultyFilesController {
 
   @Post(':id/documents')
   @Roles(ROLES.ADMIN, ROLES.HR_PAYROLL)
-  @UseInterceptors(FileInterceptor('file', memoryUpload))
+  @UseInterceptors(FileInterceptor('file', documentUpload))
   uploadDocument(
     @Param('id', ParseIntPipe) id: number,
     @UploadedFile() file: Express.Multer.File,
