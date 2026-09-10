@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { FeedbackService } from './feedback.service';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import type { CreateFeedbackFormDto } from './dto/create-feedback-form.dto';
 import type { SubmitFeedbackResponsesDto } from './dto/submit-feedback-responses.dto';
 
@@ -91,6 +92,7 @@ describe('FeedbackService', () => {
       providers: [
         FeedbackService,
         { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: { notify: jest.fn() } },
       ],
     }).compile();
 
@@ -165,6 +167,7 @@ describe('FeedbackService', () => {
       form_type: 'end_semester',
       class_id: 3,
       batch_id: null,
+      is_published: true,
       feedback_questions: [
         {
           id: 1,
@@ -268,6 +271,7 @@ describe('FeedbackService', () => {
       class_id: 3,
       batch_id: null,
       form_type: 'end_semester',
+      is_published: true,
       feedback_questions: [
         { id: 1, question_type: 'rating' },
         { id: 2, question_type: 'rating' },

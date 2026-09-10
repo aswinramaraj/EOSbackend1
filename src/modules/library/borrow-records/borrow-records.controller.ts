@@ -30,7 +30,13 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 export class BorrowRecordsController {
   constructor(private readonly borrowRecordsService: BorrowRecordsService) {}
 
-  @UseGuards(JwtAuthGuard)
+  // Only these four roles have any legitimate reason to hit this resource —
+  // student/faculty are self-scoped to their own records inside the service,
+  // library/admin see everything. Missing RolesGuard here previously let any
+  // other authenticated role (HR, transport, canteen, ...) fall through to
+  // the service's unrestricted else-branch and read every borrow record.
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('student', 'faculty', 'library', 'admin')
   @Get('library/borrow-records')
   findAll(
     @Query() query: SearchBorrowRecordsDto,
@@ -39,7 +45,8 @@ export class BorrowRecordsController {
     return this.borrowRecordsService.findAll(query, user);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('student', 'faculty', 'library', 'admin')
   @Get('library/borrow-records/:id')
   findOne(
     @Param('id', ParseIntPipe) id: number,

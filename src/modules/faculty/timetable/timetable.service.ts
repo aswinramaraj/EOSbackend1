@@ -100,7 +100,9 @@ const MY_TIMETABLE_SLOT_SELECT = {
   period_number: true,
   start_time: true,
   end_time: true,
-  subjects: { select: { id: true, name: true, subject_code: true, course_type: true } },
+  subjects: {
+    select: { id: true, name: true, subject_code: true, course_type: true },
+  },
   faculty: { select: { id: true, first_name: true, last_name: true } },
 } as const;
 
@@ -109,7 +111,12 @@ interface MyTimetableSlotRow {
   period_number: number;
   start_time: Date;
   end_time: Date;
-  subjects: { id: number; name: string; subject_code: string; course_type: string | null };
+  subjects: {
+    id: number;
+    name: string;
+    subject_code: string;
+    course_type: string | null;
+  };
   faculty: { id: number; first_name: string; last_name: string };
 }
 
@@ -638,57 +645,85 @@ export class TimetableService {
     for (const mapping of mappings) {
       const key = `${mapping.subject_id}:${mapping.class_id}`;
       const current = latestByCombo.get(key);
-      if (!current || leadingYear(mapping.academic_year) > leadingYear(current.academic_year)) {
+      if (
+        !current ||
+        leadingYear(mapping.academic_year) > leadingYear(current.academic_year)
+      ) {
         latestByCombo.set(key, mapping);
       }
     }
     const currentMappings = Array.from(latestByCombo.values());
     const displayAcademicYear = currentMappings.reduce(
-      (latest, m) => (leadingYear(m.academic_year) > leadingYear(latest) ? m.academic_year : latest),
+      (latest, m) =>
+        leadingYear(m.academic_year) > leadingYear(latest)
+          ? m.academic_year
+          : latest,
       currentMappings[0].academic_year,
     );
 
-    const subjects = await Promise.all(
-      currentMappings.map(async (mapping) => {
-        const [hoursPerWeek, tasks, materials] = await Promise.all([
-          this.prisma.timetable_slots.count({
-            where: {
-              faculty_id: faculty.id,
-              subject_id: mapping.subject_id,
-              class_id: mapping.class_id,
-              academic_year: mapping.academic_year,
-            },
-          }),
-          this.prisma.assignments.count({
-            where: {
-              faculty_id: faculty.id,
-              subject_id: mapping.subject_id,
-              class_id: mapping.class_id,
-              academic_year: mapping.academic_year,
-            },
-          }),
-          this.prisma.lms_notes.count({
-            where: {
-              faculty_id: faculty.id,
-              subject_id: mapping.subject_id,
-              class_id: mapping.class_id,
-            },
-          }),
-        ]);
-
-        return {
-          subject_id: mapping.subject_id,
-          subject_code: mapping.subjects.subject_code,
-          subject_name: mapping.subjects.name,
-          class_id: mapping.class_id,
-          section: mapping.classes.section,
-          semester: mapping.classes.current_semester,
-          hours_per_week: hoursPerWeek,
-          tasks,
-          materials,
-        };
+    // Batched instead of a count() per (subject, class, year) combo — a
+    // faculty teaching 6-8 combos was previously costing ~18-24 individual
+    // queries on every load of this page. Three groupBy queries, scoped to
+    // this faculty, replace all of them regardless of how many combos exist.
+    const [hoursGroups, tasksGroups, materialsGroups] = await Promise.all([
+      this.prisma.timetable_slots.groupBy({
+        by: ['subject_id', 'class_id', 'academic_year'],
+        where: { faculty_id: faculty.id },
+        _count: { _all: true },
       }),
+      this.prisma.assignments.groupBy({
+        by: ['subject_id', 'class_id', 'academic_year'],
+        where: { faculty_id: faculty.id },
+        _count: { _all: true },
+      }),
+      this.prisma.lms_notes.groupBy({
+        by: ['subject_id', 'class_id'],
+        where: { faculty_id: faculty.id },
+        _count: { _all: true },
+      }),
+    ]);
+    const yearKey = (subjectId: number, classId: number, year: string) =>
+      `${subjectId}:${classId}:${year}`;
+    const comboKey = (subjectId: number, classId: number) =>
+      `${subjectId}:${classId}`;
+    const hoursByCombo = new Map(
+      hoursGroups.map((g) => [
+        yearKey(g.subject_id, g.class_id, g.academic_year),
+        g._count._all,
+      ]),
     );
+    const tasksByCombo = new Map(
+      tasksGroups.map((g) => [
+        yearKey(g.subject_id, g.class_id, g.academic_year),
+        g._count._all,
+      ]),
+    );
+    const materialsByCombo = new Map(
+      materialsGroups.map((g) => [
+        comboKey(g.subject_id, g.class_id),
+        g._count._all,
+      ]),
+    );
+
+    const subjects = currentMappings.map((mapping) => ({
+      subject_id: mapping.subject_id,
+      subject_code: mapping.subjects.subject_code,
+      subject_name: mapping.subjects.name,
+      class_id: mapping.class_id,
+      section: mapping.classes.section,
+      semester: mapping.classes.current_semester,
+      hours_per_week:
+        hoursByCombo.get(
+          yearKey(mapping.subject_id, mapping.class_id, mapping.academic_year),
+        ) ?? 0,
+      tasks:
+        tasksByCombo.get(
+          yearKey(mapping.subject_id, mapping.class_id, mapping.academic_year),
+        ) ?? 0,
+      materials:
+        materialsByCombo.get(comboKey(mapping.subject_id, mapping.class_id)) ??
+        0,
+    }));
 
     return { academic_year: displayAcademicYear, subjects };
   }
@@ -749,7 +784,12 @@ export class TimetableService {
    */
   async getMergedAcademicCalendarForFaculty(userId: number) {
     const faculty = await this.resolveFacultyByUserId(userId);
-    const empty = { semester: null, start_date: null, end_date: null, events: [] };
+    const empty = {
+      semester: null,
+      start_date: null,
+      end_date: null,
+      events: [],
+    };
 
     const latest = await this.prisma.faculty_subject_class_mapping.findFirst({
       where: { faculty_id: faculty.id },
@@ -784,7 +824,10 @@ export class TimetableService {
       Array.from(pairs.values()).map((pair) =>
         this.prisma.academic_calendars.findUnique({
           where: {
-            batch_id_semester: { batch_id: pair.batch_id, semester: pair.semester },
+            batch_id_semester: {
+              batch_id: pair.batch_id,
+              semester: pair.semester,
+            },
           },
           select: {
             semester: true,
@@ -820,7 +863,13 @@ export class TimetableService {
 
     const eventsByKey = new Map<
       string,
-      { id: number; event_date: string; event_type: string; title: string; description: string | null }
+      {
+        id: number;
+        event_date: string;
+        event_type: string;
+        title: string;
+        description: string | null;
+      }
     >();
     for (const calendar of found) {
       for (const event of calendar.calendar_events) {
@@ -863,7 +912,12 @@ export class TimetableService {
    * the faculty merge.
    */
   async getInstitutionAcademicCalendar() {
-    const empty = { semester: null, start_date: null, end_date: null, events: [] };
+    const empty = {
+      semester: null,
+      start_date: null,
+      end_date: null,
+      events: [],
+    };
 
     const calendars = await this.prisma.academic_calendars.findMany({
       select: {
@@ -887,14 +941,21 @@ export class TimetableService {
     }
 
     const distinctSemesters = new Set(calendars.map((c) => c.semester));
-    const semester = distinctSemesters.size === 1 ? calendars[0].semester : null;
+    const semester =
+      distinctSemesters.size === 1 ? calendars[0].semester : null;
 
     const startDates = calendars.map((c) => c.start_date.getTime());
     const endDates = calendars.map((c) => c.end_date.getTime());
 
     const eventsByKey = new Map<
       string,
-      { id: number; event_date: string; event_type: string; title: string; description: string | null }
+      {
+        id: number;
+        event_date: string;
+        event_type: string;
+        title: string;
+        description: string | null;
+      }
     >();
     for (const calendar of calendars) {
       for (const event of calendar.calendar_events) {
@@ -967,7 +1028,12 @@ export class TimetableService {
 
     return this.prisma.faculty.findMany({
       where: { department_id: departmentId, status: 'active' },
-      select: { id: true, first_name: true, last_name: true, designation: true },
+      select: {
+        id: true,
+        first_name: true,
+        last_name: true,
+        designation: true,
+      },
       orderBy: [{ first_name: 'asc' }, { last_name: 'asc' }],
     });
   }
@@ -991,7 +1057,12 @@ export class TimetableService {
   async getFullWeekForFacultyId(facultyId: number) {
     const faculty = await this.prisma.faculty.findUnique({
       where: { id: facultyId },
-      select: { id: true, first_name: true, last_name: true, designation: true },
+      select: {
+        id: true,
+        first_name: true,
+        last_name: true,
+        designation: true,
+      },
     });
     if (!faculty) {
       throw new NotFoundException('Faculty not found');
@@ -1021,7 +1092,9 @@ export class TimetableService {
     const days = [1, 2, 3, 4, 5, 6].map((dayOfWeek) => {
       const dayTemplate = templateByDay.get(dayOfWeek) ?? [];
       const periods = dayTemplate.map((entry) => {
-        const real = slotsByDayPeriod.get(`${dayOfWeek}-${entry.period_number}`);
+        const real = slotsByDayPeriod.get(
+          `${dayOfWeek}-${entry.period_number}`,
+        );
         if (real) return toRosterSlotResponse(real);
         return {
           period_number: entry.period_number,
@@ -1036,8 +1109,7 @@ export class TimetableService {
     const distinctTerms = new Set(
       slots.map((slot) => `${slot.academic_year}:${slot.semester}`),
     );
-    const uniformTerm =
-      distinctTerms.size === 1 ? slots[0] : undefined;
+    const uniformTerm = distinctTerms.size === 1 ? slots[0] : undefined;
 
     return {
       faculty,

@@ -3,6 +3,7 @@ import {
   Injectable,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   UnprocessableEntityException,
   InternalServerErrorException,
@@ -10,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { CreateRevaluationDto } from './dto/create-revaluation.dto';
 import { UpdateRevaluationDto } from './dto/update-revaluation.dto';
 
@@ -50,8 +53,8 @@ export class RevaluationService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(createRevaluationDto: CreateRevaluationDto) {
-    const { exam_marks_id, student_id, request_kind, remarks, fee_paid } = createRevaluationDto;
+  async create(createRevaluationDto: CreateRevaluationDto, user: JwtPayload) {
+    const { exam_marks_id, request_kind, remarks, fee_paid } = createRevaluationDto;
 
     const examMark = await this.prisma.exam_marks.findUnique({
       where: { id: exam_marks_id },
@@ -62,6 +65,21 @@ export class RevaluationService {
       throw new NotFoundException({
         message: 'Exam marks record not found.',
         errorCode: 'EXAM_MARKS_NOT_FOUND',
+      });
+    }
+
+    // A student can only ever file for their own mark — resolved server-side
+    // from the JWT, never trusted from the request body. COE keeps the
+    // client-supplied student_id for its offline/counter-entry flow.
+    const student_id =
+      user.role === ROLES.STUDENT
+        ? await this.resolveStudentIdByUserId(user.sub)
+        : createRevaluationDto.student_id;
+
+    if (examMark.student_id !== student_id) {
+      throw new ForbiddenException({
+        message: 'This exam mark does not belong to the specified student.',
+        errorCode: 'EXAM_MARK_STUDENT_MISMATCH',
       });
     }
 
@@ -410,5 +428,19 @@ export class RevaluationService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  private async resolveStudentIdByUserId(userId: number): Promise<number> {
+    const student = await this.prisma.students.findUnique({
+      where: { user_id: userId },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student profile not found for the authenticated user.',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+    return student.id;
   }
 }
