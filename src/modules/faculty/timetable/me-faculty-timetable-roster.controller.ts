@@ -39,8 +39,38 @@ export class MeFacultyTimetableRosterController {
     return this.timetableService.getFullWeekForFacultyId(facultyId);
   }
 
+  // Every staff role without an "own" batch/semester to scope a calendar to
+  // (see academic-calendar.api.ts's doc comment) - i.e. every role except
+  // Student/Faculty/Parent, which each already have their own more
+  // precisely-scoped calendar endpoint. Read-only institution-wide
+  // holiday/event data, not sensitive - safe to open broadly rather than
+  // leaving most staff roles unable to load the shared Academic Calendar
+  // screen at all.
   @Get('academic-calendar-institution')
-  @Roles(ROLES.HOD, ROLES.HR_PAYROLL, ROLES.PRINCIPAL, ROLES.HIGHER_EDUCATION)
+  @Roles(
+    ROLES.ADMIN,
+    ROLES.PRINCIPAL,
+    ROLES.HOD,
+    ROLES.COE,
+    ROLES.PLACEMENT,
+    ROLES.LIBRARY,
+    ROLES.BILLING,
+    ROLES.HR_PAYROLL,
+    ROLES.FINANCE,
+    ROLES.IQAC,
+    ROLES.SECRETARY,
+    ROLES.GATE_WARDEN,
+    ROLES.WARDEN,
+    ROLES.MEDIA_ROOM,
+    ROLES.ACADEMIC_COORDINATOR,
+    ROLES.ALUMNI,
+    ROLES.NON_TEACHING_STAFF,
+    ROLES.TRANSPORT,
+    ROLES.HIGHER_EDUCATION,
+    ROLES.MEDICAL_CENTRE,
+    ROLES.SPORTS_ADMIN,
+    ROLES.EDC_COORDINATOR,
+  )
   getInstitutionAcademicCalendar() {
     return this.timetableService.getInstitutionAcademicCalendar();
   }

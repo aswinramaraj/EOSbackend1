@@ -2,8 +2,10 @@ import {
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
+  IsISO8601,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -129,4 +131,37 @@ export class CreateAnnouncementDto {
   @IsOptional()
   @IsEnum(announcement_category_enum)
   category?: announcement_category_enum;
+
+  /**
+   * Manual-SQL `social_post_details` (prisma/manual-sql/
+   * media_social_and_report_extensions.sql) - presence of any of these five
+   * fields is what makes a post a "social" post (shows in the mobile Home
+   * tab feed) rather than a plain notice (Announcements carousel only) -
+   * see AnnouncementsService.create and the mobile app's
+   * HomeFeedScreen.tsx buildFeed(), which filters on `social != null`.
+   * Sent by the Media Room web composer alongside the fields above; not an
+   * enum since Post/Photo carousel/Video/Announcement card is a
+   * free-text label, not a DB constraint.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  format?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  link_url?: string;
+
+  @IsOptional()
+  @IsISO8601({}, { message: 'expires_at must be a valid ISO date' })
+  expires_at?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  is_pinned?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allow_comments?: boolean;
 }

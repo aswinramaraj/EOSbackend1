@@ -311,6 +311,12 @@ export class FacultyOdService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HOD && query.mine) {
+      // The HoD's own self-service "My OD" screen, not their department
+      // review queue - same endpoint, explicitly asking for their personal
+      // requests only (see ListFacultyOdQueryDto's doc comment on `mine`).
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      where.faculty_id = hod.id;
     } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty = { department_id: hod.department_id };

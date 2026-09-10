@@ -47,6 +47,21 @@ function formatAddress(
   return parts.length > 0 ? parts.join(', ') : null;
 }
 
+function formatFacultyAddress(faculty: {
+  address_line: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+}): string | null {
+  const parts = [
+    faculty.address_line,
+    faculty.city,
+    faculty.state,
+    faculty.postal_code,
+  ].filter((part): part is string => Boolean(part && part.trim()));
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
 @Injectable()
 export class ProfileService {
   private readonly logger = new Logger(ProfileService.name);
@@ -163,6 +178,12 @@ export class ProfileService {
         student_id_no: true,
         photo_url: true,
         admission_date: true,
+        gender: true,
+        date_of_birth: true,
+        blood_group: true,
+        nationality: true,
+        religion: true,
+        community: true,
         soa_applications: { select: { first_name: true, last_name: true } },
         users: { select: { email: true } },
         courses: { select: { name: true } },
@@ -176,6 +197,23 @@ export class ProfileService {
             leetcode_url: true,
             hackerrank_url: true,
             codeforces_url: true,
+          },
+        },
+        student_contacts: {
+          select: { student_mobile: true, student_email1: true },
+        },
+        student_addresses: {
+          where: { address_type: 'permanent' },
+          select: { address_line: true, city: true, state: true, pincode: true },
+        },
+        student_family_details: {
+          select: {
+            father_name: true,
+            father_mobile: true,
+            mother_name: true,
+            mother_mobile: true,
+            guardian_name: true,
+            guardian_phone: true,
           },
         },
       },
@@ -221,6 +259,21 @@ export class ProfileService {
       date_of_joining: toDateOnly(student.admission_date),
       reporting_to: reportingTo,
       social_links: socialLinks,
+      gender: student.gender,
+      date_of_birth: toDateOnly(student.date_of_birth),
+      blood_group: student.blood_group,
+      nationality: student.nationality,
+      religion: student.religion,
+      community: student.community,
+      mobile: student.student_contacts?.student_mobile ?? null,
+      personal_email: student.student_contacts?.student_email1 ?? null,
+      address: formatAddress(student.student_addresses[0]),
+      father_name: student.student_family_details?.father_name ?? null,
+      father_mobile: student.student_family_details?.father_mobile ?? null,
+      mother_name: student.student_family_details?.mother_name ?? null,
+      mother_mobile: student.student_family_details?.mother_mobile ?? null,
+      guardian_name: student.student_family_details?.guardian_name ?? null,
+      guardian_phone: student.student_family_details?.guardian_phone ?? null,
     };
   }
 
@@ -238,6 +291,24 @@ export class ProfileService {
         date_of_joining: true,
         profile_url: true,
         resume_url: true,
+        gender: true,
+        date_of_birth: true,
+        personal_email: true,
+        whatsapp_number: true,
+        alternate_phone: true,
+        address_line: true,
+        city: true,
+        state: true,
+        postal_code: true,
+        qualification: true,
+        specialization: true,
+        previous_institution: true,
+        previous_experience_years: true,
+        office_room: true,
+        work_location: true,
+        employment_type: true,
+        employment_status: true,
+        staff_code: true,
         users: { select: { email: true } },
         departments: { select: { name: true, code: true } },
         faculty: { select: { first_name: true, last_name: true } },
@@ -265,6 +336,21 @@ export class ProfileService {
         ? fullName(faculty.faculty.first_name, faculty.faculty.last_name)
         : null,
       social_links: socialLinks,
+      gender: faculty.gender,
+      date_of_birth: toDateOnly(faculty.date_of_birth),
+      personal_email: faculty.personal_email,
+      whatsapp_number: faculty.whatsapp_number,
+      alternate_phone: faculty.alternate_phone,
+      address: formatFacultyAddress(faculty),
+      qualification: faculty.qualification,
+      specialization: faculty.specialization,
+      previous_institution: faculty.previous_institution,
+      previous_experience_years: faculty.previous_experience_years,
+      office_room: faculty.office_room,
+      work_location: faculty.work_location,
+      employment_type: faculty.employment_type,
+      employment_status: faculty.employment_status,
+      staff_code: faculty.staff_code,
     };
   }
 

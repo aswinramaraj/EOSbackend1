@@ -27,6 +27,7 @@ import { AnnouncementsService } from './announcements.service';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 import { ListAnnouncementsQueryDto } from './dto/list-announcements-query.dto';
+import { CreateAnnouncementCommentDto } from './dto/create-announcement-comment.dto';
 import { AuditLogService } from 'src/modules/fees-billing/audit-log/audit-log.service';
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -389,5 +390,62 @@ export class AnnouncementsController {
       old_value: { title: (result as { title?: string }).title },
     });
     return result;
+  }
+
+  /**
+   * GET /api/v1/announcements/:id/comments
+   * Open to any role that can see the post itself (same visibility rule as
+   * GET /announcements/:id) - no @Roles restriction, matching findOne/findAll.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED
+   *  404 ANNOUNCEMENT_NOT_FOUND
+   *  500 INTERNAL_ERROR
+   */
+  @Get(':id/comments')
+  getComments(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.announcementsService.getComments(id, user);
+  }
+
+  /**
+   * POST /api/v1/announcements/:id/comments
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR
+   *  401 UNAUTHORIZED
+   *  403 COMMENTS_DISABLED — the post's own allow_comments toggle is off
+   *  404 ANNOUNCEMENT_NOT_FOUND / PARENT_COMMENT_NOT_FOUND
+   *  500 INTERNAL_ERROR
+   */
+  @Post(':id/comments')
+  @HttpCode(HttpStatus.CREATED)
+  addComment(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateAnnouncementCommentDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.announcementsService.addComment(id, dto, user);
+  }
+
+  /**
+   * DELETE /api/v1/announcements/:id/comments/:commentId
+   * Own comment, or the post's own author moderating any comment on it.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED
+   *  403 NOT_OWNER
+   *  404 COMMENT_NOT_FOUND
+   *  500 INTERNAL_ERROR
+   */
+  @Delete(':id/comments/:commentId')
+  removeComment(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('commentId', ParseIntPipe) commentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.announcementsService.removeComment(id, commentId, user);
   }
 }

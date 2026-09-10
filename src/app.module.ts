@@ -161,6 +161,8 @@ import { SettingsModule } from './modules/secretary-portal/settings/settings.mod
 
 import { WalletModule } from './modules/wallet/wallet.module';
 
+import { StationaryModule } from './modules/stationary/stationary.module';
+
 import { VenuesModule } from './modules/venues/venues/venues.module';
 import { ServiceRequestsModule as SecretaryServiceRequestsModule } from './modules/secretary/service-requests/service-requests.module';
 import { ProductRequestsModule } from './modules/secretary/product-requests/product-requests.module';
@@ -384,6 +386,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     SettingsModule,
 
     WalletModule,
+    StationaryModule,
 
     VenuesModule,
     SecretaryServiceRequestsModule,

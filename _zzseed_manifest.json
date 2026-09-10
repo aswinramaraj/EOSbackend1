@@ -1,0 +1,50 @@
+{
+  "tables": {
+    "departments": [
+      22,
+      23
+    ],
+    "courses": [
+      21,
+      22
+    ],
+    "batches": [
+      13
+    ],
+    "quotas": [
+      9
+    ],
+    "users": [
+      11335,
+      11338,
+      11342,
+      11345,
+      11358
+    ],
+    "students": [
+      5601,
+      5602
+    ],
+    "faculty": [
+      1001,
+      1002
+    ],
+    "faculty_publications": [
+      1,
+      2,
+      3
+    ],
+    "sports_teams": [
+      1
+    ],
+    "sports_achievements": [
+      1,
+      2,
+      3
+    ]
+  },
+  "iqacLogin": {
+    "email": "zztest.iqac.verify@iqacverify.local",
+    "password": "ZzTest123!"
+  }
+}
