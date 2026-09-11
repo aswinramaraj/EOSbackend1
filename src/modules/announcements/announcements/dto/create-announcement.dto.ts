@@ -1,22 +1,77 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
-  IsISO8601,
   IsNotEmpty,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import {
   target_audience_enum,
   announcement_status_enum,
   announcement_category_enum,
 } from '../../../../../generated/prisma/client';
+
+/**
+ * One carousel item on a social post. `storage_key` is the key returned by
+ * POST /announcements/attachments - never a URL, so the server can re-derive a
+ * fresh public URL on every read.
+ *
+ * width/height are the image's intrinsic pixel size, captured by the uploader.
+ * They are optional but strongly wanted: the app uses them to reserve the right
+ * aspect ratio BEFORE the file downloads, so a feed of mixed portrait/landscape
+ * photos does not jump as each one loads, and a small image is shown at its own
+ * shape instead of being stretched to fill a guessed box.
+ */
+export class AnnouncementMediaItemDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  storage_key!: string;
+
+  @IsIn(['photo', 'video'])
+  media_type!: 'photo' | 'video';
+
+  /** Poster frame for a video. Ignored for photos. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  thumbnail_key?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(20000)
+  width?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(20000)
+  height?: number;
+
+  /** Video length. Ignored for photos. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(60 * 60 * 4)
+  duration_seconds?: number;
+}
 
 export class CreateAnnouncementDto {
   @IsString()
@@ -133,16 +188,25 @@ export class CreateAnnouncementDto {
   category?: announcement_category_enum;
 
   /**
-   * Manual-SQL `social_post_details` (prisma/manual-sql/
-   * media_social_and_report_extensions.sql) - presence of any of these five
-   * fields is what makes a post a "social" post (shows in the mobile Home
-   * tab feed) rather than a plain notice (Announcements carousel only) -
-   * see AnnouncementsService.create and the mobile app's
-   * HomeFeedScreen.tsx buildFeed(), which filters on `social != null`.
-   * Sent by the Media Room web composer alongside the fields above; not an
-   * enum since Post/Photo carousel/Video/Announcement card is a
-   * free-text label, not a DB constraint.
+   * When a post should go out, for the publishing tab's "schedule for later".
+   *
+   * `announcements.scheduled_at` is a real column that nothing was writing —
+   * and because the DTO did not declare it, the global validation pipe
+   * (forbidNonWhitelisted) rejected the field outright with
+   * "property scheduled_at should not exist", so scheduling a post 400'd.
    */
+  @IsOptional()
+  @IsDateString({}, { message: 'scheduled_at must be an ISO date-time' })
+  scheduled_at?: string;
+
+  // ── social post details ───────────────────────────────────────────────────
+  // Stored in `social_post_details` (keyed 1:1 on announcement_id) - presence
+  // of any of these five fields is what makes a post a "social" post (shows
+  // in the mobile Home tab feed) rather than a plain notice (Announcements
+  // carousel only) - see AnnouncementsService.create and the mobile app's
+  // HomeFeedScreen.tsx buildFeed(), which filters on `social != null`.
+
+  /** Free text on purpose — the publishing tab's own format list, not an enum. */
   @IsOptional()
   @IsString()
   @MaxLength(30)
@@ -153,15 +217,50 @@ export class CreateAnnouncementDto {
   @MaxLength(2000)
   link_url?: string;
 
+  /** When the post should stop being shown. */
   @IsOptional()
-  @IsISO8601({}, { message: 'expires_at must be a valid ISO date' })
+  @IsDateString({}, { message: 'expires_at must be an ISO date-time' })
   expires_at?: string;
 
   @IsOptional()
   @IsBoolean()
+  @Type(() => Boolean)
   is_pinned?: boolean;
 
   @IsOptional()
   @IsBoolean()
+  @Type(() => Boolean)
   allow_comments?: boolean;
+
+  /**
+   * Optional opening comment, posted by the author onto their own post the
+   * moment it is created — the "first comment" convention social publishing
+   * uses for hashtags and credits, so it reads as part of the thread rather
+   * than cluttering the caption.
+   *
+   * Stored in `announcement_comments` (the table the thread already reads
+   * from), not on the announcement itself. The publishing screen has always
+   * sent this field; it simply had nowhere to land, and because the global
+   * ValidationPipe runs with `forbidNonWhitelisted` an undeclared property
+   * made the whole request 400 — which is why publishing failed outright.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  first_comment?: string;
+
+  /**
+   * Ordered photos/videos for a social post. Array order IS the carousel
+   * order - sequence_no is assigned server-side from it, never accepted from
+   * the client (see insertAnnouncementMedia).
+   *
+   * Capped at 10 to match announcement_media_seq_range_check; a longer array is
+   * rejected here with a readable message rather than bouncing off the CHECK.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => AnnouncementMediaItemDto)
+  media?: AnnouncementMediaItemDto[];
 }

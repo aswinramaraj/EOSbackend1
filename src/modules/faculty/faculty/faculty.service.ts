@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -8,6 +9,7 @@ import {
 } from '@nestjs/common';
 import crypto from 'node:crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import type {
@@ -19,6 +21,8 @@ import { UpdateFacultyDto } from './dto/update-faculty.dto';
 import { AdminUpdateFacultyDto } from './dto/admin-update-faculty.dto';
 import { ListFacultyQueryDto } from './dto/list-faculty-query.dto';
 import type { FacultyExtendedFieldsDto } from './dto/faculty-extended-fields.dto';
+import type { NotifyEntityDto } from 'src/common/dto/notify-entity.dto';
+import { NotificationsService } from '../../notifications/notifications/notifications.service';
 
 /** Characters used for generated temporary passwords — excludes visually ambiguous chars (0/O, 1/l/I). */
 const TEMP_PASSWORD_CHARSET =
@@ -85,7 +89,29 @@ function pickExtendedFields<T extends Record<string, unknown>>(
 export class FacultyService {
   private readonly logger = new Logger(FacultyService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
+
+  /** Secretary is always forced to her own department; other roles keep whatever was requested. */
+  private async resolveEffectiveDepartmentId(
+    user: JwtPayload,
+    requested?: number,
+  ): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return requested;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
 
   /**
    * POST /faculty (Admin only)
@@ -198,10 +224,11 @@ export class FacultyService {
     };
   }
 
-  /** GET /faculty (Admin/HoD) — paginated list, filterable by department_id, status, designation, joining year, and a name/email search. */
-  async findAll(query: ListFacultyQueryDto) {
+  /** GET /faculty (Admin/HoD/Secretary) — paginated list, filterable by department_id, status, designation, joining year, and a name/email search. Secretary is always forced to her own department, ignoring any client-supplied department_id. */
+  async findAll(query: ListFacultyQueryDto, user: JwtPayload) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, query.department_id);
     const where = {
-      department_id: query.department_id,
+      department_id: effectiveDepartmentId,
       status: query.status,
       designation: query.designation,
       employment_status: query.employment_status as
@@ -231,6 +258,21 @@ export class FacultyService {
                 email: { contains: query.search, mode: 'insensitive' as const },
               },
             },
+            // staff_code is the faculty roll number, which is how HR actually
+            // refers to people on paper. It was missing here, so searching by
+            // roll number returned nothing.
+            {
+              staff_code: {
+                contains: query.search,
+                mode: 'insensitive' as const,
+              },
+            },
+            {
+              designation: {
+                contains: query.search,
+                mode: 'insensitive' as const,
+              },
+            },
           ]
         : undefined,
     };
@@ -248,6 +290,7 @@ export class FacultyService {
             first_name: true,
             last_name: true,
             designation: true,
+            staff_code: true,
             date_of_joining: true,
             status: true,
             profile_url: true,
@@ -268,6 +311,7 @@ export class FacultyService {
       first_name: faculty.first_name,
       last_name: faculty.last_name,
       designation: faculty.designation,
+      staff_code: faculty.staff_code,
       department: faculty.departments,
       date_of_joining: faculty.date_of_joining,
       status: faculty.status,
@@ -423,7 +467,11 @@ export class FacultyService {
       throw new BadRequestException('No fields provided to update');
     }
 
-    if (dto.department_id !== undefined) {
+    // != null (not !== undefined) — @IsOptional() lets a literal `null`
+    // through validation untouched, and passing that straight into a
+    // non-nullable Int where-clause throws an uncaught PrismaClientValidationError
+    // instead of the intended "Department not found".
+    if (dto.department_id != null) {
       const department = await this.prisma.departments.findUnique({
         where: { id: dto.department_id },
       });
@@ -570,6 +618,35 @@ export class FacultyService {
       this.logger.warn(`faculty_activity_log unavailable: ${String(err)}`);
       return [];
     }
+  }
+
+  /**
+   * POST /me/faculty/:id/notify (Admin/HR Payroll) — an ad-hoc message
+   * pushed straight to this faculty member's own notification inbox
+   * (bell icon), via the same notify() every real notification producer
+   * in this app calls (persists the in-app row + best-effort push). No
+   * `type` is set — the closed notification_type_enum has no value for
+   * "an admin sent you a one-off message", and the DTO/mobile client both
+   * already treat an unset type as a valid, generic case (no deep link).
+   */
+  async notifyFaculty(facultyId: number, dto: NotifyEntityDto) {
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { id: facultyId },
+      select: { user_id: true },
+    });
+    if (!faculty) {
+      throw new NotFoundException('Faculty not found');
+    }
+
+    await this.notifications.notify({
+      user_id: faculty.user_id,
+      title: dto.title,
+      message: dto.message,
+      related_entity_type: 'faculty',
+      related_entity_id: facultyId,
+    });
+
+    return { sent: true };
   }
 
   /**

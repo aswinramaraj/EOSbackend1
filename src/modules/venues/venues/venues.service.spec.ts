@@ -58,7 +58,11 @@ describe('VenuesService', () => {
 
   it('allows a booking later today, after the current time', async () => {
     const prisma = (service as unknown as { prisma: any }).prisma;
-    prisma.venues.findUnique.mockResolvedValue({ id: 1, name: 'Hall', capacity: 100 });
+    prisma.venues.findUnique.mockResolvedValue({
+      id: 1,
+      name: 'Hall',
+      capacity: 100,
+    });
     prisma.venue_bookings.create.mockResolvedValue({ id: 1 });
 
     const from = new Date(Date.now() + 60 * 60 * 1000); // one hour from now — still "today" in almost all cases
@@ -66,7 +70,12 @@ describe('VenuesService', () => {
 
     await expect(
       service.createBooking(
-        { venue_id: 1, purpose: 'Test', from_datetime: from.toISOString(), to_datetime: to.toISOString() },
+        {
+          venue_id: 1,
+          purpose: 'Test',
+          from_datetime: from.toISOString(),
+          to_datetime: to.toISOString(),
+        },
         42,
       ),
     ).resolves.toBeDefined();
@@ -75,7 +84,11 @@ describe('VenuesService', () => {
 
   it('rejects a booking for today at a time that has already passed', async () => {
     const prisma = (service as unknown as { prisma: any }).prisma;
-    prisma.venues.findUnique.mockResolvedValue({ id: 1, name: 'Hall', capacity: 100 });
+    prisma.venues.findUnique.mockResolvedValue({
+      id: 1,
+      name: 'Hall',
+      capacity: 100,
+    });
 
     const from = new Date(startOfToday());
     from.setSeconds(1); // start of today — always already in the past by the time this runs
@@ -84,7 +97,12 @@ describe('VenuesService', () => {
 
     await expect(
       service.createBooking(
-        { venue_id: 1, purpose: 'Test', from_datetime: from.toISOString(), to_datetime: to.toISOString() },
+        {
+          venue_id: 1,
+          purpose: 'Test',
+          from_datetime: from.toISOString(),
+          to_datetime: to.toISOString(),
+        },
         42,
       ),
     ).rejects.toThrow('from_datetime must not be in the past');
@@ -93,7 +111,11 @@ describe('VenuesService', () => {
 
   it('allows a booking for a future date', async () => {
     const prisma = (service as unknown as { prisma: any }).prisma;
-    prisma.venues.findUnique.mockResolvedValue({ id: 1, name: 'Hall', capacity: 100 });
+    prisma.venues.findUnique.mockResolvedValue({
+      id: 1,
+      name: 'Hall',
+      capacity: 100,
+    });
     prisma.venue_bookings.create.mockResolvedValue({ id: 2 });
 
     const from = new Date(startOfToday());
@@ -104,7 +126,12 @@ describe('VenuesService', () => {
 
     await expect(
       service.createBooking(
-        { venue_id: 1, purpose: 'Test', from_datetime: from.toISOString(), to_datetime: to.toISOString() },
+        {
+          venue_id: 1,
+          purpose: 'Test',
+          from_datetime: from.toISOString(),
+          to_datetime: to.toISOString(),
+        },
         42,
       ),
     ).resolves.toBeDefined();
@@ -112,7 +139,11 @@ describe('VenuesService', () => {
 
   it('rejects a booking dated before today', async () => {
     const prisma = (service as unknown as { prisma: any }).prisma;
-    prisma.venues.findUnique.mockResolvedValue({ id: 1, name: 'Hall', capacity: 100 });
+    prisma.venues.findUnique.mockResolvedValue({
+      id: 1,
+      name: 'Hall',
+      capacity: 100,
+    });
 
     const from = new Date(startOfToday());
     from.setDate(from.getDate() - 1);
@@ -121,7 +152,12 @@ describe('VenuesService', () => {
 
     await expect(
       service.createBooking(
-        { venue_id: 1, purpose: 'Test', from_datetime: from.toISOString(), to_datetime: to.toISOString() },
+        {
+          venue_id: 1,
+          purpose: 'Test',
+          from_datetime: from.toISOString(),
+          to_datetime: to.toISOString(),
+        },
         42,
       ),
     ).rejects.toThrow('from_datetime must not be in the past');
@@ -153,7 +189,10 @@ describe('VenuesService', () => {
         location: 'Block A',
         capacity: 500,
       },
-      users_venue_bookings_booked_by_user_idTousers: { id: 77, email: 'sec@example.com' },
+      users_venue_bookings_booked_by_user_idTousers: {
+        id: 77,
+        email: 'sec@example.com',
+      },
     });
 
     await service.reviewBooking(8, { decision: 'approved' }, 1);

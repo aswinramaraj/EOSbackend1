@@ -24,6 +24,7 @@ import { ListDrivesQueryDto } from './dto/list-drives-query.dto';
 import { CreateDriveApplicationDto } from './dto/create-drive-application.dto';
 import { UpdateDriveApplicationStatusDto } from './dto/update-drive-application-status.dto';
 import { UpdatePlacementStatusDto } from './dto/update-placement-status.dto';
+import { UpdateStudentCareerPathDto } from './dto/update-student-career-path.dto';
 import { GetPlacementStatsQueryDto } from './dto/get-placement-stats-query.dto';
 import {
   ExportReportQueryDto,
@@ -230,6 +231,18 @@ export class DrivesController {
     @Body() dto: UpdatePlacementStatusDto,
   ) {
     return this.drivesService.updatePlacementStatus(studentId, dto);
+  }
+
+  // Placement Officer marks a student's declared path (Placement / Venture
+  // / Higher Studies) — drives which one shows in that student's own
+  // sidebar. Staff-set, replacing what used to be a student self-service
+  // toggle on the student's own profile page.
+  @Patch('students/:studentId/career-path')
+  updateStudentCareerPath(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Body() dto: UpdateStudentCareerPathDto,
+  ) {
+    return this.drivesService.setStudentCareerPath(studentId, dto.career_path);
   }
 
   @Patch(':id')

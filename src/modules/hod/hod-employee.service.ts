@@ -473,7 +473,7 @@ export class HodEmployeeService {
   }
 
   applyPayslip(user: JwtPayload, dto: CreatePayslipRequestDto) {
-    return this.payslipRequests.create(dto, user.sub, user.role);
+    return this.payslipRequests.create(dto, user.sub);
   }
 
   getAppraisalCriteria() {
@@ -538,8 +538,16 @@ export class HodEmployeeService {
     const faculty = await this.resolveFaculty(user);
     const rules = await this.librarySettings.getRules();
 
+    // A HoD is a faculty account — BorrowRecordsService.create() (both the
+    // desk-issue path and the request/accept path) always persists a
+    // non-student borrow against faculty_id, never staff_user_id (that
+    // column exists only for a Secretary self-checkout flow that was
+    // reverted — see borrow-records.service.ts). Querying staff_user_id
+    // here meant this screen could never show a real borrowed book,
+    // exposed once the Request→Accept flow started actually creating
+    // faculty-scoped records for a HoD to discover.
     const records = await this.prisma.book_borrow_records.findMany({
-      where: { staff_user_id: user.sub },
+      where: { faculty_id: faculty.id },
       include: {
         books: {
           select: { id: true, title: true, qr_code: true, author: true },

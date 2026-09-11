@@ -3,12 +3,12 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { AppraisalService } from '../faculty/appraisal/appraisal.service';
 
-type Status = 'pending' | 'sent_to_principal' | 'sent_back';
+type Status = 'pending' | 'sent_to_hr' | 'sent_back';
 
 function mapStatus(status: string): Status {
   if (status === 'submitted') return 'pending';
   if (status === 'rejected') return 'sent_back';
-  return 'sent_to_principal'; // hod_reviewed / hr_scored / management_approved
+  return 'sent_to_hr'; // hod_reviewed / hr_scored / management_approved
 }
 
 /**
@@ -17,6 +17,12 @@ function mapStatus(status: string): Status {
  * `/me/appraisal_requests`, role-gated to include HOD already). Reused
  * wholesale — its real state machine (submitted → hod_reviewed → hr_scored
  * → management_approved/rejected) is not re-implemented.
+ *
+ * Once an HoD approves, the request goes to HR Payroll for scoring — never
+ * to a Principal (there never was a Principal step in the real state
+ * machine above; "sent_to_principal" was this adapter's own leftover label
+ * for the hod_reviewed/hr_scored/management_approved states, corrected to
+ * match the real destination).
  *
  * Known simplification: the real `UpdateAppraisalDto` has no `remarks`
  * field for the HoD's review transition (only `status`) — a `remarks`
@@ -72,6 +78,7 @@ export class HodAppraisalService {
           submitted_at: r.created_at,
           cycle_academic_year: r.academic_year,
           entries_count: r.entries.length,
+          attachments_count: r.attachments.length,
           self_score:
             scored.length > 0
               ? scored.reduce((sum, e) => sum + (e.score ?? 0), 0)
@@ -84,8 +91,7 @@ export class HodAppraisalService {
       department,
       counts: {
         pending: rows.filter((r) => r.status === 'pending').length,
-        sent_to_principal: rows.filter((r) => r.status === 'sent_to_principal')
-          .length,
+        sent_to_hr: rows.filter((r) => r.status === 'sent_to_hr').length,
         sent_back: rows.filter((r) => r.status === 'sent_back').length,
         all: rows.length,
       },
@@ -112,6 +118,13 @@ export class HodAppraisalService {
         description: e.description,
         score: e.score,
         max_score: e.criteria.max_score,
+      })),
+      attachments: r.attachments.map((a) => ({
+        id: a.id,
+        division_id: a.division_id,
+        file_url: a.file_url,
+        file_name: a.file_name,
+        uploaded_at: a.uploaded_at,
       })),
     };
   }

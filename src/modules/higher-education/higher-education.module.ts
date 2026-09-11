@@ -17,6 +17,8 @@ import { HigherEducationReportsController } from './higher-education-reports.con
 import { HigherEducationReportsService } from './higher-education-reports.service';
 import { HigherEducationCalendarController } from './higher-education-calendar.controller';
 import { HigherEducationCalendarService } from './higher-education-calendar.service';
+import { HigherEducationStudentListsController } from './higher-education-student-lists.controller';
+import { HigherEducationStudentListsService } from './higher-education-student-lists.service';
 
 @Module({
   imports: [PrismaModule, TimetableModule],
@@ -29,6 +31,7 @@ import { HigherEducationCalendarService } from './higher-education-calendar.serv
     HigherEducationScholarshipsController,
     HigherEducationReportsController,
     HigherEducationCalendarController,
+    HigherEducationStudentListsController,
   ],
   providers: [
     HigherEducationDashboardService,
@@ -39,6 +42,7 @@ import { HigherEducationCalendarService } from './higher-education-calendar.serv
     HigherEducationScholarshipsService,
     HigherEducationReportsService,
     HigherEducationCalendarService,
+    HigherEducationStudentListsService,
   ],
 })
 export class HigherEducationModule {}

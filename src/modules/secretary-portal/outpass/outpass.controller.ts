@@ -25,16 +25,16 @@ export class OutpassController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateOutpassDto, @CurrentUser() user: JwtPayload) {
-    return this.outpassService.create(dto, user.sub);
+    return this.outpassService.create(dto, user.sub, user);
   }
 
   @Get()
-  findAll(@Query() query: ListOutpassQueryDto) {
-    return this.outpassService.findAll(query);
+  findAll(@Query() query: ListOutpassQueryDto, @CurrentUser() user: JwtPayload) {
+    return this.outpassService.findAll(query, user);
   }
 
   @Patch(':id/status')
   updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateOutpassStatusDto, @CurrentUser() user: JwtPayload) {
-    return this.outpassService.updateStatus(id, dto.status, user.sub);
+    return this.outpassService.updateStatus(id, dto.status, user.sub, user);
   }
 }

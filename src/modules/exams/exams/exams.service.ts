@@ -17,7 +17,7 @@ export class ExamsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(createExamDto: CreateExamDto, createdByUserId: number) {
-    const { exam_type_id, batch_id, academic_year, semester } = createExamDto;
+    const { title, exam_type_id, batch_id, academic_year, semester, exam_category, registration_opens_at, registration_closes_at, fee_amount, notes_to_students } = createExamDto;
 
     const examType = await this.prisma.exam_types.findUnique({
       where: { id: exam_type_id },
@@ -62,11 +62,17 @@ export class ExamsService {
       const result = await this.prisma.$transaction(async (tx) => {
         const exam = await tx.exams.create({
           data: {
+            title,
             exam_type_id,
             batch_id,
             academic_year,
             semester,
             created_by_user_id: createdByUserId,
+            exam_category: exam_category ?? 'regular',
+            registration_opens_at: registration_opens_at ? new Date(registration_opens_at) : undefined,
+            registration_closes_at: registration_closes_at ? new Date(registration_closes_at) : undefined,
+            fee_amount,
+            notes_to_students,
           },
         });
 
@@ -97,20 +103,18 @@ export class ExamsService {
               })
             : [];
 
-        if (classSubjects.length === 0) {
-          throw new BadRequestException({
-            message: 'No subjects found to map for this batch and semester',
-            errorCode: 'NO_SUBJECTS_TO_MAP',
+        // No class_subjects assigned yet for this batch/semester is a real,
+        // recoverable state (courses can be mapped afterwards via
+        // POST /exam-subject-mapping) — it must not block exam creation.
+        if (classSubjects.length > 0) {
+          await tx.exam_subject_mapping.createMany({
+            data: classSubjects.map((cs) => ({
+              exam_id: exam.id,
+              class_id: cs.class_id,
+              subject_id: cs.subject_id,
+            })),
           });
         }
-
-        await tx.exam_subject_mapping.createMany({
-          data: classSubjects.map((cs) => ({
-            exam_id: exam.id,
-            class_id: cs.class_id,
-            subject_id: cs.subject_id,
-          })),
-        });
 
         return {
           exam,
@@ -154,7 +158,8 @@ export class ExamsService {
 
   async findAll() {
     try {
-      return await this.prisma.exams.findMany();
+      const exams = await this.prisma.exams.findMany();
+      return exams.map((e) => ({ ...e, fee_amount: e.fee_amount != null ? Number(e.fee_amount) : null }));
     } catch (err: any) {
       this.logger.error('DB error while fetching exams', err);
       throw new InternalServerErrorException({
@@ -198,15 +203,22 @@ export class ExamsService {
     }
 
     try {
-      return await this.prisma.exams.update({
+      const updated = await this.prisma.exams.update({
         where: { id },
         data: {
+          title: updateExamDto.title,
           exam_type_id: updateExamDto.exam_type_id,
           batch_id: updateExamDto.batch_id,
           academic_year: updateExamDto.academic_year,
           semester: updateExamDto.semester,
+          exam_category: updateExamDto.exam_category,
+          registration_opens_at: updateExamDto.registration_opens_at ? new Date(updateExamDto.registration_opens_at) : undefined,
+          registration_closes_at: updateExamDto.registration_closes_at ? new Date(updateExamDto.registration_closes_at) : undefined,
+          fee_amount: updateExamDto.fee_amount,
+          notes_to_students: updateExamDto.notes_to_students,
         },
       });
+      return { ...updated, fee_amount: updated.fee_amount != null ? Number(updated.fee_amount) : null };
     } catch (err: any) {
       if (err?.code === 'P2025') {
         throw new NotFoundException({

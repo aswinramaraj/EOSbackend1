@@ -65,11 +65,13 @@ import { MeMessFeedbackService } from './me-mess-feedback.service';
 import { MeAcademicCalendarService } from './me-academic-calendar.service';
 import { MeAcademicClearanceService } from './me-academic-clearance.service';
 import { GetAcademicClearanceDto } from './dto/get-academic-clearance.dto';
+import { MeCareerPathService } from './me-career-path.service';
 
 @Controller('me')
 export class MeController {
   constructor(
     private readonly meProfileService: MeProfileService,
+    private readonly meCareerPathService: MeCareerPathService,
     private readonly meAttendanceService: MeAttendanceService,
     private readonly meExamResultsService: MeExamResultsService,
     private readonly meLeavesService: MeLeavesService,
@@ -140,6 +142,22 @@ export class MeController {
   @Roles(ROLES.STUDENT)
   getProfile(@CurrentUser() user: JwtPayload) {
     return this.meProfileService.getMyProfile(user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/career-path
+   *
+   * Self-scoped: which one of Placement/Venture/Higher Studies this student
+   * has been marked as by the Placement Officer, or null if not set yet.
+   * Read-only from the student side — see MeCareerPathService; setting it is
+   * a staff action on the Placement Students page
+   * (DrivesService.setStudentCareerPath).
+   */
+  @Get('career-path')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  getCareerPath(@CurrentUser() user: JwtPayload) {
+    return this.meCareerPathService.getMyCareerPath(user.sub);
   }
 
   /**

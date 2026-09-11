@@ -1,4 +1,9 @@
-import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 interface StudentSummarySource {
@@ -27,7 +32,10 @@ function toStudentSummary(student: StudentSummarySource) {
 }
 
 interface StudentSummaryWithDeptSource extends StudentSummarySource {
-  classes: { section: string; departments: { code: string; name: string } } | null;
+  classes: {
+    section: string;
+    departments: { code: string; name: string };
+  } | null;
 }
 
 function toStudentSummaryWithDepartment(student: StudentSummaryWithDeptSource) {
@@ -59,9 +67,16 @@ export class StudentHigherEducationService {
             select: {
               id: true,
               student_id_no: true,
-              soa_applications: { select: { first_name: true, last_name: true } },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
               users: { select: { email: true } },
-              classes: { select: { section: true, departments: { select: { code: true, name: true } } } },
+              classes: {
+                select: {
+                  section: true,
+                  departments: { select: { code: true, name: true } },
+                },
+              },
             },
           },
         },
@@ -97,7 +112,9 @@ export class StudentHigherEducationService {
             select: {
               id: true,
               student_id_no: true,
-              soa_applications: { select: { first_name: true, last_name: true } },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
               users: { select: { email: true } },
               classes: { select: { section: true } },
             },
@@ -128,13 +145,76 @@ export class StudentHigherEducationService {
   }
 
   /**
+   * GET /me/higher-education (Student only) — the caller's own higher-studies
+   * record, or null if they've never registered one (added by a Principal/
+   * class advisor, same as student_entrepreneurship — a student has no
+   * self-service create/update here, only a read of what staff have
+   * recorded). Same full shape as findAllForMentor's row mapping, kept
+   * consistent rather than a second bespoke shape for one more caller.
+   */
+  async findForStudent(userId: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { user_id: userId },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'No student record found for this account',
+        errorCode: 'STUDENT_RECORD_NOT_FOUND',
+      });
+    }
+
+    try {
+      const row = await this.prisma.student_higher_education.findUnique({
+        where: { student_id: student.id },
+      });
+      if (!row) return null;
+
+      return {
+        id: row.id,
+        preferred_course: row.preferred_course,
+        preferred_country: row.preferred_country,
+        preferred_university: row.preferred_university,
+        remarks: row.remarks,
+        created_at: row.created_at,
+        is_scholarship: row.is_scholarship,
+        scholarship_name: row.scholarship_name,
+        scholarship_value:
+          row.scholarship_value !== null ? Number(row.scholarship_value) : null,
+        admission_status: row.admission_status,
+        offer_status: row.offer_status,
+        visa_status: row.visa_status,
+        intake_term: row.intake_term,
+        sop_status: row.sop_status,
+        recommendation_status: row.recommendation_status,
+        research_output: row.research_output,
+        internship_details: row.internship_details,
+        application_submitted_date: row.application_submitted_date,
+        interview_date: row.interview_date,
+        funding_source: row.funding_source,
+      };
+    } catch (err) {
+      this.logger.error(
+        'DB error reading student_higher_education for student',
+        err,
+      );
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
    * GET /me/mentee-higher-education (Faculty — class advisor only). Scoped
    * live via class_mentors — every class the caller currently mentors,
    * resolved fresh on every call, so a reassignment takes effect
    * immediately with no stale caching of "which class" this faculty advises.
    */
   async findAllForMentor(userId: number) {
-    const faculty = await this.prisma.faculty.findUnique({ where: { user_id: userId } });
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { user_id: userId },
+    });
     if (!faculty) return [];
 
     const mentorClasses = await this.prisma.class_mentors.findMany({
@@ -152,7 +232,9 @@ export class StudentHigherEducationService {
             select: {
               id: true,
               student_id_no: true,
-              soa_applications: { select: { first_name: true, last_name: true } },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
               users: { select: { email: true } },
               classes: { select: { section: true } },
             },
@@ -170,7 +252,8 @@ export class StudentHigherEducationService {
         created_at: row.created_at,
         is_scholarship: row.is_scholarship,
         scholarship_name: row.scholarship_name,
-        scholarship_value: row.scholarship_value !== null ? Number(row.scholarship_value) : null,
+        scholarship_value:
+          row.scholarship_value !== null ? Number(row.scholarship_value) : null,
         admission_status: row.admission_status,
         offer_status: row.offer_status,
         visa_status: row.visa_status,
@@ -185,7 +268,10 @@ export class StudentHigherEducationService {
         student: toStudentSummary(row.students),
       }));
     } catch (err) {
-      this.logger.error('DB error listing student_higher_education for mentor', err);
+      this.logger.error(
+        'DB error listing student_higher_education for mentor',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

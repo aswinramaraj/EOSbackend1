@@ -23,14 +23,19 @@ import { ListPersonalCalendarEntriesQueryDto } from './dto/list-personal-calenda
 
 /**
  * Private planner entries on top of the read-only institution calendar -
- * Principal only for now. Every route is scoped to the caller's own
- * user_id inside the service - never a client-supplied one.
+ * Principal, Student, HoD and Faculty (Advisor uses the same faculty role/
+ * login). Every route is scoped to the caller's own user_id inside the
+ * service - never a client-supplied one - and the service's own findAll/
+ * assertOwn checks were already role-generic before this widened who can
+ * reach the controller at all.
  */
 @Controller('me/personal-calendar-entries')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.STUDENT, ROLES.HOD, ROLES.FACULTY)
 export class PersonalCalendarController {
-  constructor(private readonly personalCalendarService: PersonalCalendarService) {}
+  constructor(
+    private readonly personalCalendarService: PersonalCalendarService,
+  ) {}
 
   @Post()
   create(
@@ -58,7 +63,10 @@ export class PersonalCalendarController {
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.personalCalendarService.remove(user.sub, id);
   }
 }

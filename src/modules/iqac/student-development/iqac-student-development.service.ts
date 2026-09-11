@@ -16,6 +16,9 @@ import { AddPlacementEntryDto } from './dto/add-placement-entry.dto';
 import { AddCertificationEntryDto } from './dto/add-certification-entry.dto';
 import { AddCompetitionEntryDto } from './dto/add-competition-entry.dto';
 import { AddHackathonEntryDto } from './dto/add-hackathon-entry.dto';
+import { UpdateCertificationEntryDto } from './dto/update-certification-entry.dto';
+import { UpdateCompetitionEntryDto } from './dto/update-competition-entry.dto';
+import { UpdateHackathonEntryDto } from './dto/update-hackathon-entry.dto';
 
 function startOfToday(): Date {
   return new Date(new Date().toISOString().slice(0, 10));
@@ -345,7 +348,8 @@ export class IqacStudentDevelopmentService {
       : null;
     const scopedRows = allowed
       ? rows.filter(
-          (r) => r.athlete_student_id != null && allowed.has(r.athlete_student_id),
+          (r) =>
+            r.athlete_student_id != null && allowed.has(r.athlete_student_id),
         )
       : rows;
 
@@ -401,8 +405,13 @@ export class IqacStudentDevelopmentService {
       id: number;
       roll_no: string | null;
       student_id_no: string;
-      classes: { section: string | null; current_semester: number | null } | null;
-      courses: { departments: { id: number; code: string; name: string } | null } | null;
+      classes: {
+        section: string | null;
+        current_semester: number | null;
+      } | null;
+      courses: {
+        departments: { id: number; code: string; name: string } | null;
+      } | null;
       batches: { name: string } | null;
     },
   ) {
@@ -487,6 +496,44 @@ export class IqacStudentDevelopmentService {
     });
   }
 
+  /** PATCH /me/iqac/student-development/certifications/:id — real student_certificates update. */
+  async updateCertificationEntry(id: number, dto: UpdateCertificationEntryDto) {
+    const existing = await this.prisma.student_certificates.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Certification entry not found',
+        errorCode: 'CERTIFICATION_NOT_FOUND',
+      });
+    }
+    return this.prisma.student_certificates.update({
+      where: { id },
+      data: {
+        platform: dto.platform,
+        track: dto.track,
+        score: dto.score,
+        completed_on: dto.completed_on ? new Date(dto.completed_on) : undefined,
+        status: dto.status,
+      },
+    });
+  }
+
+  /** DELETE /me/iqac/student-development/certifications/:id */
+  async removeCertificationEntry(id: number) {
+    const existing = await this.prisma.student_certificates.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Certification entry not found',
+        errorCode: 'CERTIFICATION_NOT_FOUND',
+      });
+    }
+    await this.prisma.student_certificates.delete({ where: { id } });
+    return { id, deleted: true };
+  }
+
   /** GET /me/iqac/student-development/competitions/quality */
   async competitionsQuality() {
     const thisTerm = currentTermRange(startOfToday());
@@ -542,6 +589,44 @@ export class IqacStudentDevelopmentService {
     });
   }
 
+  /** PATCH /me/iqac/student-development/competitions/:id — real student_competitions update. */
+  async updateCompetitionEntry(id: number, dto: UpdateCompetitionEntryDto) {
+    const existing = await this.prisma.student_competitions.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Competition entry not found',
+        errorCode: 'COMPETITION_NOT_FOUND',
+      });
+    }
+    return this.prisma.student_competitions.update({
+      where: { id },
+      data: {
+        event_name: dto.event_name,
+        category: dto.category,
+        level: dto.level,
+        held_on: dto.held_on ? new Date(dto.held_on) : undefined,
+        result: dto.result,
+      },
+    });
+  }
+
+  /** DELETE /me/iqac/student-development/competitions/:id */
+  async removeCompetitionEntry(id: number) {
+    const existing = await this.prisma.student_competitions.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Competition entry not found',
+        errorCode: 'COMPETITION_NOT_FOUND',
+      });
+    }
+    await this.prisma.student_competitions.delete({ where: { id } });
+    return { id, deleted: true };
+  }
+
   /** GET /me/iqac/student-development/hackathons/quality */
   async hackathonsQuality() {
     const thisTerm = currentTermRange(startOfToday());
@@ -595,5 +680,47 @@ export class IqacStudentDevelopmentService {
         outcome: dto.outcome,
       },
     });
+  }
+
+  /** PATCH /me/iqac/student-development/hackathons/:id — real student_hackathon_participations update. */
+  async updateHackathonEntry(id: number, dto: UpdateHackathonEntryDto) {
+    const existing =
+      await this.prisma.student_hackathon_participations.findUnique({
+        where: { id },
+      });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Hackathon entry not found',
+        errorCode: 'HACKATHON_NOT_FOUND',
+      });
+    }
+    return this.prisma.student_hackathon_participations.update({
+      where: { id },
+      data: {
+        hackathon_name: dto.hackathon_name,
+        team_name: dto.team_name,
+        host: dto.host,
+        held_on: dto.held_on ? new Date(dto.held_on) : undefined,
+        outcome: dto.outcome,
+      },
+    });
+  }
+
+  /** DELETE /me/iqac/student-development/hackathons/:id */
+  async removeHackathonEntry(id: number) {
+    const existing =
+      await this.prisma.student_hackathon_participations.findUnique({
+        where: { id },
+      });
+    if (!existing) {
+      throw new NotFoundException({
+        message: 'Hackathon entry not found',
+        errorCode: 'HACKATHON_NOT_FOUND',
+      });
+    }
+    await this.prisma.student_hackathon_participations.delete({
+      where: { id },
+    });
+    return { id, deleted: true };
   }
 }

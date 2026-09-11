@@ -44,6 +44,7 @@
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "jsonwebtoken": "^9.0.3",
+    "livekit-server-sdk": "^2.19.0",
     "multer": "^2.2.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",

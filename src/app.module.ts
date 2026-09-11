@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
+import { TransientDbRetryInterceptor } from './common/interceptors/transient-db-retry.interceptor';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 
@@ -15,6 +16,7 @@ import { DepartmentsModule } from './modules/academic-structure/departments/depa
 import { SubjectsModule } from './modules/academic-structure/subjects/subjects.module';
 
 import { BonafideModule } from './modules/admissions/bonafide/bonafide.module';
+import { BonafideRequestsModule } from './modules/admin/bonafide-requests/bonafide-requests.module';
 import { BonafideReasonsModule } from './modules/admissions/bonafide-reasons/bonafide-reasons.module';
 import { CertificatesModule } from './modules/admissions/certificates/certificates.module';
 import { OdModule } from './modules/admissions/od/od.module';
@@ -56,6 +58,8 @@ import { PrincipalLibraryModule } from './modules/principal-library/principal-li
 import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
 import { SportsAdminModule } from './modules/sports-admin/sports-admin.module';
+import { FinanceModule } from './modules/finance/finance.module';
+import { MediaRoomModule } from './modules/media-room/media-room.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { TransportModule } from './modules/transport/transport.module';
 import { HigherEducationModule } from './modules/higher-education/higher-education.module';
@@ -75,12 +79,40 @@ import { ResultsModule } from './modules/exams/results/results.module';
 import { RevaluationModule } from './modules/exams/revaluation/revaluation.module';
 import { SeatingArrangementsModule } from './modules/exams/seating-arrangements/seating-arrangements.module';
 
+// COE module — added onto exams' existing feature set, nothing above changed.
+import { ArrearsModule } from './modules/exams/arrears/arrears.module';
+import { AttendanceEligibilityModule } from './modules/exams/attendance-eligibility/attendance-eligibility.module';
+import { CertificateRequestsModule } from './modules/exams/certificate-requests/certificate-requests.module';
+import { CoeProfileModule } from './modules/exams/coe-profile/coe-profile.module';
+import { StudentExamRecordModule } from './modules/exams/student-exam-record/student-exam-record.module';
+import { ConfidentialAccessLogModule } from './modules/exams/confidential-access-log/confidential-access-log.module';
+import { ConvocationModule } from './modules/exams/convocation/convocation.module';
+import { CourseResultsModule } from './modules/exams/course-results/course-results.module';
+import { ExamFeeTransactionsModule } from './modules/exams/exam-fee-transactions/exam-fee-transactions.module';
+import { ExamRegistrationsModule } from './modules/exams/exam-registrations/exam-registrations.module';
+import { FacultyDirectoryModule } from './modules/exams/faculty-directory/faculty-directory.module';
+import { MalpracticeModule } from './modules/exams/malpractice/malpractice.module';
+import { MarksEntryLocksModule } from './modules/exams/marks-entry-locks/marks-entry-locks.module';
+import { MarksRosterModule } from './modules/exams/marks-roster/marks-roster.module';
+import { PassBoardModule } from './modules/exams/pass-board/pass-board.module';
+import { PassRulesModule } from './modules/exams/pass-rules/pass-rules.module';
+import { PhotocopyRequestsModule } from './modules/exams/photocopy-requests/photocopy-requests.module';
+import { QuestionPapersModule } from './modules/exams/question-papers/question-papers.module';
+import { RegulationsModule } from './modules/exams/regulations/regulations.module';
+import { ReportsAnalyticsModule } from './modules/exams/reports-analytics/reports-analytics.module';
+import { RevaluationWindowsModule } from './modules/exams/revaluation-windows/revaluation-windows.module';
+import { ScriptArchiveModule } from './modules/exams/script-archive/script-archive.module';
+import { ScriptBundlesModule } from './modules/exams/script-bundles/script-bundles.module';
+import { SeatingPlansModule } from './modules/exams/seating-plans/seating-plans.module';
+import { SpecialAdmissionsModule } from './modules/exams/special-admissions/special-admissions.module';
+
 import { AppraisalModule } from './modules/faculty/appraisal/appraisal.module';
 import { AppraisalCriteriaModule } from './modules/faculty/appraisal-criteria/appraisal-criteria.module';
 import { AssignmentsModule } from './modules/faculty/assignments/assignments.module';
 import { AttendanceModule } from './modules/faculty/attendance/attendance.module';
 import { AttendanceCvModule } from './modules/faculty/attendance-cv/attendance-cv.module';
 import { ClassMentorsModule } from './modules/faculty/class-mentors/class-mentors.module';
+import { AdvisorExaminationsModule } from './modules/faculty/advisor-examinations/advisor-examinations.module';
 import { ExamMarksModule } from './modules/faculty/exam-marks/exam-marks.module';
 import { FacultyAttendanceModule } from './modules/faculty/faculty-attendance/faculty-attendance.module';
 import { FacultyFilesModule } from './modules/faculty/faculty-files/faculty-files.module';
@@ -99,7 +131,9 @@ import { LessonPlansModule } from './modules/faculty/lesson-plans/lesson-plans.m
 import { LmsNotesModule } from './modules/faculty/lms-notes/lms-notes.module';
 import { MediaRequestsModule } from './modules/faculty/media-requests/media-requests.module';
 import { NoDueModule } from './modules/faculty/no-due/no-due.module';
+import { SubjectNoDueModule } from './modules/faculty/subject-no-due/subject-no-due.module';
 import { PayslipRequestsModule } from './modules/faculty/payslip-requests/payslip-requests.module';
+import { FacultyReportsModule } from './modules/faculty/reports/reports.module';
 import { SalaryDivisionsModule } from './modules/faculty/salary-divisions/salary-divisions.module';
 import { SubjectRecordsModule } from './modules/faculty/subject-records/subject-records.module';
 import { StudentAssignmentStatusModule } from './modules/faculty/student-assignment-status/student-assignment-status.module';
@@ -126,8 +160,10 @@ import { TransportStageModule } from './modules/fees-billing/transport-stages/tr
 import { BookCategoriesModule } from './modules/library/book-categories/book-categories.module';
 import { BooksModule } from './modules/library/books/books.module';
 import { BorrowRecordsModule } from './modules/library/borrow-records/borrow-records.module';
+import { BorrowRequestsModule } from './modules/library/borrow-requests/borrow-requests.module';
 import { EResourcesModule } from './modules/library/e-resources/e-resources.module';
 import { StudentLookupModule } from './modules/library/student-lookup/student-lookup.module';
+import { FacultyLookupModule } from './modules/library/faculty-lookup/faculty-lookup.module';
 import { LibraryDashboardModule } from './modules/library/dashboard/dashboard.module';
 import { MembersModule } from './modules/library/members/members.module';
 import { LibrarySettingsModule } from './modules/library/settings/settings.module';
@@ -162,6 +198,8 @@ import { SettingsModule } from './modules/secretary-portal/settings/settings.mod
 import { WalletModule } from './modules/wallet/wallet.module';
 
 import { StationaryModule } from './modules/stationary/stationary.module';
+import { StudentTodosModule } from './modules/student-todos/student-todos.module';
+import { OnlineClassModule } from './modules/online-class/online-class.module';
 
 import { VenuesModule } from './modules/venues/venues/venues.module';
 import { ServiceRequestsModule as SecretaryServiceRequestsModule } from './modules/secretary/service-requests/service-requests.module';
@@ -175,6 +213,7 @@ import { PrincipalCalendarModule } from './modules/principal/calendar/calendar.m
 import { PrincipalStudentsModule } from './modules/principal/students/students.module';
 import { PrincipalFacultyModule } from './modules/principal/faculty/faculty.module';
 import { PrincipalDepartmentsModule } from './modules/principal/departments/departments.module';
+import { RoleAllocationModule } from './modules/principal/role-allocation/role-allocation.module';
 import { PrincipalHigherEducationModule } from './modules/principal/higher-education/higher-education.module';
 import { PrincipalEdcModule } from './modules/principal/edc/edc.module';
 import { PrincipalApprovalsModule } from './modules/principal/approvals/approvals.module';
@@ -185,6 +224,8 @@ import { PrincipalFacilitiesModule } from './modules/principal/facilities/facili
 import { PrincipalFinanceModule } from './modules/principal/finance/finance.module';
 import { PrincipalSearchModule } from './modules/principal/search/search.module';
 import { NotificationsModule } from './modules/notifications/notifications/notifications.module';
+import { CoeBroadcastsModule } from './modules/notifications/coe-broadcasts/coe-broadcasts.module';
+import { NotificationsRestModule } from './modules/notifications/notifications-rest/notifications-rest.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { AcademicCoordinatorFacultyModule } from './modules/academic-coordinator/faculty/academic-coordinator-faculty.module';
 import { AcademicCoordinatorAttendanceModule } from './modules/academic-coordinator/attendance/academic-coordinator-attendance.module';
@@ -211,6 +252,9 @@ import { AlumniModule } from './modules/alumni/alumni.module';
 import { AchievementsModule } from './modules/achievements/achievements.module';
 
 import { HostelsModule } from './modules/hostel/hostels/hostels.module';
+import { HostelBlocksModule } from './modules/hostel/hostel-blocks/hostel-blocks.module';
+import { HostelWardensModule } from './modules/hostel/hostel-wardens/hostel-wardens.module';
+import { HostelFloorsModule } from './modules/hostel/hostel-floors/hostel-floors.module';
 import { ResidentsModule } from './modules/hostel/residents/residents.module';
 import { OutingsModule } from './modules/hostel/outings/outings.module';
 import { LeaveRequestsModule } from './modules/hostel/leave-requests/leave-requests.module';
@@ -227,6 +271,7 @@ import { NightAttendanceModule } from './modules/hostel/night-attendance/night-a
 import { HrDepartmentsModule } from './modules/hr/hr-departments/hr-departments.module';
 import { HrRequestsModule } from './modules/hr/hr-requests/hr-requests.module';
 import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module';
+import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
 
 @Module({
   imports: [
@@ -246,6 +291,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     SubjectsModule,
 
     BonafideModule,
+    BonafideRequestsModule,
     BonafideReasonsModule,
     CertificatesModule,
     OdModule,
@@ -274,6 +320,8 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     PrincipalMedicalModule,
     PrincipalSportsModule,
     SportsAdminModule,
+    FinanceModule,
+    MediaRoomModule,
     StudentEntrepreneurshipModule,
     StartupIdeasModule,
     IncubationsModule,
@@ -302,12 +350,39 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     RevaluationModule,
     SeatingArrangementsModule,
 
+    ArrearsModule,
+    AttendanceEligibilityModule,
+    CertificateRequestsModule,
+    CoeProfileModule,
+    StudentExamRecordModule,
+    ConfidentialAccessLogModule,
+    ConvocationModule,
+    CourseResultsModule,
+    ExamFeeTransactionsModule,
+    ExamRegistrationsModule,
+    FacultyDirectoryModule,
+    MalpracticeModule,
+    MarksEntryLocksModule,
+    MarksRosterModule,
+    PassBoardModule,
+    PassRulesModule,
+    PhotocopyRequestsModule,
+    QuestionPapersModule,
+    RegulationsModule,
+    ReportsAnalyticsModule,
+    RevaluationWindowsModule,
+    ScriptArchiveModule,
+    ScriptBundlesModule,
+    SeatingPlansModule,
+    SpecialAdmissionsModule,
+
     AppraisalModule,
     AppraisalCriteriaModule,
     AssignmentsModule,
     AttendanceModule,
     AttendanceCvModule,
     ClassMentorsModule,
+    AdvisorExaminationsModule,
     ExamMarksModule,
     FacultyAttendanceModule,
     FacultyFilesModule,
@@ -326,7 +401,9 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     LmsNotesModule,
     MediaRequestsModule,
     NoDueModule,
+    SubjectNoDueModule,
     PayslipRequestsModule,
+    FacultyReportsModule,
     SalaryDivisionsModule,
     SubjectRecordsModule,
     StudentAssignmentStatusModule,
@@ -353,8 +430,10 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     BookCategoriesModule,
     BooksModule,
     BorrowRecordsModule,
+    BorrowRequestsModule,
     EResourcesModule,
     StudentLookupModule,
+    FacultyLookupModule,
     LibraryDashboardModule,
     MembersModule,
     LibrarySettingsModule,
@@ -387,6 +466,8 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
 
     WalletModule,
     StationaryModule,
+    StudentTodosModule,
+    OnlineClassModule,
 
     VenuesModule,
     SecretaryServiceRequestsModule,
@@ -400,6 +481,7 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     PrincipalStudentsModule,
     PrincipalFacultyModule,
     PrincipalDepartmentsModule,
+    RoleAllocationModule,
     PrincipalHigherEducationModule,
     PrincipalEdcModule,
     PrincipalApprovalsModule,
@@ -410,6 +492,8 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     PrincipalFinanceModule,
     PrincipalSearchModule,
     NotificationsModule,
+    CoeBroadcastsModule,
+    NotificationsRestModule,
     FeedbackModule,
     AcademicCoordinatorFacultyModule,
     AcademicCoordinatorAttendanceModule,
@@ -436,6 +520,9 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
     AchievementsModule,
 
     HostelsModule,
+    HostelBlocksModule,
+    HostelWardensModule,
+    HostelFloorsModule,
     ResidentsModule,
     OutingsModule,
     LeaveRequestsModule,
@@ -451,11 +538,19 @@ import { HrDashboardModule } from './modules/hr/hr-dashboard/hr-dashboard.module
 
     HrDepartmentsModule,
     HrRequestsModule,
+    HrReportsModule,
     HrDashboardModule,
   ],
 
   controllers: [AppController],
 
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Retries reads that failed only because the database was briefly
+    // unreachable (the Supabase pooler drops/refuses connections for a few
+    // seconds at a time). Writes are never retried — see the interceptor.
+    { provide: APP_INTERCEPTOR, useClass: TransientDbRetryInterceptor },
+  ],
 })
 export class AppModule {}

@@ -121,19 +121,26 @@ export class MarksService {
   async findAll(query: ListExamMarksQueryDto) {
     try {
       return await this.prisma.exam_marks.findMany({
-        where: query.student_id ? { student_id: query.student_id } : undefined,
+        where: {
+          student_id: query.student_id,
+          exam_subject_mapping_id: query.exam_subject_mapping_id,
+        },
         include: {
           exam_subject_mapping: {
             select: {
               id: true,
               exam_id: true,
               subject_id: true,
+              is_published: true,
+              published_at: true,
               exams: {
                 select: {
                   id: true,
                   academic_year: true,
                   semester: true,
-                  exam_types: { select: { name: true } },
+                  exam_types: {
+                    select: { name: true, category: true, code: true },
+                  },
                 },
               },
               subjects: {

@@ -56,7 +56,7 @@ export class ServiceRequestsController {
     @Body() dto: CreateServiceRequestDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.serviceRequestsService.create(dto, user.sub);
+    return this.serviceRequestsService.create(dto, user.sub, user);
   }
 
   @Get()

@@ -6,6 +6,7 @@ import { ROLES } from 'src/common/constants/roles.constant';
 import { TransportRoutesService } from './transport-routes.service';
 import { TransportRouteEditService } from './transport-route-edit.service';
 import { ListRoutesQueryDto } from './dto/list-routes-query.dto';
+import { CreateRouteDto } from './dto/create-route.dto';
 import { UpdateRouteDto } from './dto/update-route.dto';
 import { CreateStageDto } from './dto/create-stage.dto';
 import { AddRouteStudentDto } from './dto/add-route-student.dto';
@@ -23,6 +24,19 @@ export class TransportRoutesController {
   @Get()
   findAll(@Query() query: ListRoutesQueryDto) {
     return this.service.findAll(query.search);
+  }
+
+  /** POST /api/v1/me/routes — create a route. */
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  createRoute(@Body() dto: CreateRouteDto) {
+    return this.editService.createRoute(dto);
+  }
+
+  /** DELETE /api/v1/me/routes/:id — delete a route that nothing is using. */
+  @Delete(':id')
+  deleteRoute(@Param('id', ParseIntPipe) id: number) {
+    return this.editService.deleteRoute(id);
   }
 
   /** GET /api/v1/me/routes/:id — one route + its full stage list, for editing. */

@@ -22,6 +22,22 @@ const PAYSLIP_SELECT = {
   requested_at: true,
   purpose: true,
   staff_user_id: true,
+  // payslip_requests.faculty_id is NULLABLE - a request raised by non-teaching
+  // staff has staff_user_id set and faculty null, so a name has to come from
+  // somewhere. Without this the HR queue in the mobile app read
+  // row.faculty.first_name and threw on the first such row.
+  users: {
+    select: {
+      email: true,
+      non_teaching_staff: {
+        select: {
+          first_name: true,
+          last_name: true,
+          departments: { select: { id: true, name: true } },
+        },
+      },
+    },
+  },
   faculty: {
     select: {
       id: true,
@@ -57,6 +73,15 @@ interface PayslipRequestRow {
     designation: string;
     departments: { id: number; name: string } | null;
   } | null;
+  // Requester's user row, for staff-submitted requests where faculty is null.
+  users: {
+    email: string;
+    non_teaching_staff: {
+      first_name: string;
+      last_name: string | null;
+      departments: { id: number; name: string } | null;
+    }[];
+  } | null;
 }
 
 function parseMonthString(month: string): { year: number; month: number } {
@@ -66,6 +91,36 @@ function parseMonthString(month: string): { year: number; month: number } {
 
 function formatMonthString(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+/**
+ * Display identity for a payslip request: faculty -> non_teaching_staff ->
+ * email, the order used across this codebase.
+ */
+function resolvePayslipRequester(row: PayslipRequestRow) {
+  if (row.faculty) {
+    return {
+      kind: 'faculty' as const,
+      name: `${row.faculty.first_name} ${row.faculty.last_name}`,
+      designation: row.faculty.designation,
+      department: row.faculty.departments?.name ?? null,
+    };
+  }
+  const staff = row.users?.non_teaching_staff?.[0];
+  if (staff) {
+    return {
+      kind: 'staff' as const,
+      name: [staff.first_name, staff.last_name].filter(Boolean).join(' '),
+      designation: 'Non-teaching staff',
+      department: staff.departments?.name ?? null,
+    };
+  }
+  return {
+    kind: 'unknown' as const,
+    name: row.users?.email ?? 'Unknown',
+    designation: null,
+    department: null,
+  };
 }
 
 function toResponse(row: PayslipRequestRow) {
@@ -87,6 +142,10 @@ function toResponse(row: PayslipRequestRow) {
         }
       : null,
     staff_user_id: row.staff_user_id,
+    // One display identity, whichever register the requester lives in.
+    // Clients must read this rather than `faculty`, which is null for
+    // staff-submitted requests.
+    requester: resolvePayslipRequester(row),
   };
 }
 
@@ -103,15 +162,36 @@ export class PayslipRequestsService {
    * still 'pending' or already 'processed' — a 'rejected' one (e.g. wrong
    * month, salary not finalized yet) can be re-requested.
    */
-  async create(dto: CreatePayslipRequestDto, userId: number, role?: string) {
+  // `role` is gone from this signature on purpose: whether the caller is
+  // teaching or non-teaching staff is now decided by whether a faculty row
+  // exists, so the role name is no longer an input to the decision.
+  async create(dto: CreatePayslipRequestDto, userId: number) {
     const { year, month } = parseMonthString(dto.month);
 
-    // Secretary (or any non-Faculty staff account) — no faculty row exists;
-    // keyed by staff_user_id instead. Same one-active-request-per-month
-    // rule applies.
-    if (role === ROLES.SECRETARY) {
+    // Any non-teaching staff account — no faculty row exists; keyed by
+    // staff_user_id instead. Same one-active-request-per-month rule applies.
+    //
+    // Branches on whether a faculty row EXISTS rather than on the role name.
+    // This used to test `role === SECRETARY`, so HR Payroll and warden fell
+    // through to the faculty path and got a FACULTY_NOT_FOUND 404 requesting
+    // their own payslip. See the identical fix in faculty-leaves.service.ts.
+    const facultyRow = await this.prisma.faculty.findUnique({
+      where: { user_id: userId },
+    });
+
+    if (!facultyRow) {
+      // No non_teaching_staff membership check: the row this writes is keyed
+      // on staff_user_id, whose FK is to `users` — which the authenticated
+      // caller demonstrably has. Demanding a personnel row as well added no
+      // integrity and 404d real employees whose non_teaching_staff row was
+      // never created.
       const existing = await this.prisma.payslip_requests.findFirst({
-        where: { staff_user_id: userId, year, month, status: { not: 'rejected' } },
+        where: {
+          staff_user_id: userId,
+          year,
+          month,
+          status: { not: 'rejected' },
+        },
       });
       if (existing) {
         throw new ConflictException(
@@ -126,7 +206,7 @@ export class PayslipRequestsService {
       return toResponse(request);
     }
 
-    const faculty = await this.resolveFacultyByUserId(userId);
+    const faculty = facultyRow;
 
     const existing = await this.prisma.payslip_requests.findFirst({
       where: {
@@ -254,20 +334,31 @@ export class PayslipRequestsService {
    * still-'pending' payslip request (purpose only — month/year are
    * immutable once created, since a new month is just a new request).
    */
-  async updateOwnPurpose(id: number, userId: number, role: string | undefined, purpose: string) {
-    const existing = await this.prisma.payslip_requests.findUnique({ where: { id } });
+  async updateOwnPurpose(
+    id: number,
+    userId: number,
+    role: string | undefined,
+    purpose: string,
+  ) {
+    const existing = await this.prisma.payslip_requests.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new NotFoundException('Payslip request not found');
     }
 
     if (role === ROLES.SECRETARY) {
       if (existing.staff_user_id !== userId) {
-        throw new ForbiddenException('You may only edit your own payslip requests');
+        throw new ForbiddenException(
+          'You may only edit your own payslip requests',
+        );
       }
     } else {
       const faculty = await this.resolveFacultyByUserId(userId);
       if (existing.faculty_id !== faculty.id) {
-        throw new ForbiddenException('You may only edit your own payslip requests');
+        throw new ForbiddenException(
+          'You may only edit your own payslip requests',
+        );
       }
     }
 

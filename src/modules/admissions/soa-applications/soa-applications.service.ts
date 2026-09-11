@@ -907,6 +907,12 @@ export class SoaApplicationsService {
         { parent_contact: { contains: query.q } },
       ];
     }
+    if (query.from || query.to) {
+      where.created_at = {
+        ...(query.from && { gte: new Date(query.from) }),
+        ...(query.to && { lte: new Date(query.to) }),
+      };
+    }
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.soa_applications.findMany({

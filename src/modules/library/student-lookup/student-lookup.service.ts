@@ -29,12 +29,54 @@ export class StudentLookupService {
    * Typo-tolerant search over student_id_no/roll_no/register_no/name/email,
    * for staff (library desk, admin) to find a student to act on — mirrors
    * BooksService.searchFuzzy's pg_trgm pattern one-for-one.
+   *
+   * Tries a precise (exact/prefix/substring) pass first; only falls back to
+   * fuzzy trigram scoring if that finds nothing. Skipping straight to fuzzy
+   * scoring let an unrelated name (e.g. a faculty member's, typed into this
+   * student box because no faculty search path existed) clear the 0.2
+   * threshold on pure trigram noise and surface as a false "match" instead
+   * of a clean empty result — the query still worked, it just had no real
+   * quality floor once the precise fields legitimately found nothing.
    */
   async searchFuzzy(query: string, limit = 20) {
     const q = query.trim();
     const cappedLimit = Math.min(limit ?? 20, 20);
 
-    const rows = await this.prisma.$queryRaw<StudentFuzzySearchRow[]>`
+    const preciseRows = await this.prisma.$queryRaw<StudentFuzzySearchRow[]>`
+      SELECT
+        s.id,
+        s.student_id_no,
+        s.roll_no,
+        s.register_no,
+        s.status,
+        u.email,
+        c.id AS course_id,
+        c.name AS course_name,
+        d.id AS department_id,
+        d.name AS department_name,
+        d.code AS department_code,
+        sa.first_name,
+        sa.last_name,
+        1 AS similarity
+      FROM students s
+      JOIN users u ON u.id = s.user_id
+      JOIN courses c ON c.id = s.course_id
+      JOIN departments d ON d.id = c.department_id
+      LEFT JOIN soa_applications sa ON sa.id = s.soa_application_id
+      WHERE
+        s.student_id_no ILIKE ${q + '%'}
+        OR s.roll_no ILIKE ${q + '%'}
+        OR s.register_no ILIKE ${q + '%'}
+        OR (COALESCE(sa.first_name, '') || ' ' || COALESCE(sa.last_name, '')) ILIKE ${'%' + q + '%'}
+        OR u.email ILIKE ${q + '%'}
+      ORDER BY s.student_id_no ASC
+      LIMIT ${cappedLimit}
+    `;
+
+    const rows =
+      preciseRows.length > 0
+        ? preciseRows
+        : await this.prisma.$queryRaw<StudentFuzzySearchRow[]>`
       SELECT
         s.id,
         s.student_id_no,

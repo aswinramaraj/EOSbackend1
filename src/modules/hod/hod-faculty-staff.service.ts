@@ -234,6 +234,25 @@ export class HodFacultyStaffService {
         const designationById = new Map(
           designationRows.map((d) => [d.id, d.designation]),
         );
+        // Weekly teaching load — same real timetable_slots duration-sum
+        // PrincipalDashboardService.facultyWorkloadFlags() uses, not a
+        // stored field (none exists).
+        const slots =
+          facultyIds.length > 0
+            ? await this.prisma.timetable_slots.findMany({
+                where: { faculty_id: { in: facultyIds } },
+                select: { faculty_id: true, start_time: true, end_time: true },
+              })
+            : [];
+        const loadHoursById = new Map<number, number>();
+        for (const s of slots) {
+          const hours =
+            (s.end_time.getTime() - s.start_time.getTime()) / 3_600_000;
+          loadHoursById.set(
+            s.faculty_id,
+            (loadHoursById.get(s.faculty_id) ?? 0) + hours,
+          );
+        }
         for (const f of facultyOverview.rows) {
           // No attendance_records ever for this faculty member — a real
           // 0% would misleadingly read as "always absent" instead of
@@ -259,7 +278,9 @@ export class HodFacultyStaffService {
             department_code: department.code,
             photo_url: f.profile_url,
             attendance_percent: hasAnyRecord ? f.attendance_percentage : null,
-            load_hours: null,
+            load_hours: loadHoursById.has(f.faculty_id)
+              ? Math.round(loadHoursById.get(f.faculty_id)! * 10) / 10
+              : null,
             status_label: f.today_status,
           });
         }
@@ -403,38 +424,35 @@ export class HodFacultyStaffService {
           })
         : [];
 
-      const subjects: {
-        subject_id: number;
-        code: string;
-        name: string;
-        class_id: number;
-        semester: number | null;
-        year_label: string | null;
-        section: string;
-        periods_per_week: number;
-      }[] = [];
-      // Sequential — one count() per subject mapping, same pooler-capacity
-      // discipline as every other hod service.
-      for (const m of mappings) {
-        const periodsPerWeek = await this.prisma.timetable_slots.count({
-          where: {
-            faculty_id: facultyId,
-            subject_id: m.subject_id,
-            class_id: m.class_id,
-            academic_year: academicYear!,
-          },
-        });
-        subjects.push({
-          subject_id: m.subject_id,
-          code: m.subjects.subject_code,
-          name: m.subjects.name,
-          class_id: m.class_id,
-          semester: m.classes.current_semester,
-          year_label: yearLabel(m.classes.current_semester),
-          section: m.classes.section,
-          periods_per_week: periodsPerWeek,
-        });
-      }
+      // One groupBy for every mapping's periods-per-week instead of one
+      // count() round trip per subject mapping — same result, a single query
+      // regardless of how many subjects this faculty teaches.
+      const periodCounts = mappings.length
+        ? await this.prisma.timetable_slots.groupBy({
+            by: ['subject_id', 'class_id'],
+            where: {
+              faculty_id: facultyId,
+              academic_year: academicYear!,
+              subject_id: { in: [...new Set(mappings.map((m) => m.subject_id))] },
+              class_id: { in: [...new Set(mappings.map((m) => m.class_id))] },
+            },
+            _count: { _all: true },
+          })
+        : [];
+      const periodsByPair = new Map(
+        periodCounts.map((c) => [`${c.subject_id}|${c.class_id}`, c._count._all]),
+      );
+
+      const subjects = mappings.map((m) => ({
+        subject_id: m.subject_id,
+        code: m.subjects.subject_code,
+        name: m.subjects.name,
+        class_id: m.class_id,
+        semester: m.classes.current_semester,
+        year_label: yearLabel(m.classes.current_semester),
+        section: m.classes.section,
+        periods_per_week: periodsByPair.get(`${m.subject_id}|${m.class_id}`) ?? 0,
+      }));
       const totalPeriodsPerWeek = subjects.reduce(
         (sum, s) => sum + s.periods_per_week,
         0,

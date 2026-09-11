@@ -450,6 +450,22 @@ function gradePointForPercentage(percentage: number): number {
   return band ? band.point : 0;
 }
 
+// Same bands as GRADE_POINTS, letter form — matches subject-records.service.ts's
+// GRADE_BANDS exactly (the letters faculty already publish results with).
+const GRADE_LETTERS: { min: number; grade: string }[] = [
+  { min: 91, grade: 'O' },
+  { min: 81, grade: 'A+' },
+  { min: 71, grade: 'A' },
+  { min: 61, grade: 'B+' },
+  { min: 50, grade: 'B' },
+  { min: 0, grade: 'RA' },
+];
+
+function gradeLetterForPercentage(percentage: number): string {
+  const band = GRADE_LETTERS.find((b) => percentage >= b.min);
+  return band ? band.grade : 'RA';
+}
+
 interface ClassResultStudentRow {
   id: number;
   student_id_no: string;
@@ -543,8 +559,17 @@ export class ClassMentorsService {
    * best-effort approximation over whatever exam_marks rows exist for the
    * student across every exam they have marks in - not a substitute for an
    * official semester result computation, which this schema has no model for.
+   *
+   * `todayOnly` restricts attendance_percent to attendance_records dated
+   * today (used by the Dashboard's "Today" scope) instead of every record
+   * the student has ever had marked (the default, "this term"/all-time view
+   * every other caller keeps getting).
    */
-  async getMenteeClassResult(classId: number, userId: number) {
+  async getMenteeClassResult(
+    classId: number,
+    userId: number,
+    todayOnly = false,
+  ) {
     const faculty = await this.resolveFacultyByUserId(userId);
 
     const mentorMapping = await this.prisma.class_mentors.findFirst({
@@ -602,9 +627,14 @@ export class ClassMentorsService {
     });
     const studentIds = students.map((s) => s.id);
 
+    const todayDate = new Date(new Date().toISOString().slice(0, 10));
+
     const [attendanceRecords, marks] = await Promise.all([
       this.prisma.attendance_records.findMany({
-        where: { student_id: { in: studentIds } },
+        where: {
+          student_id: { in: studentIds },
+          ...(todayOnly && { attendance_date: todayDate }),
+        },
         select: { student_id: true, status: true },
       }),
       this.prisma.exam_marks.findMany({
@@ -617,7 +647,10 @@ export class ClassMentorsService {
           marks_obtained: true,
           max_marks: true,
           exam_subject_mapping: {
-            select: { subjects: { select: { credits: true } } },
+            select: {
+              subjects: { select: { credits: true } },
+              exams: { select: { semester: true } },
+            },
           },
         },
       }),
@@ -641,6 +674,14 @@ export class ClassMentorsService {
       number,
       { weightedPoints: number; totalCredits: number; arrears: number }
     >();
+    // Per-student, per-semester breakdown — same marks, grouped one level
+    // finer — so the roster can also surface "current semester GPA"
+    // (highest semester number the student has any marks in) alongside the
+    // all-time CGPA above, without a second query.
+    const semesterResultByStudent = new Map<
+      number,
+      Map<number, { weightedPoints: number; totalCredits: number }>
+    >();
     for (const mark of marks) {
       const entry = resultByStudent.get(mark.student_id) ?? {
         weightedPoints: 0,
@@ -657,6 +698,19 @@ export class ClassMentorsService {
       entry.totalCredits += credits;
       if (gradePoint === 0) entry.arrears += 1;
       resultByStudent.set(mark.student_id, entry);
+
+      const semester = mark.exam_subject_mapping.exams.semester;
+      const bySemester =
+        semesterResultByStudent.get(mark.student_id) ??
+        new Map<number, { weightedPoints: number; totalCredits: number }>();
+      semesterResultByStudent.set(mark.student_id, bySemester);
+      const semEntry = bySemester.get(semester) ?? {
+        weightedPoints: 0,
+        totalCredits: 0,
+      };
+      semEntry.weightedPoints += gradePoint * credits;
+      semEntry.totalCredits += credits;
+      bySemester.set(semester, semEntry);
     }
 
     const mentorName = `${mentorMapping.faculty.first_name} ${mentorMapping.faculty.last_name}`;
@@ -671,6 +725,19 @@ export class ClassMentorsService {
         const result = resultByStudent.get(student.id);
         const { guardian_name, guardian_relation } = resolveGuardian(student);
 
+        const bySemester = semesterResultByStudent.get(student.id);
+        let currentSemesterGpa: number | null = null;
+        if (bySemester && bySemester.size > 0) {
+          const latestSemester = Math.max(...bySemester.keys());
+          const latest = bySemester.get(latestSemester)!;
+          currentSemesterGpa =
+            latest.totalCredits > 0
+              ? Math.round(
+                  (latest.weightedPoints / latest.totalCredits) * 100,
+                ) / 100
+              : null;
+        }
+
         return {
           id: student.id,
           name: resolveStudentName(student),
@@ -680,9 +747,13 @@ export class ClassMentorsService {
           attendance_percent: attendance
             ? Math.round((attendance.present / attendance.total) * 10000) / 100
             : null,
-          cgpa: result && result.totalCredits > 0
-            ? Math.round((result.weightedPoints / result.totalCredits) * 100) / 100
-            : null,
+          cgpa:
+            result && result.totalCredits > 0
+              ? Math.round(
+                  (result.weightedPoints / result.totalCredits) * 100,
+                ) / 100
+              : null,
+          current_semester_gpa: currentSemesterGpa,
           arrears: result?.arrears ?? 0,
           mentor_name: mentorName,
           guardian_name,
@@ -838,6 +909,308 @@ export class ClassMentorsService {
   }
 
   /**
+   * GET /me/mentees/:student_id/academic-record (Faculty — the mentee's
+   * class mentor only, same gate as getMenteeProfile above).
+   *
+   * Powers the Student Records detail page's "Semester-wise GPA", "Monthly
+   * attendance" and "Semester subjects" sections — all three were static
+   * empty design shells (no endpoint existed) even though every number they
+   * need is real, already-modeled data: exam_marks (grouped by
+   * exams.semester instead of flattened across all semesters, unlike the
+   * roster-wide getMenteeClassResult) and attendance_records (grouped by
+   * calendar month, and separately by subject_id for the per-subject rows).
+   *
+   * Deliberately does NOT invent a combined "internal + external = total"
+   * formula — no such weighting exists anywhere else in this schema (Subject
+   * Records itself grades CIA1/CIA2/End-Sem as three independent exams, never
+   * combined). Each subject row reports the real CIA average and the real
+   * End-Semester result side by side; "grade" is the End-Semester exam's own
+   * grade once published (falling back to the CIA average's grade before
+   * that), never a fabricated composite.
+   *
+   * Also returns `student_status` (students.status — real field, was
+   * previously left as a "—" shell on the College/ERP record section under
+   * the mistaken assumption no such field existed), `discipline`
+   * (malpractice_incidents — real exam-malpractice records with a nature/
+   * action_taken pair; also previously assumed absent, since the only
+   * "discipline"-shaped table found on a first pass, sports_disciplines, is
+   * unrelated sports-event data, not misconduct records), and `achievements`
+   * (sports_achievements.athlete_student_id — real per-student sports
+   * results; NOT department_achievements, which is a Media-Room-posted
+   * department-wide news feed with no student_id at all, the wrong shape
+   * for a per-student "achievements" field).
+   */
+  async getMenteeAcademicRecord(studentId: number, userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { class_id: true, status: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const mentorMapping =
+      student.class_id !== null
+        ? await this.prisma.class_mentors.findFirst({
+            where: { class_id: student.class_id, faculty_id: faculty.id },
+          })
+        : null;
+    if (!mentorMapping) {
+      throw new ForbiddenException({
+        message: 'You are not the mentor for this student',
+        errorCode: 'NOT_THE_MENTOR',
+      });
+    }
+
+    const [marks, attendanceRecords, disciplineIncidents, sportsAchievements] =
+      await Promise.all([
+        this.prisma.exam_marks.findMany({
+          where: { student_id: studentId, marks_obtained: { not: null } },
+          select: {
+            marks_obtained: true,
+            max_marks: true,
+            exam_subject_mapping: {
+              select: {
+                subjects: {
+                  select: {
+                    id: true,
+                    name: true,
+                    subject_code: true,
+                    credits: true,
+                  },
+                },
+                exams: {
+                  select: {
+                    semester: true,
+                    exam_types: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        }),
+        this.prisma.attendance_records.findMany({
+          where: { student_id: studentId },
+          select: { attendance_date: true, status: true, subject_id: true },
+        }),
+        this.prisma.malpractice_incidents.findMany({
+          where: { student_id: studentId },
+          orderBy: { incident_date: 'desc' },
+          select: { incident_date: true, nature: true, action_taken: true },
+        }),
+        this.prisma.sports_achievements.findMany({
+          where: { athlete_student_id: studentId },
+          orderBy: { achievement_date: 'desc' },
+          select: {
+            event_name: true,
+            result: true,
+            level: true,
+            achievement_date: true,
+          },
+        }),
+      ]);
+
+    // --- Semester-wise GPA + per-subject rows ---
+    type SubjectAgg = {
+      subject_id: number;
+      name: string;
+      code: string;
+      credits: number;
+      cia: { obtained: number; max: number }[];
+      endSem: { obtained: number; max: number } | null;
+    };
+    const bySemester = new Map<number, Map<number, SubjectAgg>>();
+    for (const m of marks) {
+      const semester = m.exam_subject_mapping.exams.semester;
+      const subj = m.exam_subject_mapping.subjects;
+      const examTypeName = m.exam_subject_mapping.exams.exam_types.name;
+      const obtained = Number(m.marks_obtained);
+      const max = Number(m.max_marks);
+
+      const subjectsThisSemester =
+        bySemester.get(semester) ?? new Map<number, SubjectAgg>();
+      bySemester.set(semester, subjectsThisSemester);
+      const agg = subjectsThisSemester.get(subj.id) ?? {
+        subject_id: subj.id,
+        name: subj.name,
+        code: subj.subject_code,
+        credits: subj.credits ?? 1,
+        cia: [],
+        endSem: null,
+      };
+      subjectsThisSemester.set(subj.id, agg);
+
+      if (/end.?sem/i.test(examTypeName)) {
+        agg.endSem = { obtained, max };
+      } else {
+        agg.cia.push({ obtained, max });
+      }
+    }
+
+    const subjectAttendance = new Map<
+      number,
+      { present: number; total: number }
+    >();
+    for (const r of attendanceRecords) {
+      if (r.subject_id === null) continue;
+      const entry = subjectAttendance.get(r.subject_id) ?? {
+        present: 0,
+        total: 0,
+      };
+      entry.total += 1;
+      if (r.status === 'present') entry.present += 1;
+      subjectAttendance.set(r.subject_id, entry);
+    }
+
+    const semesters = [...bySemester.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([semester, subjectsMap]) => {
+        let weightedPoints = 0;
+        let totalCredits = 0;
+
+        const subjects = [...subjectsMap.values()].map((s) => {
+          const ciaPercent = s.cia.length
+            ? s.cia.reduce((sum, c) => sum + (c.obtained / c.max) * 100, 0) /
+              s.cia.length
+            : null;
+          const endSemPercent = s.endSem
+            ? (s.endSem.obtained / s.endSem.max) * 100
+            : null;
+
+          const gradingPercent = endSemPercent ?? ciaPercent;
+          if (gradingPercent !== null) {
+            weightedPoints +=
+              gradePointForPercentage(gradingPercent) * s.credits;
+            totalCredits += s.credits;
+          }
+
+          const att = subjectAttendance.get(s.subject_id);
+          return {
+            subject_id: s.subject_id,
+            name: s.name,
+            code: s.code,
+            internal_percent:
+              ciaPercent !== null ? Math.round(ciaPercent * 100) / 100 : null,
+            end_sem_percent:
+              endSemPercent !== null
+                ? Math.round(endSemPercent * 100) / 100
+                : null,
+            grade:
+              gradingPercent !== null
+                ? gradeLetterForPercentage(gradingPercent)
+                : null,
+            attendance_percent: att
+              ? Math.round((att.present / att.total) * 10000) / 100
+              : null,
+          };
+        });
+
+        return {
+          semester,
+          gpa:
+            totalCredits > 0
+              ? Math.round((weightedPoints / totalCredits) * 100) / 100
+              : null,
+          subjects,
+        };
+      });
+
+    // --- Monthly attendance (all records, not subject-scoped) ---
+    const byMonth = new Map<string, { present: number; total: number }>();
+    for (const r of attendanceRecords) {
+      const monthKey = r.attendance_date.toISOString().slice(0, 7); // "YYYY-MM"
+      const entry = byMonth.get(monthKey) ?? { present: 0, total: 0 };
+      entry.total += 1;
+      if (r.status === 'present') entry.present += 1;
+      byMonth.set(monthKey, entry);
+    }
+    const monthly_attendance = [...byMonth.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, { present, total }]) => ({
+        month,
+        present_percent: Math.round((present / total) * 10000) / 100,
+      }));
+
+    // --- Hostel + scholarship (College/ERP record section) ---
+    // student_hostel_mapping.student_id is @unique — at most one row.
+    const [hostelMapping, scholarshipAwards] = await Promise.all([
+      this.prisma.student_hostel_mapping.findUnique({
+        where: { student_id: studentId },
+        select: {
+          hostel_rooms: {
+            select: {
+              room_number: true,
+              hostels: { select: { name: true } },
+              hostel_blocks: { select: { id: true, name: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.student_scholarship_awards.findMany({
+        where: { student_id: studentId },
+        select: {
+          amount: true,
+          scholarship_schemes: { select: { name: true, academic_year: true } },
+        },
+      }),
+    ]);
+
+    let hostel: {
+      hostel_name: string;
+      room_number: string;
+      warden_name: string | null;
+    } | null = null;
+    if (hostelMapping) {
+      const blockId = hostelMapping.hostel_rooms.hostel_blocks?.id;
+      const warden = blockId
+        ? await this.prisma.hostel_wardens.findFirst({
+            where: { block_id: blockId },
+            select: { name: true },
+          })
+        : null;
+      hostel = {
+        hostel_name: hostelMapping.hostel_rooms.hostels.name,
+        room_number: hostelMapping.hostel_rooms.room_number,
+        warden_name: warden?.name ?? null,
+      };
+    }
+
+    const scholarships = scholarshipAwards.map((a) => ({
+      name: a.scholarship_schemes.name,
+      academic_year: a.scholarship_schemes.academic_year,
+      amount: Number(a.amount),
+    }));
+
+    const discipline = disciplineIncidents.map((d) => ({
+      incident_date: d.incident_date,
+      nature: d.nature,
+      action_taken: d.action_taken,
+    }));
+
+    const achievements = sportsAchievements.map((a) => ({
+      event_name: a.event_name,
+      result: a.result,
+      level: a.level,
+      achievement_date: a.achievement_date,
+    }));
+
+    return {
+      semesters,
+      monthly_attendance,
+      hostel,
+      scholarships,
+      student_status: student.status,
+      discipline,
+      achievements,
+    };
+  }
+
+  /**
    * GET /me/mentees/:student_id/documents (Faculty — the mentee's class
    * mentor only, same auth gate as getMenteeProfile/getMenteeReport).
    *
@@ -880,7 +1253,9 @@ export class ClassMentorsService {
     // is_available=false row both mean "not on file" to the caller.
     const [certificateTypes, records] = await Promise.all([
       this.prisma.certificate_types.findMany({ orderBy: { name: 'asc' } }),
-      this.prisma.student_certificates.findMany({ where: { student_id: studentId } }),
+      this.prisma.student_certificates.findMany({
+        where: { student_id: studentId },
+      }),
     ]);
     const byTypeId = new Map(records.map((r) => [r.certificate_type_id, r]));
 

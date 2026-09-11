@@ -24,9 +24,12 @@ import { ApiResponse, ROLES } from 'src/common';
 export class RevaluationController {
   constructor(private readonly revaluationService: RevaluationService) {}
 
+  // Students apply through their own portal; COE also creates these directly
+  // for offline/counter applications (the "New application" action on the
+  // Revaluation & Retotaling page).
   @Post('revaluation-requests')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.STUDENT)
+  @Roles(ROLES.STUDENT, ROLES.COE)
   async create(@Body() createRevaluationDto: CreateRevaluationDto) {
     const request = await this.revaluationService.create(createRevaluationDto);
     return ApiResponse.created(
@@ -74,6 +77,14 @@ export class RevaluationController {
   async remove(@Param('id') id: string) {
     const result = await this.revaluationService.remove(+id);
     return ApiResponse.ok(result, 'Revaluation request deleted successfully.');
+  }
+
+  @Post('revaluation-requests/:id/remind')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
+  async remind(@Param('id') id: string) {
+    const notification = await this.revaluationService.remind(+id);
+    return ApiResponse.created(notification, 'Reminder sent successfully.');
   }
 
   @Post('exams/:id/results/publish-revaluation')

@@ -25,12 +25,14 @@ import { MeHostelComplaintsService } from './me-hostel-complaints.service';
 import { MeMessFeedbackService } from './me-mess-feedback.service';
 import { MeAcademicCalendarService } from './me-academic-calendar.service';
 import { MeAcademicClearanceService } from './me-academic-clearance.service';
+import { MeCareerPathService } from './me-career-path.service';
 
 @Module({
   imports: [PrismaModule, NotificationsModule, StorageModule],
   controllers: [MeController],
   providers: [
     MeProfileService,
+    MeCareerPathService,
     MeAttendanceService,
     MeExamResultsService,
     MeLeavesService,

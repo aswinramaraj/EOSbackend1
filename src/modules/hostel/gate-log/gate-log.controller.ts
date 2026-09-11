@@ -47,6 +47,16 @@ export class GateLogController {
     return this.gateLogService.findPendingReturns();
   }
 
+  /**
+   * GET /hostel/gate-log/search?q=
+   *
+   * Type-ahead pick-list for the gate desk. Read-only.
+   */
+  @Get('search')
+  searchStudents(@Query('q') q?: string) {
+    return this.gateLogService.searchStudents(q ?? '');
+  }
+
   @Get('lookup')
   lookup(@Query() query: LookupStudentDto) {
     return this.gateLogService.lookupByRollNo(query.roll_no);

@@ -1,7 +1,9 @@
-import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import { paginate } from 'src/common/dto/pagination.dto';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { CreateOutpassDto } from './dto/create-outpass.dto';
 import { ListOutpassQueryDto } from './dto/list-outpass-query.dto';
@@ -64,10 +66,36 @@ export class OutpassService {
     return new Date(`${value}T00:00:00.000Z`);
   }
 
-  async create(dto: CreateOutpassDto, userId: number) {
-    const student = await this.prisma.students.findUnique({ where: { id: dto.student_id } });
+  /** Secretary is always forced to her own department; other roles see everything (undefined = unscoped). */
+  private async resolveEffectiveDepartmentId(user: JwtPayload): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return undefined;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
+
+  async create(dto: CreateOutpassDto, userId: number, user: JwtPayload) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user);
+    const student = await this.prisma.students.findUnique({
+      where: { id: dto.student_id },
+      select: { id: true, classes: { select: { department_id: true } } },
+    });
     if (!student) {
       throw new NotFoundException({ message: 'Student not found', errorCode: 'STUDENT_NOT_FOUND' });
+    }
+    if (effectiveDepartmentId !== undefined && student.classes?.department_id !== effectiveDepartmentId) {
+      throw new ForbiddenException({
+        message: 'You may only create outpasses for students in your own department',
+        errorCode: 'FORBIDDEN_DEPARTMENT',
+      });
     }
 
     try {
@@ -111,16 +139,24 @@ export class OutpassService {
     `);
   }
 
-  async findAll(query: ListOutpassQueryDto) {
+  async findAll(query: ListOutpassQueryDto, user: JwtPayload) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user);
     const filters: Prisma.Sql[] = [];
     if (query.status) filters.push(Prisma.sql`so.status = ${query.status}`);
+    if (effectiveDepartmentId !== undefined) filters.push(Prisma.sql`cl.department_id = ${effectiveDepartmentId}`);
     const whereClause = filters.length > 0 ? Prisma.sql`WHERE ${Prisma.join(filters, ' AND ')}` : Prisma.empty;
     const limit = query.limit ?? 20;
     const offset = query.skip;
 
     const [rows, countRows] = await Promise.all([
       this.queryRows(Prisma.sql`${whereClause} ORDER BY so.created_at DESC LIMIT ${limit} OFFSET ${offset}`),
-      this.prisma.$queryRaw<{ count: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS count FROM student_outpasses so ${whereClause}`),
+      this.prisma.$queryRaw<{ count: bigint }[]>(Prisma.sql`
+        SELECT COUNT(*)::bigint AS count
+        FROM student_outpasses so
+        JOIN students st ON st.id = so.student_id
+        LEFT JOIN classes cl ON cl.id = st.class_id
+        ${whereClause}
+      `),
     ]);
 
     return paginate(rows.map(toResponse), Number(countRows[0]?.count ?? 0), query);
@@ -134,13 +170,24 @@ export class OutpassService {
    * parent by SMS/call is a real external-integration gap, not built
    * here — flagged, not faked.
    */
-  async updateStatus(id: number, status: 'approved' | 'rejected', userId: number) {
+  async updateStatus(id: number, status: 'approved' | 'rejected', userId: number, user: JwtPayload) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user);
     const existing = await this.prisma.student_outpasses.findUnique({
       where: { id },
-      select: { id: true, kind: true, students: { select: { user_id: true } } },
+      select: {
+        id: true,
+        kind: true,
+        students: { select: { user_id: true, classes: { select: { department_id: true } } } },
+      },
     });
     if (!existing) {
       throw new NotFoundException({ message: 'Outpass not found', errorCode: 'OUTPASS_NOT_FOUND' });
+    }
+    if (effectiveDepartmentId !== undefined && existing.students?.classes?.department_id !== effectiveDepartmentId) {
+      throw new ForbiddenException({
+        message: 'You may only act on outpasses for students in your own department',
+        errorCode: 'FORBIDDEN_DEPARTMENT',
+      });
     }
     await this.prisma.student_outpasses.update({
       where: { id },

@@ -17,14 +17,14 @@ export class AccreditationController {
   constructor(private readonly accreditationService: AccreditationService) {}
 
   @Get('overview')
-  getOverview(@Query('department_id') departmentId?: string) {
-    return this.accreditationService.getOverview(departmentId ? +departmentId : undefined);
+  getOverview(@CurrentUser() user: JwtPayload, @Query('department_id') departmentId?: string) {
+    return this.accreditationService.getOverview(user, departmentId ? +departmentId : undefined);
   }
 
   @Post('criteria')
   @HttpCode(HttpStatus.CREATED)
-  createCriterion(@Body() dto: CreateCriterionDto) {
-    return this.accreditationService.createCriterion(dto.department_id, dto.code, dto.name, dto.max_marks);
+  createCriterion(@CurrentUser() user: JwtPayload, @Body() dto: CreateCriterionDto) {
+    return this.accreditationService.createCriterion(user, dto.department_id, dto.code, dto.name, dto.max_marks);
   }
 
   @Post('criteria/:id/evidence-items')

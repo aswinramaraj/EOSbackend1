@@ -377,11 +377,15 @@ export class BooksService {
       throw new NotFoundException('Book not found.');
     }
 
+    // Checked against the EFFECTIVE value on both sides, not just whichever
+    // one the caller happened to include — editing only total_copies (e.g.
+    // withdrawing copies) while leaving available_copies out of the request
+    // used to skip this check entirely, letting total_copies drop below the
+    // book's existing available_copies and leave the row internally
+    // inconsistent (available > total).
     const effectiveTotal = dto.total_copies ?? book.total_copies;
-    if (
-      dto.available_copies !== undefined &&
-      dto.available_copies > effectiveTotal
-    ) {
+    const effectiveAvailable = dto.available_copies ?? book.available_copies;
+    if (effectiveAvailable > effectiveTotal) {
       throw new BadRequestException(
         'available_copies cannot exceed total_copies.',
       );

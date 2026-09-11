@@ -40,7 +40,15 @@ export class FacultyOdController {
    * FacultyOdService.create) since they can't review their own OD.
    */
   @Post('create-od')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.SECRETARY,
+    // Non-teaching staff raise their own requests through the same route;
+    // the service branches on whether a faculty row exists, not on role.
+    ROLES.HR_PAYROLL,
+    ROLES.WARDEN,
+  )
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateFacultyOdDto, @CurrentUser() user: JwtPayload) {
     return this.facultyOdService.create(dto, user);
@@ -48,7 +56,13 @@ export class FacultyOdController {
 
   /** GET /api/v1/me/faculty-od — Faculty (own only)/HoD/HR Payroll/IQAC. Paginated, filterable. */
   @Get('faculty-od')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.IQAC, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.HR_PAYROLL,
+    ROLES.IQAC,
+    ROLES.SECRETARY,
+  )
   findAll(
     @Query() query: ListFacultyOdQueryDto,
     @CurrentUser() user: JwtPayload,

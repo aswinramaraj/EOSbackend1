@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import type { ReportTable } from 'src/common/utils/report-export.util';
 import { IqacReportQueryDto } from './dto/iqac-report-query.dto';
 import { VenueHistoryQueryDto } from './dto/venue-history-query.dto';
@@ -218,7 +219,7 @@ export class IqacReportsService {
    * never drifts from what IQAC sees on the metric's own page. Every row
    * with no real backing still shows null, not a guess.
    */
-  async scorecard(): Promise<{
+  async scorecard(user: JwtPayload): Promise<{
     rows: ScorecardRow[];
     kpi_score: number | null;
   }> {
@@ -260,7 +261,7 @@ export class IqacReportsService {
       this.facultyDevelopment.publicationsQuality(),
       this.facultyDevelopment.researchQuality(),
       this.facultyDevelopment.patentsQuality(),
-      this.accreditation.getOverview(),
+      this.accreditation.getOverview(user),
       this.iqacAccreditation.meanReadiness('naac'),
       this.iqacAccreditation.meanReadiness('aqar'),
       this.iqacAccreditation.meanReadiness('ssr'),

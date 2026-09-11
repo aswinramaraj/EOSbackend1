@@ -33,13 +33,21 @@ export class PayslipRequestsController {
 
   /** POST /api/v1/payslip-requests — Faculty or HoD, for the caller's own record. */
   @Post('payslip-requests')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.SECRETARY,
+    // Non-teaching staff raise their own requests through the same route;
+    // the service branches on whether a faculty row exists, not on role.
+    ROLES.HR_PAYROLL,
+    ROLES.WARDEN,
+  )
   @HttpCode(HttpStatus.CREATED)
   create(
     @Body() dto: CreatePayslipRequestDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.payslipRequestsService.create(dto, user.sub, user.role);
+    return this.payslipRequestsService.create(dto, user.sub);
   }
 
   /** GET /api/v1/payslip-requests — HR Payroll (all) / Faculty/HoD/Secretary (own only). */
@@ -83,7 +91,12 @@ export class PayslipRequestsController {
     @Body() dto: UpdateOwnPayslipDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.payslipRequestsService.updateOwnPurpose(id, user.sub, user.role, dto.purpose);
+    return this.payslipRequestsService.updateOwnPurpose(
+      id,
+      user.sub,
+      user.role,
+      dto.purpose,
+    );
   }
 
   /** DELETE /api/v1/payslip-requests/:id — Faculty, HoD or Secretary, own request, only while still 'pending'. */

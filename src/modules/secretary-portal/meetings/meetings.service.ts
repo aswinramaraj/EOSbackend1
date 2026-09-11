@@ -1,5 +1,7 @@
-import { Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { CreateMeetingDto } from './dto/create-meeting.dto';
 
 const MEETING_SELECT = {
@@ -52,15 +54,50 @@ export class MeetingsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateMeetingDto, userId: number) {
-    const department = await this.prisma.departments.findUnique({ where: { id: dto.department_id } });
+  /** Secretary is always forced to her own department; other roles keep whatever was requested (or none = institution-wide). */
+  private async resolveEffectiveDepartmentId(
+    user: JwtPayload,
+    requested?: number,
+  ): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return requested;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
+
+  /** A Secretary may only act on meetings belonging to her own department — other roles are unrestricted. */
+  private async assertDepartmentAccess(user: JwtPayload, meetingDepartmentId: number): Promise<void> {
+    if (user.role !== ROLES.SECRETARY) return;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id || staff.department_id !== meetingDepartmentId) {
+      throw new ForbiddenException({
+        message: 'You may only act on meetings from your own department',
+        errorCode: 'FORBIDDEN_DEPARTMENT',
+      });
+    }
+  }
+
+  async create(user: JwtPayload, dto: CreateMeetingDto, userId: number) {
+    const effectiveDepartmentId = (await this.resolveEffectiveDepartmentId(user, dto.department_id))!;
+    const department = await this.prisma.departments.findUnique({ where: { id: effectiveDepartmentId } });
     if (!department) {
       throw new NotFoundException({ message: 'Department not found', errorCode: 'DEPARTMENT_NOT_FOUND' });
     }
     try {
       const row = await this.prisma.department_meetings.create({
         data: {
-          department_id: dto.department_id,
+          department_id: effectiveDepartmentId,
           title: dto.title,
           meeting_at: new Date(dto.meeting_at),
           venue: dto.venue,
@@ -78,20 +115,22 @@ export class MeetingsService {
     }
   }
 
-  async findAll(departmentId?: number) {
+  async findAll(user: JwtPayload, departmentId?: number) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, departmentId);
     const rows = await this.prisma.department_meetings.findMany({
-      where: departmentId !== undefined ? { department_id: departmentId } : undefined,
+      where: effectiveDepartmentId !== undefined ? { department_id: effectiveDepartmentId } : undefined,
       orderBy: { meeting_at: 'desc' },
       select: MEETING_SELECT,
     });
     return rows.map(toResponse);
   }
 
-  async updateMom(id: number, momText: string) {
+  async updateMom(user: JwtPayload, id: number, momText: string) {
     const existing = await this.prisma.department_meetings.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException({ message: 'Meeting not found', errorCode: 'MEETING_NOT_FOUND' });
     }
+    await this.assertDepartmentAccess(user, existing.department_id);
     const row = await this.prisma.department_meetings.update({
       where: { id },
       data: { mom_text: momText, mom_status: momText.trim() ? 'recorded' : 'scheduled' },
@@ -100,11 +139,12 @@ export class MeetingsService {
     return toResponse(row);
   }
 
-  async circulate(id: number) {
+  async circulate(user: JwtPayload, id: number) {
     const existing = await this.prisma.department_meetings.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException({ message: 'Meeting not found', errorCode: 'MEETING_NOT_FOUND' });
     }
+    await this.assertDepartmentAccess(user, existing.department_id);
     if (!existing.mom_text) {
       throw new InternalServerErrorException({ message: 'Record the minutes before circulating.', errorCode: 'MOM_NOT_RECORDED' });
     }
@@ -116,21 +156,24 @@ export class MeetingsService {
     return toResponse(row);
   }
 
-  async addActionItem(meetingId: number, label: string) {
+  async addActionItem(user: JwtPayload, meetingId: number, label: string) {
     const existing = await this.prisma.department_meetings.findUnique({ where: { id: meetingId } });
     if (!existing) {
       throw new NotFoundException({ message: 'Meeting not found', errorCode: 'MEETING_NOT_FOUND' });
     }
+    await this.assertDepartmentAccess(user, existing.department_id);
     await this.prisma.meeting_action_items.create({ data: { meeting_id: meetingId, label } });
     const row = await this.prisma.department_meetings.findUnique({ where: { id: meetingId }, select: MEETING_SELECT });
     return toResponse(row!);
   }
 
-  async toggleActionItem(meetingId: number, itemId: number) {
+  async toggleActionItem(user: JwtPayload, meetingId: number, itemId: number) {
     const item = await this.prisma.meeting_action_items.findUnique({ where: { id: itemId } });
     if (!item || item.meeting_id !== meetingId) {
       throw new NotFoundException({ message: 'Action item not found', errorCode: 'ACTION_ITEM_NOT_FOUND' });
     }
+    const meeting = await this.prisma.department_meetings.findUnique({ where: { id: meetingId } });
+    await this.assertDepartmentAccess(user, meeting!.department_id);
     await this.prisma.meeting_action_items.update({ where: { id: itemId }, data: { done: !item.done } });
     const row = await this.prisma.department_meetings.findUnique({ where: { id: meetingId }, select: MEETING_SELECT });
     return toResponse(row!);

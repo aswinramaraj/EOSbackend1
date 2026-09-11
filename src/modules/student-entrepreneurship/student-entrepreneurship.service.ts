@@ -19,6 +19,7 @@ interface StudentFuzzySearchRow {
   section: string | null;
   batch_name: string | null;
   has_venture: boolean;
+  student_entrepreneurship_id: number | null;
   similarity: number;
 }
 
@@ -55,6 +56,121 @@ function toStudentSummaryWithDepartment(student: StudentSummaryWithDeptSource) {
   return {
     ...toStudentSummary(student),
     department: student.classes?.departments ?? null,
+  };
+}
+
+const VENTURE_DETAIL_INCLUDE = {
+  students: {
+    select: {
+      id: true,
+      student_id_no: true,
+      soa_applications: { select: { first_name: true, last_name: true } },
+      users: { select: { email: true } },
+      classes: { select: { section: true, departments: { select: { code: true, name: true } } } },
+    },
+  },
+  faculty: { select: { first_name: true, last_name: true } },
+} as const;
+
+interface VentureDetailSource {
+  id: number;
+  faculty: { first_name: string; last_name: string } | null;
+  business_name: string;
+  business_description: string | null;
+  sector: string | null;
+  stage: string | null;
+  funding_required: unknown;
+  remarks: string | null;
+  created_at: Date;
+  is_incubated: boolean | null;
+  registration_type: string | null;
+  website: string | null;
+  venture_logo_url: string | null;
+  current_status_note: string | null;
+  role: string | null;
+  year_started: number | null;
+  business_category: string | null;
+  problem_statement: string | null;
+  location: string | null;
+  business_model: string | null;
+  target_customers: string | null;
+  linkedin_url: string | null;
+  co_founders: string | null;
+  team_size: number | null;
+  student_team_note: string | null;
+  mentor_faculty_id: number | null;
+  external_mentor_name: string | null;
+  external_mentor_org: string | null;
+  team_roles_note: string | null;
+  idea_developed: boolean | null;
+  prototype_developed: boolean | null;
+  mvp_launched: boolean | null;
+  product_launched: boolean | null;
+  customers_count: number | null;
+  monthly_revenue: unknown;
+  growth_stage: string | null;
+  funding_status: string | null;
+  funding_received: unknown;
+  funding_source: string | null;
+  govt_grant_scheme: string | null;
+  incubator_support: string | null;
+  accelerator_support: string | null;
+  students: StudentSummaryWithDeptSource;
+}
+
+/** Shared by every full-detail read (Coordinator's list/detail and the
+ * student's own "My Venture" view) — one venture row, fully shaped, never
+ * duplicated per caller. */
+function toVentureDetail(row: VentureDetailSource) {
+  return {
+    id: row.id,
+    mentor_faculty_name: row.faculty
+      ? `${row.faculty.first_name} ${row.faculty.last_name}`
+      : null,
+    business_name: row.business_name,
+    business_description: row.business_description,
+    sector: row.sector,
+    stage: row.stage,
+    funding_required:
+      row.funding_required !== null ? Number(row.funding_required) : null,
+    remarks: row.remarks,
+    created_at: row.created_at,
+    is_incubated: row.is_incubated,
+    registration_type: row.registration_type,
+    website: row.website,
+    venture_logo_url: row.venture_logo_url,
+    current_status_note: row.current_status_note,
+    role: row.role,
+    year_started: row.year_started,
+    business_category: row.business_category,
+    problem_statement: row.problem_statement,
+    location: row.location,
+    business_model: row.business_model,
+    target_customers: row.target_customers,
+    linkedin_url: row.linkedin_url,
+    co_founders: row.co_founders,
+    team_size: row.team_size,
+    student_team_note: row.student_team_note,
+    mentor_faculty_id: row.mentor_faculty_id,
+    external_mentor_name: row.external_mentor_name,
+    external_mentor_org: row.external_mentor_org,
+    team_roles_note: row.team_roles_note,
+    idea_developed: row.idea_developed,
+    prototype_developed: row.prototype_developed,
+    mvp_launched: row.mvp_launched,
+    product_launched: row.product_launched,
+    customers_count: row.customers_count,
+    monthly_revenue:
+      row.monthly_revenue !== null ? Number(row.monthly_revenue) : null,
+    growth_stage: row.growth_stage,
+    funding_status: row.funding_status,
+    funding_received:
+      row.funding_received !== null ? Number(row.funding_received) : null,
+    funding_source: row.funding_source,
+    govt_grant_scheme: row.govt_grant_scheme,
+    incubator_support: row.incubator_support,
+    accelerator_support: row.accelerator_support,
+    student: toStudentSummaryWithDepartment(row.students),
   };
 }
 
@@ -152,9 +268,14 @@ export class StudentEntrepreneurshipService {
   }
 
   /**
-   * GET /me/mentee-entrepreneurship (Faculty — class advisor only). Scoped
-   * live via class_mentors, resolved fresh every call — a reassignment to
-   * a different class takes effect immediately, no stale caching.
+   * GET /me/mentee-entrepreneurship (Faculty). Two independent ways a
+   * venture can belong to this faculty member, unioned: (1) the student is
+   * in a class this faculty is the class_mentor for, resolved fresh every
+   * call so a reassignment takes effect immediately; (2) the EDC
+   * Coordinator directly assigned this faculty as mentor_faculty_id on the
+   * venture (via edc/mentors), independent of the student's class. Only
+   * checking (1) meant a faculty mentoring ventures outside their own
+   * class — the normal way EDC assigns mentors — saw nothing for them.
    */
   async findAllForMentor(userId: number) {
     const faculty = await this.prisma.faculty.findUnique({ where: { user_id: userId } });
@@ -165,11 +286,17 @@ export class StudentEntrepreneurshipService {
       select: { class_id: true },
     });
     const classIds = mentorClasses.map((m) => m.class_id);
-    if (classIds.length === 0) return [];
 
     try {
       const rows = await this.prisma.student_entrepreneurship.findMany({
-        where: { students: { class_id: { in: classIds } } },
+        where: {
+          OR: [
+            ...(classIds.length > 0
+              ? [{ students: { class_id: { in: classIds } } }]
+              : []),
+            { mentor_faculty_id: faculty.id },
+          ],
+        },
         include: {
           students: {
             select: {
@@ -248,68 +375,51 @@ export class StudentEntrepreneurshipService {
   async findAllForCoordinator() {
     try {
       const rows = await this.prisma.student_entrepreneurship.findMany({
-        include: {
-          students: {
-            select: {
-              id: true,
-              student_id_no: true,
-              soa_applications: { select: { first_name: true, last_name: true } },
-              users: { select: { email: true } },
-              classes: { select: { section: true, departments: { select: { code: true, name: true } } } },
-            },
-          },
-          faculty: { select: { first_name: true, last_name: true } },
-        },
+        include: VENTURE_DETAIL_INCLUDE,
         orderBy: { created_at: 'desc' },
       });
 
-      return rows.map((row) => ({
-        id: row.id,
-        mentor_faculty_name: row.faculty ? `${row.faculty.first_name} ${row.faculty.last_name}` : null,
-        business_name: row.business_name,
-        business_description: row.business_description,
-        sector: row.sector,
-        stage: row.stage,
-        funding_required: row.funding_required !== null ? Number(row.funding_required) : null,
-        remarks: row.remarks,
-        created_at: row.created_at,
-        is_incubated: row.is_incubated,
-        registration_type: row.registration_type,
-        website: row.website,
-        venture_logo_url: row.venture_logo_url,
-        current_status_note: row.current_status_note,
-        role: row.role,
-        year_started: row.year_started,
-        business_category: row.business_category,
-        problem_statement: row.problem_statement,
-        location: row.location,
-        business_model: row.business_model,
-        target_customers: row.target_customers,
-        linkedin_url: row.linkedin_url,
-        co_founders: row.co_founders,
-        team_size: row.team_size,
-        student_team_note: row.student_team_note,
-        mentor_faculty_id: row.mentor_faculty_id,
-        external_mentor_name: row.external_mentor_name,
-        external_mentor_org: row.external_mentor_org,
-        team_roles_note: row.team_roles_note,
-        idea_developed: row.idea_developed,
-        prototype_developed: row.prototype_developed,
-        mvp_launched: row.mvp_launched,
-        product_launched: row.product_launched,
-        customers_count: row.customers_count,
-        monthly_revenue: row.monthly_revenue !== null ? Number(row.monthly_revenue) : null,
-        growth_stage: row.growth_stage,
-        funding_status: row.funding_status,
-        funding_received: row.funding_received !== null ? Number(row.funding_received) : null,
-        funding_source: row.funding_source,
-        govt_grant_scheme: row.govt_grant_scheme,
-        incubator_support: row.incubator_support,
-        accelerator_support: row.accelerator_support,
-        student: toStudentSummaryWithDepartment(row.students),
-      }));
+      return rows.map(toVentureDetail);
     } catch (err) {
       this.logger.error('DB error listing student_entrepreneurship for coordinator', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * GET /me/entrepreneurship (Student only) — the caller's own venture, or
+   * null if they've never registered one with the EDC. Same full shape as
+   * the Coordinator's view (toVentureDetail), so the frontend reuses
+   * EdcVentureDetail verbatim instead of a second bespoke read-only layout.
+   */
+  async findForStudent(userId: number) {
+    try {
+      const student = await this.prisma.students.findUnique({
+        where: { user_id: userId },
+        select: { id: true },
+      });
+      if (!student) {
+        throw new NotFoundException({
+          message: 'No student record found for this account',
+          errorCode: 'STUDENT_RECORD_NOT_FOUND',
+        });
+      }
+
+      const row = await this.prisma.student_entrepreneurship.findUnique({
+        where: { student_id: student.id },
+        include: VENTURE_DETAIL_INCLUDE,
+      });
+
+      return row ? toVentureDetail(row) : null;
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      this.logger.error(
+        'DB error reading student_entrepreneurship for student',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -324,7 +434,12 @@ export class StudentEntrepreneurshipService {
    * one-for-one (the only other real student-search endpoint in the repo),
    * with `has_venture` added so the "Add Student" screen can show/disable
    * a student who already has an entrepreneurship row (student_id is
-   * @unique — at most one venture per student).
+   * @unique — at most one venture per student), and
+   * `student_entrepreneurship_id` (the venture's own real id, null when
+   * has_venture is false) so callers that need an existing venture — e.g.
+   * Funding's "Log a disbursement" — can submit that id directly instead of
+   * the student's own id (a real bug: edc_funding_records.student_entrepreneurship_id
+   * references student_entrepreneurship.id, not students.id).
    */
   async searchStudentsForCoordinator(query: string, limit = 20) {
     const q = query.trim();
@@ -345,6 +460,7 @@ export class StudentEntrepreneurshipService {
         cl.section,
         b.name AS batch_name,
         (se.id IS NOT NULL) AS has_venture,
+        se.id AS student_entrepreneurship_id,
         GREATEST(
           similarity(s.student_id_no, ${q}),
           similarity(COALESCE(s.roll_no, ''), ${q}),
@@ -380,6 +496,7 @@ export class StudentEntrepreneurshipService {
       section: row.section,
       batch_name: row.batch_name,
       has_venture: row.has_venture,
+      student_entrepreneurship_id: row.student_entrepreneurship_id,
       similarity: Number(row.similarity),
     }));
   }

@@ -49,7 +49,7 @@ export class PurchaseRequestsController {
   @HttpCode(HttpStatus.CREATED)
   @Roles(ROLES.SECRETARY)
   create(@Body() dto: CreatePurchaseRequestDto, @CurrentUser() user: JwtPayload) {
-    return this.purchaseRequestsService.create(dto, user.sub);
+    return this.purchaseRequestsService.create(dto, user.sub, user);
   }
 
   /** GET /api/v1/me/purchase-requests — Secretary (own)/HoD (own dept)/Finance/Admin (institution-wide). */

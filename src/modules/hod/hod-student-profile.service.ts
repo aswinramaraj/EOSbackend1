@@ -177,6 +177,8 @@ export class HodStudentProfileService {
             select: {
               id: true,
               is_available: true,
+              verified_at: true,
+              file_url: true,
               certificate_types: { select: { name: true } },
             },
           },
@@ -579,6 +581,9 @@ export class HodStudentProfileService {
           id: c.id,
           name: c.certificate_types!.name,
           verified: c.is_available,
+          is_available: c.is_available,
+          verified_at: c.verified_at,
+          file_url: c.file_url,
         })),
         semester_wise_gpa: semesterWiseGpa,
         monthly_attendance: monthlyAttendance,

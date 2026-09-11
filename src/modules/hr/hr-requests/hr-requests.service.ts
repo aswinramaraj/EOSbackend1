@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ListHrRequestsQueryDto } from './dto/list-hr-requests-query.dto';
 import { CreateHrVacationEntryDto } from './dto/create-hr-vacation-entry.dto';
@@ -53,6 +57,56 @@ export interface UnifiedRequest {
   overall_status: 'pending' | 'approved' | 'rejected';
   created_at: Date;
 }
+
+/**
+ * Normalises the requester across both shapes.
+ *
+ * `faculty_leaves.faculty_id` and `faculty_od_requests.faculty_id` are
+ * nullable: a non-teaching staff account (the Secretary portal, for one) raises
+ * leave and OD against `staff_user_id` with no faculty row behind it.
+ * Dereferencing the relation unconditionally threw a TypeError, and because a
+ * single such row exists the whole Requests tab returned 500 — while filtering
+ * by department appeared to work, only because that filter implicitly excludes
+ * rows with no faculty.
+ */
+function resolveRequester(
+  faculty: {
+    id: number;
+    prefix: string | null;
+    first_name: string;
+    last_name: string;
+    designation: string;
+    profile_url: string | null;
+    departments: { id: number; name: string } | null;
+  } | null,
+  staffUserId: number | null,
+): UnifiedRequest['faculty'] {
+  if (faculty) {
+    return {
+      id: faculty.id,
+      prefix: faculty.prefix,
+      first_name: faculty.first_name,
+      last_name: faculty.last_name,
+      designation: faculty.designation,
+      profile_url: faculty.profile_url,
+      // Nullable in the schema even though a faculty row has one in practice,
+      // so it is not asserted.
+      department: faculty.departments ?? { id: 0, name: 'Unassigned' },
+    };
+  }
+  // No faculty record exists to name them from, so the row says what it is
+  // rather than rendering blank.
+  return {
+    id: 0,
+    prefix: null,
+    first_name: 'Non-teaching staff',
+    last_name: staffUserId != null ? `(user ${staffUserId})` : '',
+    designation: 'Staff',
+    profile_url: null,
+    department: { id: 0, name: 'Non-teaching / unassigned' },
+  };
+}
+
 
 interface FacultyRef {
   id: number;
@@ -125,6 +179,8 @@ export class HrRequestsService {
               hod_approval_status: true,
               hr_approval_status: true,
               created_at: true,
+              // Staff requests carry no faculty row; this identifies them instead.
+              staff_user_id: true,
               leave_types: { select: { id: true, name: true } },
               faculty: {
                 select: {
@@ -149,6 +205,8 @@ export class HrRequestsService {
               id: true,
               from_date: true,
               to_date: true,
+              // Staff requests carry no faculty row; this identifies them instead.
+              staff_user_id: true,
               purpose: true,
               hod_approval_status: true,
               hr_approval_status: true,
@@ -173,15 +231,7 @@ export class HrRequestsService {
         id: `leave-${leave.id}`,
         kind: 'leave',
         source_id: leave.id,
-        faculty: {
-          id: leave.faculty.id,
-          prefix: leave.faculty.prefix,
-          first_name: leave.faculty.first_name,
-          last_name: leave.faculty.last_name,
-          designation: leave.faculty.designation,
-          profile_url: leave.faculty.profile_url,
-          department: leave.faculty.departments,
-        },
+        faculty: resolveRequester(leave.faculty, leave.staff_user_id),
         from_date: leave.from_date,
         to_date: leave.to_date,
         detail: leave.reason,
@@ -198,15 +248,7 @@ export class HrRequestsService {
         id: `od-${od.id}`,
         kind: 'od',
         source_id: od.id,
-        faculty: {
-          id: od.faculty.id,
-          prefix: od.faculty.prefix,
-          first_name: od.faculty.first_name,
-          last_name: od.faculty.last_name,
-          designation: od.faculty.designation,
-          profile_url: od.faculty.profile_url,
-          department: od.faculty.departments,
-        },
+        faculty: resolveRequester(od.faculty, od.staff_user_id),
         from_date: od.from_date,
         to_date: od.to_date,
         detail: od.purpose,
@@ -240,8 +282,9 @@ export class HrRequestsService {
   }
 
   /**
-   * HR recording a single-day leave/OD entry directly on a faculty member's
-   * behalf — e.g. from the Vacation Management calendar. Skips the normal
+   * HR recording a leave/OD entry directly on a faculty member's behalf —
+   * e.g. from the Vacation Management calendar. Accepts a real from/to
+   * range (a single day is just from_date === to_date). Skips the normal
    * self-service + approval flow entirely (both approval columns are set
    * straight to 'approved') since HR is the one entering it, not routing a
    * new request for review. Logged to faculty_activity_log since neither
@@ -267,7 +310,11 @@ export class HrRequestsService {
       throw new NotFoundException('Faculty not found');
     }
 
-    const date = new Date(`${dto.date}T00:00:00.000Z`);
+    const fromDate = new Date(`${dto.from_date}T00:00:00.000Z`);
+    const toDate = new Date(`${dto.to_date}T00:00:00.000Z`);
+    if (fromDate > toDate) {
+      throw new BadRequestException('from_date must not be after to_date');
+    }
     const facultyRef = {
       id: faculty.id,
       prefix: faculty.prefix,
@@ -277,41 +324,51 @@ export class HrRequestsService {
       profile_url: faculty.profile_url,
       department: faculty.departments,
     };
+    const rangeLabel =
+      dto.from_date === dto.to_date
+        ? dto.from_date
+        : `${dto.from_date} to ${dto.to_date}`;
 
     // Leave/OD (this table) and attendance (faculty_daily_attendance) are
     // otherwise two entirely separate systems — without this, adding
-    // someone to a day here left the Attendance page showing whatever it
-    // already had (or nothing at all) for that date, with no indication a
-    // Leave/OD was ever recorded. Only fills in a day that has no explicit
-    // attendance row yet — never overwrites one, since an existing row means
-    // HR or a punch already recorded what actually happened that day, which
-    // this shouldn't second-guess.
-    const existingAttendance =
-      await this.prisma.faculty_daily_attendance.findUnique({
-        where: {
-          faculty_id_attendance_date: {
-            faculty_id: dto.faculty_id,
-            attendance_date: date,
+    // someone to a range here left the Attendance page showing whatever it
+    // already had (or nothing at all) for those dates, with no indication a
+    // Leave/OD was ever recorded. One row per calendar day (mirrors
+    // removeEntry's own cursor loop) — only fills in a day that has no
+    // explicit attendance row yet, never overwrites one, since an existing
+    // row means HR or a punch already recorded what actually happened that
+    // day, which this shouldn't second-guess.
+    const attendanceStatus = dto.kind === 'leave' ? 'on_leave' : 'on_duty';
+    const cursor = new Date(fromDate);
+    while (cursor <= toDate) {
+      const existingAttendance =
+        await this.prisma.faculty_daily_attendance.findUnique({
+          where: {
+            faculty_id_attendance_date: {
+              faculty_id: dto.faculty_id,
+              attendance_date: cursor,
+            },
           },
-        },
-      });
-    if (!existingAttendance) {
-      await this.prisma.faculty_daily_attendance.create({
-        data: {
-          faculty_id: dto.faculty_id,
-          attendance_date: date,
-          status: dto.kind === 'leave' ? 'on_leave' : 'on_duty',
-          academic_year: academicYearFor(date),
-        },
-      });
+        });
+      if (!existingAttendance) {
+        await this.prisma.faculty_daily_attendance.create({
+          data: {
+            faculty_id: dto.faculty_id,
+            attendance_date: new Date(cursor),
+            status: attendanceStatus,
+            academic_year: academicYearFor(cursor),
+          },
+        });
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
 
     if (dto.kind === 'leave') {
       const row = await this.prisma.faculty_leaves.create({
         data: {
           faculty_id: dto.faculty_id,
-          from_date: date,
-          to_date: date,
+          from_date: fromDate,
+          to_date: toDate,
           reason: dto.reason,
           leave_type_id: dto.leave_type_id,
           hod_approval_status: 'approved',
@@ -331,7 +388,7 @@ export class HrRequestsService {
       await this.prisma.faculty_activity_log.create({
         data: {
           faculty_id: dto.faculty_id,
-          description: `Leave for ${dto.date} added directly by HR.`,
+          description: `Leave for ${rangeLabel} added directly by HR.`,
           created_by_user_id: actorUserId,
         },
       });
@@ -354,8 +411,8 @@ export class HrRequestsService {
     const row = await this.prisma.faculty_od_requests.create({
       data: {
         faculty_id: dto.faculty_id,
-        from_date: date,
-        to_date: date,
+        from_date: fromDate,
+        to_date: toDate,
         purpose: dto.reason,
         hod_approval_status: 'approved',
         hr_approval_status: 'approved',
@@ -364,7 +421,7 @@ export class HrRequestsService {
     await this.prisma.faculty_activity_log.create({
       data: {
         faculty_id: dto.faculty_id,
-        description: `OD for ${dto.date} added directly by HR.`,
+        description: `OD for ${rangeLabel} added directly by HR.`,
         created_by_user_id: actorUserId,
       },
     });

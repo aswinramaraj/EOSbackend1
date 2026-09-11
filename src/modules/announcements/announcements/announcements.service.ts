@@ -6,9 +6,15 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/common/storage/storage.service';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import {
+  announcementMediaKeys,
+  insertAnnouncementMedia,
+  loadAnnouncementMedia,
+} from './announcement-media.util';
 import { ROLES } from 'src/common/constants/roles.constant';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import {
@@ -19,6 +25,19 @@ import {
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 import { CreateAnnouncementCommentDto } from './dto/create-announcement-comment.dto';
+
+/**
+ * "No restriction" for a role with institution-wide visibility (Admin,
+ * Principal, Billing, Finance, IQAC). NOT a bare `{}` — nested inside the
+ * `OR: [...]` array in buildVisibilityQuery, an empty object is silently
+ * dropped by this Prisma version's query builder instead of matching every
+ * row, which meant every one of these roles' announcement feeds only ever
+ * showed posts published through the separate social-composer branch (2
+ * rows) — including each role's own posts. `id: { gt: 0 }` is a real,
+ * always-true condition (ids are positive autoincrement) that Prisma can't
+ * optimize away.
+ */
+const UNRESTRICTED: Prisma.announcementsWhereInput = { id: { gt: 0 } };
 
 /**
  * Resolved relationship facts for the current actor, derived once per request.
@@ -34,6 +53,15 @@ interface UserContext {
   assignedClassIds?: number[];
   studentClassId?: number | null;
   linkedStudentClassIds?: number[];
+  // Ids of announcements scoped to this student's hostel/day-scholar status
+  // via the raw `audience_student_type` column proposed in query.md #7 (not
+  // a Prisma field — see resolveUserContext's STUDENT case for why). Always
+  // [] until that column exists or for any non-STUDENT role.
+  hostelAudienceAnnouncementIds?: number[];
+  // Whether this student has their own student_entrepreneurship row (and
+  // whether it's incubated) — resolves the edc_* target_audience values.
+  // undefined for any non-STUDENT role.
+  edcAudience?: { isEntrepreneur: boolean; isIncubated: boolean };
 }
 
 /**
@@ -41,6 +69,17 @@ interface UserContext {
  * name+role+designation+department. `classes`/`roles` resolve human-readable
  * audience labels (department code + section, role name) instead of raw ids.
  */
+/** Shape the publishing screen reads back as `social`. */
+const SOCIAL_DETAILS_SELECT = {
+  select: {
+    format: true,
+    link_url: true,
+    expires_at: true,
+    is_pinned: true,
+    allow_comments: true,
+  },
+} as const;
+
 const ANNOUNCEMENT_RESPONSE_INCLUDE = {
   announcement_class_mapping: {
     select: {
@@ -53,10 +92,26 @@ const ANNOUNCEMENT_RESPONSE_INCLUDE = {
   announcement_role_mapping: {
     select: { role_id: true, roles: { select: { name: true } } },
   },
+  // Present only for posts published through the social/publishing screen;
+  // toResponseShape surfaces it as `social`.
+  social_post_details: SOCIAL_DETAILS_SELECT,
   users: {
     select: {
       email: true,
       roles: { select: { name: true } },
+      // Media Room / Secretary / warden accounts are non_teaching_staff rows,
+      // not faculty rows. Without this relation their posts fell back to
+      // showing the poster's raw EMAIL ADDRESS as the author name to every
+      // student who saw the post. Same faculty -> non_teaching_staff -> email
+      // order the rest of the codebase uses (see resolveRequesterName in
+      // media-requests.service.ts and resolveMarkerName in attendance).
+      non_teaching_staff: {
+        select: {
+          first_name: true,
+          last_name: true,
+          departments: { select: { code: true } },
+        },
+      },
       faculty: {
         select: {
           first_name: true,
@@ -68,6 +123,26 @@ const ANNOUNCEMENT_RESPONSE_INCLUDE = {
     },
   },
 } satisfies Prisma.announcementsInclude;
+
+/**
+ * True when the caller supplied any social-post field, so a plain announcement
+ * from another module does not get an empty details row attached to it.
+ */
+function hasSocialDetails(dto: {
+  format?: string;
+  link_url?: string;
+  expires_at?: string;
+  is_pinned?: boolean;
+  allow_comments?: boolean;
+}): boolean {
+  return (
+    dto.format !== undefined ||
+    dto.link_url !== undefined ||
+    dto.expires_at !== undefined ||
+    dto.is_pinned !== undefined ||
+    dto.allow_comments !== undefined
+  );
+}
 
 @Injectable()
 export class AnnouncementsService {
@@ -194,8 +269,46 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               priority: dto.priority,
-            },
+              // Real column that nothing was writing, so a scheduled post kept
+              // no record of when it was meant to go out.
+              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+              },
           });
+
+          // Social post details live in their own 1:1 table. Written inside
+          // this transaction so a post can never exist without the format,
+          // link and pin/expiry settings it was published with — those were
+          // previously accepted by the UI and then silently dropped.
+          if (hasSocialDetails(dto)) {
+            await tx.social_post_details.create({
+              data: {
+                announcement_id: announcement.id,
+                format: dto.format ?? null,
+                link_url: dto.link_url ?? null,
+                expires_at: dto.expires_at ? new Date(dto.expires_at) : null,
+                is_pinned: dto.is_pinned ?? false,
+                allow_comments: dto.allow_comments ?? true,
+              },
+            });
+            // Carousel media, written in the same transaction as the post so a
+            // post can never appear without the photos it was published with.
+            await insertAnnouncementMedia(tx, announcement.id, dto.media ?? []);
+          }
+
+          // Posted inside the same transaction as the announcement, so a
+          // post can never appear without the opening comment it was
+          // published with.
+          if (dto.first_comment && dto.first_comment.trim().length > 0) {
+            await tx.announcement_comments.create({
+              data: {
+                announcement_id: announcement.id,
+                commented_by_user_id: user.sub,
+                comment_text: dto.first_comment.trim(),
+              },
+            });
+          }
 
           if (dto.class_ids && dto.class_ids.length > 0) {
             await tx.announcement_class_mapping.createMany({
@@ -217,6 +330,17 @@ export class AnnouncementsService {
 
           return this.toResponseShape({
             ...announcement,
+            // The insert above returns no relations, so the social details are
+            // echoed back from what was just written rather than re-queried.
+            social_post_details: hasSocialDetails(dto)
+              ? {
+                  format: dto.format ?? null,
+                  link_url: dto.link_url ?? null,
+                  expires_at: dto.expires_at ? new Date(dto.expires_at) : null,
+                  is_pinned: dto.is_pinned ?? false,
+                  allow_comments: dto.allow_comments ?? true,
+                }
+              : null,
             announcement_class_mapping: (dto.class_ids ?? []).map(
               (class_id) => ({ class_id, classes: null }),
             ),
@@ -257,7 +381,12 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               priority: dto.priority,
-            },
+              // Real column that nothing was writing, so a scheduled post kept
+              // no record of when it was meant to go out.
+              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+              },
           });
 
           await tx.announcement_role_mapping.createMany({
@@ -266,6 +395,19 @@ export class AnnouncementsService {
               role_id,
             })),
           });
+
+          // An opening comment is written in the same transaction as the post
+          // for every create branch, so it can never go missing from a post
+          // that was published with one.
+          if (dto.first_comment && dto.first_comment.trim().length > 0) {
+            await tx.announcement_comments.create({
+              data: {
+                announcement_id: created.id,
+                commented_by_user_id: user.sub,
+                comment_text: dto.first_comment.trim(),
+              },
+            });
+          }
 
           return created;
         });
@@ -314,7 +456,12 @@ export class AnnouncementsService {
             file_key: dto.file_key,
             file_name: dto.file_name,
             priority: dto.priority,
-          },
+            // Real column that nothing was writing, so a scheduled post kept
+            // no record of when it was meant to go out.
+            scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+            },
         });
       } catch (err) {
         this.logger.error('DB error while creating announcement', err);
@@ -363,7 +510,12 @@ export class AnnouncementsService {
             file_key: dto.file_key,
             file_name: dto.file_name,
             priority: dto.priority,
-            category: dto.category,
+            // Real column that nothing was writing, so a scheduled post kept
+            // no record of when it was meant to go out.
+            scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+              category: dto.category,
           },
         });
       } catch (err) {
@@ -373,6 +525,13 @@ export class AnnouncementsService {
           errorCode: 'INTERNAL_ERROR',
         });
       }
+
+      void this.notifyNewAnnouncement(
+        announcement.id,
+        dto.title,
+        dto.target_audience,
+        {},
+      );
 
       return this.toResponseShape({ ...announcement, announcement_class_mapping: [] });
     }
@@ -393,7 +552,12 @@ export class AnnouncementsService {
             file_key: dto.file_key,
             file_name: dto.file_name,
             priority: dto.priority,
-          },
+            // Real column that nothing was writing, so a scheduled post kept
+            // no record of when it was meant to go out.
+            scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+            },
         });
 
         await tx.announcement_class_mapping.createMany({
@@ -404,6 +568,24 @@ export class AnnouncementsService {
         });
 
         await this.maybeCreateSocialPostDetails(tx, created.id, dto);
+        if (hasSocialDetails(dto)) {
+          // Carousel media, written in the same transaction as the post so a
+          // post can never appear without the photos it was published with.
+          await insertAnnouncementMedia(tx, created.id, dto.media ?? []);
+        }
+
+        // Same transaction as the post: this is the branch the social
+        // publishing screen goes through, so its opening comment has to be
+        // written here too.
+        if (dto.first_comment && dto.first_comment.trim().length > 0) {
+          await tx.announcement_comments.create({
+            data: {
+              announcement_id: created.id,
+              commented_by_user_id: user.sub,
+              comment_text: dto.first_comment.trim(),
+            },
+          });
+        }
 
         return created;
       });
@@ -415,7 +597,12 @@ export class AnnouncementsService {
       });
     }
 
-    await this.notifyNewAnnouncement(
+    // Fire-and-forget, exactly like the other two call sites. Awaiting this
+    // held the response open while every student in every targeted class was
+    // notified one batch at a time: publishing to all 160 classes took 309
+    // seconds, so the browser gave up long before the post appeared even
+    // though the post itself had already committed.
+    void this.notifyNewAnnouncement(
       announcement.id,
       dto.title,
       dto.target_audience!,
@@ -432,6 +619,100 @@ export class AnnouncementsService {
       })),
       social: this.socialFromDto(dto),
     });
+  }
+
+  /**
+   * Publishes scheduled posts once their time arrives.
+   *
+   * A scheduled post is stored as `status = 'draft'` with a `scheduled_at`
+   * (announcement_status_enum has only draft/published, so there is no third
+   * "scheduled" state to sit in). Until this existed, `scheduled_at` was
+   * written and then nothing ever acted on it: the post sat as a draft forever
+   * and somebody had to remember to press Publish by hand. Scheduling that
+   * silently does not fire is worse than no scheduling at all, because the
+   * author believes the post went out.
+   *
+   * `scheduled_at: { not: null }` is essential — without it this would publish
+   * every ordinary draft in the system on the next tick.
+   *
+   * Idempotent across app instances: the flip is a conditional UPDATE on
+   * `status = 'draft'`, so if a second instance's cron (or somebody pressing
+   * Publish manually) got there first, `count` is 0 and this run does NOT
+   * notify again. That is what stops recipients getting duplicate pushes when
+   * more than one instance is running.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async publishDueScheduledAnnouncements(): Promise<void> {
+    let due: {
+      id: number;
+      title: string;
+      target_audience: target_audience_enum;
+      department_id: number | null;
+      announcement_class_mapping: { class_id: number }[];
+      announcement_role_mapping: { role_id: number }[];
+    }[];
+
+    try {
+      due = await this.prisma.announcements.findMany({
+        where: {
+          status: 'draft',
+          scheduled_at: { not: null, lte: new Date() },
+        },
+        select: {
+          id: true,
+          title: true,
+          target_audience: true,
+          department_id: true,
+          announcement_class_mapping: { select: { class_id: true } },
+          announcement_role_mapping: { select: { role_id: true } },
+        },
+        orderBy: { scheduled_at: 'asc' },
+        // Bounded so a backlog (e.g. after downtime) cannot turn one tick into
+        // an unbounded notification storm; the rest go out next minute.
+        take: 200,
+      });
+    } catch (err) {
+      this.logger.error('Failed to read due scheduled announcements', err);
+      return;
+    }
+
+    for (const announcement of due) {
+      try {
+        const { count } = await this.prisma.announcements.updateMany({
+          where: { id: announcement.id, status: 'draft' },
+          data: { status: 'published' },
+        });
+        if (count !== 1) continue;
+
+        this.logger.log(
+          `Published scheduled announcement ${announcement.id} ("${announcement.title}")`,
+        );
+
+        // Same fan-out the manual publish paths use, and fire-and-forget for
+        // the same reason (see notifyNewAnnouncement) — a large audience must
+        // not hold the cron tick open.
+        void this.notifyNewAnnouncement(
+          announcement.id,
+          announcement.title,
+          announcement.target_audience,
+          {
+            classIds: announcement.announcement_class_mapping.map(
+              (m) => m.class_id,
+            ),
+            departmentId: announcement.department_id,
+            roleIds: announcement.announcement_role_mapping.map(
+              (m) => m.role_id,
+            ),
+          },
+        );
+      } catch (err) {
+        // One bad row must not stop the rest of the batch going out.
+        this.logger.error(
+          `Failed to publish scheduled announcement ${announcement.id}`,
+          err,
+        );
+      }
+    }
   }
 
   /**
@@ -476,7 +757,11 @@ export class AnnouncementsService {
       // Principal elsewhere in this service (see resolveUserContext) — no
       // department linkage exists for IQAC, so it's always an all-faculty
       // broadcast, same as Admin/Principal omitting requestedDepartmentId.
-      context.role === ROLES.IQAC
+      context.role === ROLES.IQAC ||
+      // HR & Payroll is the same shape — institution-wide, no department
+      // linkage of its own (appraisal/payroll circulars go to every
+      // faculty account, not one department).
+      context.role === ROLES.HR_PAYROLL
     ) {
       if (requestedDepartmentId === undefined) {
         return null;
@@ -601,6 +886,25 @@ export class AnnouncementsService {
         return users.map((u) => u.id);
       }
 
+      // 'edc_founders' and 'edc_all_entrepreneurs' resolve to the same set —
+      // see getEdcAudience's comment on why this schema can't distinguish them.
+      case 'edc_founders':
+      case 'edc_all_entrepreneurs': {
+        const entrepreneurs =
+          await this.prisma.student_entrepreneurship.findMany({
+            select: { students: { select: { user_id: true } } },
+          });
+        return entrepreneurs.map((e) => e.students.user_id);
+      }
+
+      case 'edc_inside_college': {
+        const incubated = await this.prisma.student_entrepreneurship.findMany({
+          where: { is_incubated: true },
+          select: { students: { select: { user_id: true } } },
+        });
+        return incubated.map((e) => e.students.user_id);
+      }
+
       default:
         return [];
     }
@@ -632,8 +936,23 @@ export class AnnouncementsService {
       });
     }
 
-    const withSocial = await this.attachSocialDetails(announcements);
-    return withSocial.map((announcement) => this.toResponseShape(announcement));
+    // One batched query for every post's carousel, attached in memory. A
+    // per-post lookup here would turn one feed request into N+1 round trips
+    // against a pooled connection. (social_post_details itself doesn't need
+    // a separate fetch here - it's already in ANNOUNCEMENT_RESPONSE_INCLUDE
+    // above, which toResponseShape reads directly.)
+    const mediaByAnnouncement = await loadAnnouncementMedia(
+      this.prisma,
+      this.storage,
+      announcements.map((a) => a.id),
+    );
+
+    return announcements.map((announcement) =>
+      this.toResponseShape({
+        ...announcement,
+        media: mediaByAnnouncement.get(announcement.id) ?? [],
+      }),
+    );
   }
 
   /**
@@ -671,8 +990,14 @@ export class AnnouncementsService {
       });
     }
 
-    const [withSocial] = await this.attachSocialDetails([announcement]);
-    return this.toResponseShape(withSocial);
+    const media = await loadAnnouncementMedia(this.prisma, this.storage, [
+      announcement.id,
+    ]);
+
+    return this.toResponseShape({
+      ...announcement,
+      media: media.get(announcement.id) ?? [],
+    });
   }
 
   /**
@@ -803,7 +1128,12 @@ export class AnnouncementsService {
               file_key: dto.file_key,
               file_name: dto.file_name,
               priority: dto.priority,
-            },
+              // Real column that nothing was writing, so a scheduled post kept
+              // no record of when it was meant to go out.
+              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
+            // Real column that was never written; a scheduled post kept no
+            // record of when it was meant to go out.
+              },
           });
         }
 
@@ -887,8 +1217,29 @@ export class AnnouncementsService {
 
     this.assertOwnership(existing, user, context);
 
+    // Collected BEFORE the row goes: announcement_media is ON DELETE CASCADE,
+    // so once the announcement is deleted there is nothing left to tell us
+    // which files in the bucket belonged to it.
+    const mediaKeys = await announcementMediaKeys(this.prisma, id);
+
     try {
-      return await this.prisma.announcements.delete({ where: { id } });
+      const deleted = await this.prisma.announcements.delete({ where: { id } });
+
+      // Storage cleanup is best-effort and deliberately AFTER the row is gone:
+      // an orphaned file is harmless, whereas failing the delete because the
+      // bucket was unreachable would leave the post visible to everyone.
+      await Promise.all(
+        mediaKeys.map((key) =>
+          this.storage.delete(key).catch((err: unknown) => {
+            this.logger.warn(
+              `Announcement ${id} deleted but its media file ${key} could not be removed from storage`,
+              err as Error,
+            );
+          }),
+        ),
+      );
+
+      return deleted;
     } catch (err) {
       this.logger.error('DB error while deleting announcement', err);
       throw new InternalServerErrorException({
@@ -1093,16 +1444,38 @@ export class AnnouncementsService {
       case ROLES.EDC_COORDINATOR:
         return { role: ROLES.EDC_COORDINATOR, userId: user.sub, roleId: user.roleId };
 
-      // No secretary→department linkage exists anywhere in the schema
-      // (checked: no such column on any table) — treated as institution-wide,
-      // same as Admin/Principal, rather than inventing a department scope.
-      case ROLES.SECRETARY:
-        return { role: ROLES.SECRETARY, userId: user.sub, roleId: user.roleId };
+      // Secretary is now department-scoped (one account per department,
+      // non_teaching_staff.department_id), mirroring HOD — resolved fresh
+      // from the JWT rather than trusted from the client.
+      case ROLES.SECRETARY: {
+        const staff = await this.prisma.non_teaching_staff.findFirst({
+          where: { user_id: user.sub },
+          select: { department_id: true },
+        });
+        if (!staff?.department_id) {
+          throw new NotFoundException({
+            message: 'No department is assigned to this secretary account',
+            errorCode: 'SECRETARY_NO_DEPARTMENT',
+          });
+        }
+        return {
+          role: ROLES.SECRETARY,
+          userId: user.sub,
+          roleId: user.roleId,
+          departmentId: staff.department_id,
+        };
+      }
 
       // Billing is institution-wide too — same posture as Secretary (no
       // billing->department linkage exists anywhere in the schema either).
       case ROLES.BILLING:
         return { role: ROLES.BILLING, userId: user.sub, roleId: user.roleId };
+
+      // Finance is institution-wide as well: the schema has no
+      // finance->department linkage either, and Finance posts notices to the
+      // whole institution (budget cut-offs, claim deadlines).
+      case ROLES.FINANCE:
+        return { role: ROLES.FINANCE, userId: user.sub, roleId: user.roleId };
 
       case ROLES.HOD: {
         const faculty = await this.getFacultyByUserId(user.sub);
@@ -1163,6 +1536,9 @@ export class AnnouncementsService {
           userId: user.sub,
           roleId: user.roleId,
           studentClassId: student.class_id,
+          hostelAudienceAnnouncementIds:
+            await this.getHostelAudienceAnnouncementIds(student.student_type),
+          edcAudience: await this.getEdcAudience(student.id),
         };
       }
 
@@ -1203,12 +1579,31 @@ export class AnnouncementsService {
   private buildVisibilityQuery(
     context: UserContext,
   ): Prisma.announcementsWhereInput {
+    const publishedOrMine: Prisma.announcementsWhereInput = {
+      OR: [{ status: 'published' }, { posted_by_user_id: context.userId }],
+    };
+
     return {
       AND: [
-        this.buildRoleVisibilityQuery(context),
         {
-          OR: [{ status: 'published' }, { posted_by_user_id: context.userId }],
+          OR: [
+            // Normal role/class/department scoping (Secretary stays
+            // department-scoped here — see buildRoleVisibilityQuery).
+            this.buildRoleVisibilityQuery(context),
+            // A social post is Explore-feed content: institution-wide by
+            // nature, addressed to everyone who opens the app.
+            //
+            // The Media Room publishes with target_audience 'students' plus
+            // every class id, because that is the only shape the composer has.
+            // Under role scoping alone that made a post invisible to faculty,
+            // HoD, HR and parents — a "college feed" only students could see.
+            // Keyed on social_post_details (present only for posts published
+            // through the social composer), so ordinary notices keep their
+            // existing, deliberately narrow targeting.
+            { social_post_details: { isNot: null } },
+          ],
         },
+        publishedOrMine,
       ],
     };
   }
@@ -1229,21 +1624,40 @@ export class AnnouncementsService {
 
     switch (context.role) {
       case ROLES.ADMIN:
-        return {};
+        return UNRESTRICTED;
 
       // Principal is institution-wide leadership — same broadcast tier as
       // Admin, sees everything (subject to the draft rule in
       // buildVisibilityQuery above).
       case ROLES.PRINCIPAL:
-        return {};
+        return UNRESTRICTED;
 
-      // Institution-wide, same as Admin/Principal — see resolveUserContext.
+      // Department-scoped, mirroring HOD's own clause exactly (own posts +
+      // all Admin/Principal posts + org-wide teacher broadcasts +
+      // role-targeted) — see resolveUserContext.
       case ROLES.SECRETARY:
-        return {};
+        return {
+          OR: [
+            { posted_by_user_id: context.userId },
+            { users: { roles: { name: ROLES.ADMIN } } },
+            { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { target_audience: 'teachers', department_id: null },
+            roleTargeted,
+          ],
+        };
 
-      // Institution-wide, same as Secretary — see resolveUserContext.
+      // Institution-wide — no billing/finance→department linkage exists
+      // anywhere in the schema.
       case ROLES.BILLING:
-        return {};
+      case ROLES.FINANCE:
+        return UNRESTRICTED;
+
+      // IQAC is an institution-wide quality/audit function — it needs to
+      // see every announcement for oversight purposes, same broadcast tier
+      // as Admin/Principal/Billing/Finance, not a narrower "own posts
+      // only" scope like Media Room/Higher Education.
+      case ROLES.IQAC:
+        return UNRESTRICTED;
 
       // IQAC is an institution-wide quality/audit function — it needs to
       // see every announcement for oversight purposes, same broadcast tier
@@ -1314,10 +1728,29 @@ export class AnnouncementsService {
 
       case ROLES.STUDENT: {
         const classId = context.studentClassId ?? -1;
+        const hostelAudienceIds = context.hostelAudienceAnnouncementIds ?? [];
+        const edc = context.edcAudience;
+        const edcAudiences: target_audience_enum[] = [];
+        // See getEdcAudience: 'edc_founders' and 'edc_all_entrepreneurs' are
+        // the same recipient set — this schema has no way to distinguish them.
+        if (edc?.isEntrepreneur) {
+          edcAudiences.push('edc_founders', 'edc_all_entrepreneurs');
+        }
+        if (edc?.isIncubated) {
+          edcAudiences.push('edc_inside_college');
+        }
         return {
           OR: [
             { announcement_class_mapping: { some: { class_id: classId } } },
             roleTargeted,
+            // Only ever non-empty once query.md #7's column exists — see
+            // getHostelAudienceAnnouncementIds.
+            ...(hostelAudienceIds.length > 0
+              ? [{ id: { in: hostelAudienceIds } }]
+              : []),
+            ...(edcAudiences.length > 0
+              ? [{ target_audience: { in: edcAudiences } }]
+              : []),
           ],
         };
       }
@@ -1371,6 +1804,17 @@ export class AnnouncementsService {
       // (same as HOD/Faculty).
       case ROLES.HIGHER_EDUCATION:
       case ROLES.MEDICAL_CENTRE:
+      // Media Room is the same shape: institution-wide poster with no
+      // class/department scope. Without a case here it fell through to
+      // `default`, which matches only role-targeted broadcasts — so the Media
+      // Room could not see even the posts it had just published, and reading
+      // or deleting one came back 404.
+      // falls through — HR & Payroll is institution-wide with no
+      // class/department scope of its own either, same shape: with no case
+      // here it fell through to `default` (role-targeted only), so HR could
+      // never see its own posts after publishing them.
+      case ROLES.MEDIA_ROOM:
+      case ROLES.HR_PAYROLL:
         return {
           OR: [
             { posted_by_user_id: context.userId },
@@ -1428,6 +1872,8 @@ export class AnnouncementsService {
     // same unrestricted class selection as Admin/Principal, not scoped to
     // one department the way HOD/Faculty are. Secretary is institution-wide
     // too (no secretary->department table exists anywhere in the schema).
+    // Media Room is institution-wide for the same reason: its social posts
+    // go to the whole college, and it has no department of its own to scope to.
     if (
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
@@ -1436,7 +1882,8 @@ export class AnnouncementsService {
       context.role === ROLES.MEDICAL_CENTRE ||
       context.role === ROLES.SECRETARY ||
       context.role === ROLES.BILLING ||
-      context.role === ROLES.IQAC
+      context.role === ROLES.IQAC ||
+      context.role === ROLES.MEDIA_ROOM
     ) {
       return;
     }
@@ -1459,7 +1906,10 @@ export class AnnouncementsService {
       // IQAC's composer targets HOD/HR/Placement directly (e.g. NAAC
       // documentation requests, audit follow-ups) — same oversight-tier
       // posting capability as its 'teachers' broadcast above.
-      context.role !== ROLES.IQAC
+      context.role !== ROLES.IQAC &&
+      // HR & Payroll targets specific roles directly too (e.g. "All HoDs"
+      // for an appraisal-cycle reminder) — same shape as IQAC/Billing above.
+      context.role !== ROLES.HR_PAYROLL
     ) {
       throw new ForbiddenException({
         message: 'You are not permitted to target announcements by role',
@@ -1734,7 +2184,7 @@ export class AnnouncementsService {
     try {
       return await this.prisma.students.findUnique({
         where: { user_id: userId },
-        select: { class_id: true },
+        select: { id: true, class_id: true, student_type: true },
       });
     } catch (err) {
       this.logger.error('DB error during student lookup', err);
@@ -1742,6 +2192,60 @@ export class AnnouncementsService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
+    }
+  }
+
+  /**
+   * Ids of announcements scoped to `studentType` via the raw
+   * `audience_student_type` column proposed in query.md #7. Not a Prisma
+   * field on `announcements` — that table is read elsewhere via
+   * `include`-based queries that implicitly select every column, so adding
+   * it to schema.prisma would break those reads until the column exists.
+   * A raw lookup instead: resolves to [] (no match, not an error) until the
+   * column is migrated, exactly like the write side in
+   * HostelAnnouncementsService.create().
+   */
+  private async getHostelAudienceAnnouncementIds(
+    studentType: string,
+  ): Promise<number[]> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM announcements WHERE audience_student_type = ${studentType}::student_type_enum
+      `;
+      return rows.map((r) => r.id);
+    } catch (err) {
+      this.logger.warn(
+        `audience_student_type unavailable (see query.md #7): ${String(err)}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Whether this student has their own `student_entrepreneurship` row, and
+   * whether it's incubated — resolves the 3 EDC-specific `target_audience`
+   * values (see the EDC branch of create()). `student_entrepreneurship.
+   * student_id` is `@unique`, i.e. this schema has no concept of a
+   * "co-founder" who isn't themselves the row's owner (team members are
+   * free-text notes, not linked student accounts) — so 'edc_founders' and
+   * 'edc_all_entrepreneurs' are necessarily the same recipient set; there is
+   * no data-model distinction between them to enforce.
+   */
+  private async getEdcAudience(
+    studentId: number,
+  ): Promise<{ isEntrepreneur: boolean; isIncubated: boolean }> {
+    try {
+      const row = await this.prisma.student_entrepreneurship.findUnique({
+        where: { student_id: studentId },
+        select: { is_incubated: true },
+      });
+      return {
+        isEntrepreneur: row !== null,
+        isIncubated: row?.is_incubated ?? false,
+      };
+    } catch (err) {
+      this.logger.error('DB error while resolving EDC audience', err);
+      return { isEntrepreneur: false, isIncubated: false };
     }
   }
 
@@ -1841,6 +2345,30 @@ export class AnnouncementsService {
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * Throws 404 unless this user may actually see the announcement.
+   *
+   * Public so the comments service can gate on it. Comments were previously
+   * guarded by a role list alone, which is the wrong control: it let some roles
+   * in regardless of whether the post was addressed to them, while locking out
+   * students and non-teaching staff who could plainly see the post in their
+   * feed. Reachability of the POST, not membership of a role list, is what
+   * should decide who can comment.
+   *
+   * 404 rather than 403 on purpose, matching the rest of this service: a post
+   * you cannot see must not be distinguishable from one that does not exist.
+   */
+  async assertAnnouncementVisible(id: number, user: JwtPayload): Promise<void> {
+    const context = await this.resolveUserContext(user);
+    const found = await this.findVisibleById(id, context);
+    if (!found) {
+      throw new NotFoundException({
+        message: 'Announcement not found',
+        errorCode: 'ANNOUNCEMENT_NOT_FOUND',
       });
     }
   }
@@ -1972,16 +2500,37 @@ export class AnnouncementsService {
             designation: string;
             departments: { code: string } | null;
           } | null;
+          non_teaching_staff: {
+            first_name: string;
+            last_name: string | null;
+            departments: { code: string } | null;
+          }[];
+        }
+      | null
+      | undefined;
+    // non_teaching_staff.user_id is nullable, so Prisma models it as a list.
+    const posterStaff = poster?.non_teaching_staff?.[0];
+
+    // Built via omit rather than destructure-to-omit so the excluded keys
+    // don't trip no-unused-vars.
+    // Present as `social` (the key the publishing screen reads) and normalise
+    // the timestamp; the raw relation name is dropped from the payload.
+    const socialRow = announcement.social_post_details as
+      | {
+          format: string | null;
+          link_url: string | null;
+          expires_at: Date | null;
+          is_pinned: boolean | null;
+          allow_comments: boolean | null;
         }
       | null
       | undefined;
 
-    // Built via omit rather than destructure-to-omit so the excluded keys
-    // don't trip no-unused-vars.
     const rest = { ...announcement };
     delete rest.announcement_class_mapping;
     delete rest.announcement_role_mapping;
     delete rest.users;
+    delete rest.social_post_details;
 
     const fileKey = announcement.file_key as string | null | undefined;
 
@@ -1990,6 +2539,17 @@ export class AnnouncementsService {
       // Derived fresh from file_key on every read rather than trusting a
       // stored file_url — avoids ever serving an expired signed URL.
       file_url: fileKey ? this.storage.getPublicUrl(fileKey) : null,
+      // Absent (rather than an empty object) for announcements that were not
+      // published as social posts, so the UI can tell the two apart.
+      social: socialRow
+        ? {
+            format: socialRow.format,
+            link_url: socialRow.link_url,
+            expires_at: socialRow.expires_at ? socialRow.expires_at.toISOString() : null,
+            is_pinned: socialRow.is_pinned ?? false,
+            allow_comments: socialRow.allow_comments ?? true,
+          }
+        : undefined,
       class_ids: classMappings.map((m) => m.class_id),
       class_labels: classMappings
         .map((m) =>
@@ -2008,12 +2568,22 @@ export class AnnouncementsService {
       // undefined there and JSON.stringify drops it.
       posted_by: poster
         ? {
+            // faculty -> non_teaching_staff -> email. The email fallback is
+            // last resort only (an account in neither register); it is not the
+            // normal path for a Media Room post any more.
             name: poster.faculty
               ? `${poster.faculty.first_name} ${poster.faculty.last_name}`
-              : poster.email,
+              : posterStaff
+                ? [posterStaff.first_name, posterStaff.last_name]
+                    .filter(Boolean)
+                    .join(' ')
+                : poster.email,
             role: poster.roles?.name ?? 'unknown',
             designation: poster.faculty?.designation ?? null,
-            department: poster.faculty?.departments?.code ?? null,
+            department:
+              poster.faculty?.departments?.code ??
+              posterStaff?.departments?.code ??
+              null,
           }
         : undefined,
     };

@@ -1,13 +1,14 @@
 import { Module } from '@nestjs/common';
 import { HallTicketsService } from './hall-tickets.service';
 import { HallTicketsController } from './hall-tickets.controller';
-import { MeHallTicketsController } from './me-hall-tickets.controller';
+import { HallTicketsSummaryController } from './hall-tickets-summary.controller';
 import { PrismaModule } from 'src/prisma/prisma.module';
-import { NotificationsModule } from 'src/modules/notifications/notifications/notifications.module';
+import { AuditLogModule } from 'src/common/audit-log/audit-log.module';
+import { AttendanceEligibilityModule } from '../attendance-eligibility/attendance-eligibility.module';
 
 @Module({
-  imports: [PrismaModule, NotificationsModule],
-  controllers: [HallTicketsController, MeHallTicketsController],
+  imports: [PrismaModule, AuditLogModule, AttendanceEligibilityModule],
+  controllers: [HallTicketsController, HallTicketsSummaryController],
   providers: [HallTicketsService],
 })
 export class HallTicketsModule {}

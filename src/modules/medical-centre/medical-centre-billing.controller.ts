@@ -31,6 +31,17 @@ export class MedicalCentreBillingController {
     return this.service.createBill(dto);
   }
 
+  /**
+   * GET /api/v1/me/medical-centre-billing/:id/receipt
+   * Structured data for the printable receipt. Declared before the
+   * parameterised POST below purely for readability; Nest matches on method
+   * plus path, so the two never collide.
+   */
+  @Get(':id/receipt')
+  getReceipt(@Param('id', ParseIntPipe) id: number) {
+    return this.service.getReceipt(id);
+  }
+
   /** POST /api/v1/me/medical-centre-billing/:id/collect */
   @Post(':id/collect')
   collect(@Param('id', ParseIntPipe) id: number) {

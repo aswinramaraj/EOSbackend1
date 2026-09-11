@@ -1,6 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { ListPrincipalStudentsQueryDto } from './dto/list-principal-students-query.dto';
 import { renderCsv, renderExcel, renderPdf, type ReportTable } from 'src/common/utils/report-export.util';
 
@@ -70,14 +72,35 @@ export class PrincipalStudentsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async getRollCount(): Promise<number> {
-    return this.prisma.students.count();
+  /** Secretary is always forced to her own department; Principal/Admin stay institution-wide (undefined = unscoped). */
+  private async resolveEffectiveDepartmentId(user: JwtPayload): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return undefined;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
   }
 
-  async search(dto: ListPrincipalStudentsQueryDto) {
+  async getRollCount(user: JwtPayload): Promise<number> {
+    const departmentId = await this.resolveEffectiveDepartmentId(user);
+    return this.prisma.students.count(
+      departmentId !== undefined ? { where: { classes: { department_id: departmentId } } } : undefined,
+    );
+  }
+
+  async search(dto: ListPrincipalStudentsQueryDto, user: JwtPayload) {
     const limit = dto.limit ?? 20;
     const page = dto.page ?? 1;
     const offset = (page - 1) * limit;
+
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user);
 
     const filters: Prisma.Sql[] = [];
 
@@ -89,10 +112,14 @@ export class PrincipalStudentsService {
         st.register_no ILIKE ${term} OR
         soa.first_name ILIKE ${term} OR
         soa.last_name ILIKE ${term} OR
+        (soa.first_name || ' ' || soa.last_name) ILIKE ${term} OR
         u.email ILIKE ${term}
       )`);
     }
-    if (dto.department_id !== undefined) {
+    if (effectiveDepartmentId !== undefined) {
+      // Secretary: always her own department, ignoring any client-supplied department_id.
+      filters.push(Prisma.sql`cl.department_id = ${effectiveDepartmentId}`);
+    } else if (dto.department_id !== undefined) {
       filters.push(Prisma.sql`cl.department_id = ${dto.department_id}`);
     }
     if (dto.class_id !== undefined) {
@@ -223,13 +250,21 @@ export class PrincipalStudentsService {
     }
   }
 
-  async getAttendanceOverview() {
+  async getAttendanceOverview(user: JwtPayload) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user);
+    const deptFilter =
+      effectiveDepartmentId !== undefined ? Prisma.sql`AND cl.department_id = ${effectiveDepartmentId}` : Prisma.empty;
+    const deptFilterNoAlias =
+      effectiveDepartmentId !== undefined
+        ? Prisma.sql`AND student_id IN (SELECT st.id FROM students st JOIN classes cl ON cl.id = st.class_id WHERE cl.department_id = ${effectiveDepartmentId})`
+        : Prisma.empty;
     try {
       const [presentTodayRows, semesterAggRows, deptRows] = await Promise.all([
         this.prisma.$queryRaw<{ count: bigint }[]>(Prisma.sql`
           SELECT COUNT(DISTINCT student_id)::bigint AS count
           FROM attendance_records
           WHERE attendance_date = CURRENT_DATE AND status = 'present'
+          ${deptFilterNoAlias}
         `),
         this.prisma.$queryRaw<{ mean_pct: string | null; below_75_count: bigint }[]>(Prisma.sql`
           WITH student_attendance AS (
@@ -242,6 +277,7 @@ export class PrincipalStudentsService {
             LEFT JOIN academic_calendars ac ON ac.batch_id = cl.batch_id AND ac.semester = cl.current_semester
             WHERE ar.attendance_date <= CURRENT_DATE
               AND (ac.start_date IS NULL OR ar.attendance_date >= ac.start_date)
+              ${deptFilter}
             GROUP BY ar.student_id
           )
           SELECT
@@ -261,6 +297,7 @@ export class PrincipalStudentsService {
             LEFT JOIN academic_calendars ac ON ac.batch_id = cl.batch_id AND ac.semester = cl.current_semester
             WHERE ar.attendance_date <= CURRENT_DATE
               AND (ac.start_date IS NULL OR ar.attendance_date >= ac.start_date)
+              ${deptFilter}
             GROUP BY ar.student_id
           )
           SELECT d.code, d.name,
@@ -305,7 +342,8 @@ export class PrincipalStudentsService {
    * rather than a fabricated value, and the frontend renders that as a
    * genuine empty state, not an error.
    */
-  async getStudentProfile(id: number) {
+  async getStudentProfile(id: number, user: JwtPayload) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user);
     const student = await this.prisma.students.findUnique({
       where: { id },
       select: {
@@ -384,6 +422,12 @@ export class PrincipalStudentsService {
 
     if (!student) {
       throw new InternalServerErrorException({ message: 'Student not found', errorCode: 'STUDENT_NOT_FOUND' });
+    }
+    if (effectiveDepartmentId !== undefined && student.classes?.departments.id !== effectiveDepartmentId) {
+      throw new ForbiddenException({
+        message: 'You may only view students from your own department',
+        errorCode: 'FORBIDDEN_DEPARTMENT',
+      });
     }
 
     const mentor = student.mentor_faculty_id
@@ -664,19 +708,20 @@ export class PrincipalStudentsService {
   }
 
   /**
-   * GET /principal-students/:id/profile/export?format=csv|excel|pdf
-   *
-   * Same shared renderCsv/renderExcel/renderPdf pipeline
-   * (src/common/utils/report-export.util.ts) the Reports page's "Export
-   * Excel"/"Export PDF" buttons already use — the whole profile flattened
-   * into one Field/Value table rather than a bespoke document renderer, so
-   * this download uses the exact same, already-proven infrastructure.
+   * GET /principal-students/:id/profile/export?format=csv|excel|pdf —
+   * the "Export CSV"/"Export PDF" buttons on the Student Profile screen.
+   * Same @Res()-and-manual-headers pattern as
+   * PrincipalReportsController.scorecard() (that route also opts out of
+   * the global TransformInterceptor to send a raw file buffer). Secretary's
+   * own department-ownership check is inherited for free via
+   * getStudentProfile(id, user) below.
    */
   async exportStudentProfile(
     id: number,
+    user: JwtPayload,
     format: 'csv' | 'excel' | 'pdf',
   ): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
-    const p = await this.getStudentProfile(id);
+    const p = await this.getStudentProfile(id, user);
 
     const rows: Record<string, unknown>[] = [];
     const add = (field: string, value: unknown) => rows.push({ field, value: value === null || value === undefined || value === '' ? '—' : value });

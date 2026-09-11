@@ -4,6 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { AssignHodDto } from './dto/assign-hod.dto';
 
 function currentTermRange(today: Date): { start: Date; end: Date } {
@@ -50,7 +52,10 @@ function hodDto(
 
 @Injectable()
 export class PrincipalDepartmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   /**
    * GET /me/principal/departments
@@ -157,10 +162,11 @@ export class PrincipalDepartmentsService {
   /**
    * GET /me/principal/departments/:id
    *
-   * "Mean CGPA" is always "—" (same confirmed gap as the Students page) —
-   * the tile's real content is the placement subtitle underneath it
-   * ("{placed} placed · {pct}% placement"), matching the reference design's
-   * layout where that tile bundles both figures.
+   * Mean CGPA is the average of each active student's own CGPA, computed
+   * live with the exact same credit-weighted grade_bands formula
+   * PrincipalStudentsService.search() already uses for the per-student CGPA
+   * shown on the Students list/profile pages — reused via
+   * meanCgpaForStudents() rather than re-derived, so the two never disagree.
    */
   async findOne(id: number) {
     const dept = await this.prisma.departments.findUnique({
@@ -203,13 +209,14 @@ export class PrincipalDepartmentsService {
       ]);
 
     const studentIds = students.map((s) => s.id);
-    const [studentAttendance, facultyTotal, placedStudentIds] =
+    const [studentAttendance, facultyTotal, placedStudentIds, meanCgpa] =
       await Promise.all([
         this.attendancePercentageForStudents(studentIds),
         this.prisma.faculty.count({
           where: { department_id: id, status: 'active' },
         }),
         this.placedStudentIds(),
+        this.meanCgpaForStudents(studentIds),
       ]);
 
     const placed = studentIds.filter((sid) => placedStudentIds.has(sid)).length;
@@ -232,6 +239,7 @@ export class PrincipalDepartmentsService {
       students: {
         attendance_percentage: studentAttendance,
         sections_count: classesCount,
+        mean_cgpa: meanCgpa,
       },
       faculty: {
         reporting_rate_today:
@@ -318,9 +326,10 @@ export class PrincipalDepartmentsService {
       classes.map(async (cls) => {
         const advisor = cls.class_mentors[0]?.faculty ?? null;
         const studentIds = cls.students.map((s) => s.id);
-        const [studentAttendance, feesPending] = await Promise.all([
+        const [studentAttendance, feesPending, meanCgpa] = await Promise.all([
           this.attendancePercentageForStudents(studentIds),
           this.feesOutstandingForStudents(studentIds),
+          this.meanCgpaForStudents(studentIds),
         ]);
         const placed = studentIds.filter((id) =>
           placedStudentIds.has(id),
@@ -346,6 +355,7 @@ export class PrincipalDepartmentsService {
           total_students: studentIds.length,
           placed,
           fees_pending_amount: feesPending,
+          mean_cgpa: meanCgpa,
         };
       }),
     );
@@ -357,8 +367,18 @@ export class PrincipalDepartmentsService {
    * department. This is the ONLY way head_of_department_faculty_id gets
    * set correctly — a designation string like "HOD" typed elsewhere never
    * touches this column and is ambiguous besides.
+   *
+   * `performedByUserId` is the Principal's own user id (from the JWT, never
+   * the client) — recorded on the audit_logs row this write creates so
+   * "who changed it" can never be spoofed by the request body. A no-op call
+   * (new faculty_id equals the one already set) still returns normally but
+   * writes no log row — there was no change to record.
    */
-  async assignHod(departmentId: number, dto: AssignHodDto) {
+  async assignHod(
+    departmentId: number,
+    dto: AssignHodDto,
+    performedByUserId: number,
+  ) {
     const dept = await this.prisma.departments.findUnique({
       where: { id: departmentId },
     });
@@ -387,10 +407,33 @@ export class PrincipalDepartmentsService {
       }
     }
 
+    const previousHodFacultyId = dept.head_of_department_faculty_id;
+
     await this.prisma.departments.update({
       where: { id: departmentId },
       data: { head_of_department_faculty_id: dto.faculty_id },
     });
+
+    if (previousHodFacultyId !== dto.faculty_id) {
+      // Awaited (not fire-and-forget): the caller refetches appointment
+      // history right after this PATCH resolves, and record() already
+      // swallows its own errors internally, so awaiting adds no failure risk
+      // — only the guarantee that the row exists before the response returns.
+      await this.auditLog.record({
+        entityType: 'department_hod',
+        entityId: departmentId,
+        action:
+          dto.faculty_id == null
+            ? 'hod_cleared'
+            : previousHodFacultyId == null
+              ? 'hod_assigned'
+              : 'hod_changed',
+        performedByUserId,
+        oldValue: { faculty_id: previousHodFacultyId },
+        newValue: { faculty_id: dto.faculty_id },
+        reason: dto.reason,
+      });
+    }
 
     return this.findOne(departmentId);
   }
@@ -426,6 +469,45 @@ export class PrincipalDepartmentsService {
       distinct: ['student_id'],
     });
     return new Set(rows.map((r) => r.student_id));
+  }
+
+  /**
+   * Mean of each student's own CGPA — same credit-weighted grade_bands
+   * formula as PrincipalStudentsService.search()'s `student_cgpa` CTE
+   * (results_published exams only, non-absent marks only), just AVG'd
+   * across the given students instead of returned per-row.
+   */
+  private async meanCgpaForStudents(
+    studentIds: number[],
+  ): Promise<number | null> {
+    if (studentIds.length === 0) return null;
+    const rows = await this.prisma.$queryRaw<{ mean_cgpa: string | null }[]>(
+      Prisma.sql`
+        WITH student_cgpa AS (
+          SELECT em.student_id,
+            SUM(gb.grade_point * COALESCE(sub.credits, 1)) FILTER (WHERE gb.grade_point IS NOT NULL)
+              / NULLIF(SUM(COALESCE(sub.credits, 1)) FILTER (WHERE gb.grade_point IS NOT NULL), 0) AS cgpa
+          FROM exam_marks em
+          JOIN exam_subject_mapping esm ON esm.id = em.exam_subject_mapping_id
+          JOIN exams e ON e.id = esm.exam_id
+          JOIN subjects sub ON sub.id = esm.subject_id
+          LEFT JOIN LATERAL (
+            SELECT grade_point FROM grade_bands gb2
+            WHERE gb2.min_percentage <= (em.marks_obtained / NULLIF(em.max_marks, 0) * 100)
+            ORDER BY gb2.min_percentage DESC
+            LIMIT 1
+          ) gb ON true
+          WHERE e.status = 'results_published' AND em.is_absent = false AND em.marks_obtained IS NOT NULL
+            AND em.student_id IN (${Prisma.join(studentIds)})
+          GROUP BY em.student_id
+        )
+        SELECT AVG(cgpa)::text AS mean_cgpa FROM student_cgpa
+      `,
+    );
+    const value = rows[0]?.mean_cgpa;
+    return value !== null && value !== undefined
+      ? Math.round(Number(value) * 100) / 100
+      : null;
   }
 
   private async attendancePercentageForStudents(

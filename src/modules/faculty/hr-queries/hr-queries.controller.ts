@@ -23,7 +23,16 @@ const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
 
 @Controller('me/hr-queries')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.FACULTY, ROLES.SECRETARY, ROLES.HOD)
+@Roles(
+  ROLES.FACULTY,
+  ROLES.SECRETARY,
+  ROLES.HOD,
+  // HR Payroll and warden are employees who raise their own HR tickets.
+  // Omitting them meant the mobile "HR Payroll" self-service tile 403d for
+  // exactly the roles that reach it from their own dashboard.
+  ROLES.HR_PAYROLL,
+  ROLES.WARDEN,
+)
 export class HrQueriesController {
   constructor(private readonly hrQueriesService: HrQueriesService) {}
 

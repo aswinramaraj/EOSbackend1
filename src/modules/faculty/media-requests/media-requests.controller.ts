@@ -41,7 +41,7 @@ export class MediaRequestsController {
    * `media_file_url` on the actual POST /media-requests create call.
    */
   @Post('media-requests/attachments')
-  @Roles(ROLES.FACULTY, ROLES.SECRETARY)
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY, ROLES.MEDIA_ROOM)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
   uploadAttachment(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
@@ -60,7 +60,7 @@ export class MediaRequestsController {
    * faculty-profile lookup entirely (see resolveRequesterContext).
    */
   @Post('media-requests')
-  @Roles(ROLES.FACULTY, ROLES.SECRETARY)
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY, ROLES.MEDIA_ROOM)
   @HttpCode(HttpStatus.CREATED)
   create(
     @Body() createMediaRequestDto: CreateMediaRequestDto,
@@ -101,7 +101,7 @@ export class MediaRequestsController {
 
   /** DELETE /api/v1/media-requests/:id — Faculty/Secretary, own request, only while still 'pending'. */
   @Delete('media-requests/:id')
-  @Roles(ROLES.FACULTY, ROLES.SECRETARY)
+  @Roles(ROLES.FACULTY, ROLES.SECRETARY, ROLES.MEDIA_ROOM)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

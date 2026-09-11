@@ -45,5 +45,16 @@ import { TransportRouteEditService } from './transport-route-edit.service';
     TransportBusWriteService,
     TransportRouteEditService,
   ],
+  // Read-only services reused as-is by Principal's own read-only transport
+  // module (src/modules/principal/transport) — full parity without
+  // duplicating a single query. Write-only services (TransportBusWriteService,
+  // TransportRouteEditService) are deliberately NOT exported.
+  exports: [
+    TransportDashboardService,
+    TransportRoutesService,
+    TransportCrewService,
+    TransportMaintenanceService,
+    TransportComplianceService,
+  ],
 })
 export class TransportModule {}

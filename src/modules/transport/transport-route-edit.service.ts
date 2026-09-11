@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { detectTransportSchema } from './transport-schema.util';
-import { buildDynamicSet, type DynamicField } from './transport-sql.util';
+import { buildDynamicInsert, buildDynamicSet, type DynamicField } from './transport-sql.util';
+import type { CreateRouteDto } from './dto/create-route.dto';
 import type { UpdateRouteDto } from './dto/update-route.dto';
 import type { UpdateStageDto } from './dto/update-stage.dto';
 import type { CreateStageDto } from './dto/create-stage.dto';
@@ -85,6 +86,128 @@ export class TransportRouteEditService {
         pickup_time: s.pickup_time,
       })),
     };
+  }
+
+  /**
+   * POST /me/routes — creates a route.
+   *
+   * Only `name` is guaranteed to exist on every deployment; the optional spec
+   * columns are included when this database actually has them, which is why
+   * the insert is assembled dynamically like the update below.
+   */
+  async createRoute(dto: CreateRouteDto) {
+    try {
+      const schema = await detectTransportSchema(this.prisma);
+      const { columns, values } = buildDynamicInsert([
+        { column: 'name', value: dto.name },
+        { column: 'distance_km', value: dto.distance_km, allowed: schema.extendedSpecs },
+        { column: 'boarding_area', value: dto.boarding_area, allowed: schema.extendedSpecs },
+        { column: 'departure_time', value: dto.departure_time, allowed: schema.extendedSpecs },
+        { column: 'arrival_time', value: dto.arrival_time, allowed: schema.extendedSpecs },
+      ]);
+
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+        INSERT INTO transport_routes (${columns}) VALUES (${values}) RETURNING id
+      `);
+      const id = rows[0].id;
+      this.logger.log(`Route created: id=${id} name=${dto.name}`);
+      return { id };
+    } catch (err) {
+      // transport_routes.name is unique — a repeat is the caller's mistake.
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        ((err as { code?: string }).code === 'P2002' ||
+          /duplicate key|unique constraint/i.test(String((err as Error).message)))
+      ) {
+        throw new ConflictException({
+          message: 'A route with that name already exists',
+          errorCode: 'ROUTE_NAME_TAKEN',
+        });
+      }
+      this.logger.error('DB error creating route', err);
+      throw new InternalServerErrorException({ message: 'Something went wrong. Please try again.', errorCode: 'INTERNAL_ERROR' });
+    }
+  }
+
+  /**
+   * DELETE /me/routes/:id
+   *
+   * Refused while buses are assigned or students are still mapped to the
+   * route. Deleting anyway would cascade the stages away and silently strip
+   * those students of their transport record (and the fare attached to it),
+   * so the caller is told what to detach first.
+   */
+  async deleteRoute(routeId: number) {
+    try {
+      const [buses, students] = await Promise.all([
+        this.prisma.buses.count({ where: { route_id: routeId } }),
+        this.prisma.student_transport_mapping.count({ where: { route_id: routeId } }),
+      ]);
+
+      if (buses > 0 || students > 0) {
+        const parts: string[] = [];
+        if (buses > 0) parts.push(`${buses} bus(es)`);
+        if (students > 0) parts.push(`${students} student(s)`);
+        throw new ConflictException({
+          message: `This route still has ${parts.join(' and ')} assigned. Reassign them before deleting it.`,
+          errorCode: 'ROUTE_IN_USE',
+        });
+      }
+
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+        DELETE FROM transport_routes WHERE id = ${routeId} RETURNING id
+      `);
+      if (rows.length === 0) {
+        throw new NotFoundException({ message: 'Route not found', errorCode: 'ROUTE_NOT_FOUND' });
+      }
+      this.logger.log(`Route deleted: id=${routeId}`);
+      return { id: routeId, message: 'Route deleted successfully' };
+    } catch (err) {
+      if (err instanceof NotFoundException || err instanceof ConflictException) throw err;
+      this.logger.error('DB error deleting route', err);
+      throw new InternalServerErrorException({ message: 'Something went wrong. Please try again.', errorCode: 'INTERNAL_ERROR' });
+    }
+  }
+
+  /**
+   * DELETE /me/stages/:id — removes a boarding stage.
+   *
+   * Blocked while students board or alight there, and while a fee structure
+   * item points at it, since either would leave a dangling fare reference.
+   */
+  async deleteStage(stageId: number) {
+    try {
+      const [boarding, destination, feeItems] = await Promise.all([
+        this.prisma.student_transport_mapping.count({ where: { boarding_stage_id: stageId } }),
+        this.prisma.student_transport_mapping.count({ where: { destination_stage_id: stageId } }),
+        this.prisma.fee_structure_items.count({ where: { transport_stage_id: stageId } }),
+      ]);
+
+      const riders = boarding + destination;
+      if (riders > 0 || feeItems > 0) {
+        const parts: string[] = [];
+        if (riders > 0) parts.push(`${riders} student assignment(s)`);
+        if (feeItems > 0) parts.push(`${feeItems} fee structure item(s)`);
+        throw new ConflictException({
+          message: `This stage is still referenced by ${parts.join(' and ')}. Move them before deleting it.`,
+          errorCode: 'STAGE_IN_USE',
+        });
+      }
+
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+        DELETE FROM transport_stages WHERE id = ${stageId} RETURNING id
+      `);
+      if (rows.length === 0) {
+        throw new NotFoundException({ message: 'Stage not found', errorCode: 'STAGE_NOT_FOUND' });
+      }
+      this.logger.log(`Stage deleted: id=${stageId}`);
+      return { id: stageId, message: 'Stage deleted successfully' };
+    } catch (err) {
+      if (err instanceof NotFoundException || err instanceof ConflictException) throw err;
+      this.logger.error('DB error deleting stage', err);
+      throw new InternalServerErrorException({ message: 'Something went wrong. Please try again.', errorCode: 'INTERNAL_ERROR' });
+    }
   }
 
   async updateRoute(routeId: number, dto: UpdateRouteDto) {

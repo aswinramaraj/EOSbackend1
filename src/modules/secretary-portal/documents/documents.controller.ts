@@ -36,26 +36,26 @@ export class DocumentsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateDocumentDto, @CurrentUser() user: JwtPayload) {
-    return this.documentsService.create(dto, user.sub);
+    return this.documentsService.create(user, dto, user.sub);
   }
 
   @Get()
-  findAll(@Query() query: ListDocumentsQueryDto) {
-    return this.documentsService.findAll(query);
+  findAll(@CurrentUser() user: JwtPayload, @Query() query: ListDocumentsQueryDto) {
+    return this.documentsService.findAll(user, query);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.documentsService.findOne(id);
+  findOne(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.documentsService.findOne(user, id);
   }
 
   @Patch(':id/verify')
   toggleVerify(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
-    return this.documentsService.toggleVerify(id, user.sub);
+    return this.documentsService.toggleVerify(user, id, user.sub);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.documentsService.remove(id);
+  remove(@CurrentUser() user: JwtPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.documentsService.remove(user, id);
   }
 }

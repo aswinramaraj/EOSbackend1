@@ -1,4 +1,10 @@
-import { Controller, Get, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -21,7 +27,9 @@ export class StudentHigherEducationController {
 
   /** GET /student-higher-education/department/:departmentId — Principal only, any department. */
   @Get('department/:departmentId')
-  findAllByDepartment(@Param('departmentId', ParseIntPipe) departmentId: number) {
+  findAllByDepartment(
+    @Param('departmentId', ParseIntPipe) departmentId: number,
+  ) {
     return this.service.findAllByDepartment(departmentId);
   }
 }
@@ -43,5 +51,19 @@ export class MeMenteeHigherEducationController {
   @Get()
   findForMentor(@CurrentUser() user: JwtPayload) {
     return this.service.findAllForMentor(user.sub);
+  }
+}
+
+/** Student-facing — a student's own higher-studies record, if staff have
+ * added one. Read-only, same real-time-scoped shape as MeEntrepreneurshipController. */
+@Controller('me/higher-education')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(ROLES.STUDENT)
+export class MeHigherEducationController {
+  constructor(private readonly service: StudentHigherEducationService) {}
+
+  @Get()
+  findMine(@CurrentUser() user: JwtPayload) {
+    return this.service.findForStudent(user.sub);
   }
 }

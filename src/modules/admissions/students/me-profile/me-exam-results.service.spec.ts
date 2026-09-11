@@ -7,12 +7,14 @@ describe('MeExamResultsService', () => {
   let prisma: {
     students: { findUnique: jest.Mock };
     exam_marks: { findMany: jest.Mock };
+    faculty_subject_class_mapping: { findFirst: jest.Mock; findMany: jest.Mock };
   };
 
   beforeEach(async () => {
     prisma = {
       students: { findUnique: jest.fn() },
       exam_marks: { findMany: jest.fn() },
+      faculty_subject_class_mapping: { findFirst: jest.fn(), findMany: jest.fn() },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -97,8 +99,8 @@ describe('MeExamResultsService', () => {
         marks_obtained: 139,
         marks_total: 200,
         subjects: [
-          { subject_id: 397, code: 'CS5101', name: 'Machine Learning', max: 100, scored: 64 },
-          { subject_id: 398, code: 'CS5102', name: 'Computer Networks', max: 100, scored: 75 },
+          { subject_id: 397, code: 'CS5101', name: 'Machine Learning', max: 100, scored: 64, faculty: null },
+          { subject_id: 398, code: 'CS5102', name: 'Computer Networks', max: 100, scored: 75, faculty: null },
         ],
       },
     ]);
@@ -113,8 +115,46 @@ describe('MeExamResultsService', () => {
       marks_obtained: 80,
       marks_total: 100,
       subjects: [
-        { subject_id: 397, code: 'CS5101', name: 'Machine Learning', max: 100, scored: 80 },
+        { subject_id: 397, code: 'CS5101', name: 'Machine Learning', max: 100, scored: 80, faculty: null },
       ],
+    });
+  });
+
+  it('attaches the assigned faculty for each subject via faculty_subject_class_mapping', async () => {
+    prisma.students.findUnique
+      .mockResolvedValueOnce({ id: 42 }) // getMyExamResults: resolve student by user_id
+      .mockResolvedValueOnce({ class_id: 7 }); // fetchSubjectFaculty: resolve class_id by student id
+    prisma.exam_marks.findMany.mockResolvedValue([
+      {
+        marks_obtained: '64',
+        max_marks: '100',
+        exam_subject_mapping: {
+          exams: { id: 1, exam_types: { name: 'Internal Assessment 1' } },
+          subjects: { id: 397, name: 'Machine Learning', subject_code: 'CS5101' },
+        },
+      },
+    ]);
+    prisma.faculty_subject_class_mapping.findFirst.mockResolvedValue({
+      academic_year: '2026-2027',
+    });
+    prisma.faculty_subject_class_mapping.findMany.mockResolvedValue([
+      {
+        subject_id: 397,
+        faculty: { id: 12, first_name: 'Ada', last_name: 'Lovelace' },
+      },
+    ]);
+
+    const result = await service.getMyExamResults(1, { semester: 5 });
+
+    expect(prisma.faculty_subject_class_mapping.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { class_id: 7, academic_year: '2026-2027', subject_id: { in: [397] } },
+      }),
+    );
+    expect(result.internals[0].subjects[0].faculty).toEqual({
+      id: 12,
+      first_name: 'Ada',
+      last_name: 'Lovelace',
     });
   });
 

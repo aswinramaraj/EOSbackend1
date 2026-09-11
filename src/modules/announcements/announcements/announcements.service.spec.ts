@@ -18,6 +18,21 @@ import { NotificationsService } from 'src/modules/notifications/notifications/no
 import { ROLES } from 'src/common/constants/roles.constant';
 import { AnnouncementsService } from './announcements.service';
 
+/**
+ * notifyNewAnnouncement() is deliberately fire-and-forget (`void this.
+ * notifyNewAnnouncement(...)`, never awaited by create() — see that
+ * method's own doc comment on why: awaiting it held the HTTP response open
+ * for minutes on a large broadcast). That means `await service.create(...)`
+ * resolving is NOT a guarantee the notify() calls inside it have happened
+ * yet — its own internal awaits (resolving recipient ids, batching) are a
+ * separate, unsynchronized microtask chain. A macrotask tick reliably lets
+ * that chain finish before assertions run, without changing create()'s own
+ * fire-and-forget contract.
+ */
+function flushPromises(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 describe('AnnouncementsService', () => {
   let service: AnnouncementsService;
   let notifications: { notify: jest.Mock };
@@ -81,6 +96,7 @@ describe('AnnouncementsService', () => {
         { title: 'Fest', content: 'Details', target_audience: 'students', class_ids: [10] } as any,
         adminUser as any,
       );
+      await flushPromises();
 
       expect(prisma.students.findMany).toHaveBeenCalledWith({
         where: { class_id: { in: [10] } },
@@ -110,6 +126,7 @@ describe('AnnouncementsService', () => {
         { title: 'PTM', content: 'Details', target_audience: 'parents', class_ids: [10] } as any,
         adminUser as any,
       );
+      await flushPromises();
 
       expect(notifications.notify).toHaveBeenCalledTimes(2);
       expect(notifications.notify).toHaveBeenCalledWith(
@@ -129,6 +146,7 @@ describe('AnnouncementsService', () => {
         { title: 'Dept meet', content: 'Details', target_audience: 'teachers', department_id: 3 } as any,
         adminUser as any,
       );
+      await flushPromises();
 
       expect(prisma.faculty.findMany).toHaveBeenCalledWith({
         where: { department_id: 3 },
@@ -147,6 +165,7 @@ describe('AnnouncementsService', () => {
         { title: 'All staff', content: 'Details', target_audience: 'teachers' } as any,
         adminUser as any,
       );
+      await flushPromises();
 
       expect(prisma.faculty.findMany).toHaveBeenCalledWith({
         where: {},
@@ -164,6 +183,7 @@ describe('AnnouncementsService', () => {
         { title: 'Library notice', content: 'Details', target_audience: 'roles', role_ids: [5] } as any,
         adminUser as any,
       );
+      await flushPromises();
 
       expect(prisma.users.findMany).toHaveBeenCalledWith({
         where: { role_id: { in: [5] } },

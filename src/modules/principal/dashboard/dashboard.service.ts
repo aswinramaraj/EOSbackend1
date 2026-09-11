@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { WORKLOAD_THRESHOLD_HOURS } from 'src/common/constants/workload.constant';
+import { TtlCache } from 'src/common/utils/ttl-cache.util';
 
 function startOfToday(): Date {
   return new Date(new Date().toISOString().slice(0, 10));
@@ -279,12 +280,13 @@ export class PrincipalDashboardService {
    * logic — deferred rather than guessed.
    */
   async insights() {
-    const [placement, attentionFlags, campus] = await Promise.all([
+    const [placement, attentionFlags, campus, employee] = await Promise.all([
       this.placementSummary(),
       this.attentionFlags(),
       this.campusInfrastructure(),
+      this.employeeSnapshot(),
     ]);
-    return { placement, attention_flags: attentionFlags, campus };
+    return { placement, attention_flags: attentionFlags, campus, employee };
   }
 
   /**
@@ -493,34 +495,65 @@ export class PrincipalDashboardService {
       }));
   }
 
+  // 60s TTL — this aggregate is hit by both the dashboard insights and the
+  // student-list summary, often within the same short window (e.g. a
+  // principal opening both tabs); a value up to a minute stale is normal for
+  // a fee-outstanding summary tile, not a correctness issue.
+  private readonly feesOutstandingCache = new TtlCache<{
+    totalOutstanding: number;
+    studentsWithOutstanding: number;
+  }>(60_000);
+
+  /**
+   * Institution-wide fee demand vs collected, computed as one SQL aggregate
+   * rather than fetching every student_fee_demand_mapping + fee_payments row
+   * and summing in JS (the previous approach here, and independently
+   * duplicated in PrincipalStudentsService.feesOutstanding() — both now call
+   * this one method instead). Semantics preserved exactly: outstanding is
+   * computed per demand-mapping row (not netted across a student's other
+   * mappings), summed/counted only over mappings where it's positive.
+   */
+  async computeFeesOutstanding(): Promise<{
+    totalOutstanding: number;
+    studentsWithOutstanding: number;
+  }> {
+    return this.feesOutstandingCache.get(() => this.queryFeesOutstanding());
+  }
+
+  private async queryFeesOutstanding(): Promise<{
+    totalOutstanding: number;
+    studentsWithOutstanding: number;
+  }> {
+    const [row] = await this.prisma.$queryRaw<
+      { total_outstanding: string | null; students_with_outstanding: bigint }[]
+    >`
+      WITH mapping_outstanding AS (
+        SELECT
+          d.student_id,
+          d.total_amount - COALESCE(p.paid, 0) AS outstanding
+        FROM student_fee_demand_mapping d
+        LEFT JOIN (
+          SELECT student_fee_demand_mapping_id, SUM(amount_paid) AS paid
+          FROM fee_payments
+          GROUP BY student_fee_demand_mapping_id
+        ) p ON p.student_fee_demand_mapping_id = d.id
+      )
+      SELECT
+        COALESCE(SUM(outstanding) FILTER (WHERE outstanding > 0), 0) AS total_outstanding,
+        COUNT(DISTINCT student_id) FILTER (WHERE outstanding > 0) AS students_with_outstanding
+      FROM mapping_outstanding
+    `;
+
+    return {
+      totalOutstanding: Number(row?.total_outstanding ?? 0),
+      studentsWithOutstanding: Number(row?.students_with_outstanding ?? 0n),
+    };
+  }
+
   /** Institution-wide fee demand vs collected, from real student_fee_demand_mapping + fee_payments rows. */
   private async feesOutstandingFlag() {
-    const [demandMappings, paidByMapping] = await Promise.all([
-      this.prisma.student_fee_demand_mapping.findMany({
-        select: { id: true, student_id: true, total_amount: true },
-      }),
-      this.prisma.fee_payments.groupBy({
-        by: ['student_fee_demand_mapping_id'],
-        _sum: { amount_paid: true },
-      }),
-    ]);
-
-    const paidMap = new Map(
-      paidByMapping.map((p) => [
-        p.student_fee_demand_mapping_id,
-        Number(p._sum.amount_paid ?? 0),
-      ]),
-    );
-
-    let totalOutstanding = 0;
-    const studentsWithOutstanding = new Set<number>();
-    for (const m of demandMappings) {
-      const outstanding = Number(m.total_amount) - (paidMap.get(m.id) ?? 0);
-      if (outstanding > 0) {
-        totalOutstanding += outstanding;
-        studentsWithOutstanding.add(m.student_id);
-      }
-    }
+    const { totalOutstanding, studentsWithOutstanding } =
+      await this.computeFeesOutstanding();
 
     if (totalOutstanding <= 0) return null;
 
@@ -531,7 +564,7 @@ export class PrincipalDashboardService {
         crores >= 1
           ? `₹${crores} Cr fees outstanding`
           : `₹${Math.round(totalOutstanding).toLocaleString('en-IN')} fees outstanding`,
-      description: `${studentsWithOutstanding.size.toLocaleString('en-IN')} students with an unpaid balance`,
+      description: `${studentsWithOutstanding.toLocaleString('en-IN')} students with an unpaid balance`,
     };
   }
 
@@ -607,6 +640,48 @@ export class PrincipalDashboardService {
         title: `Course completion behind in ${d.code}`,
         description: `${d.percentage}% of planned sessions covered so far`,
       }));
+  }
+
+  /**
+   * Employee-category snapshot (attendance/leave/appraisals) — the same
+   * grouping HoD's and Secretary's sidebar "Employee" nav section already
+   * uses, condensed into one institution-wide dashboard card instead of a
+   * full set of new pages. `pending_appraisals` mirrors HrDashboardService's
+   * own institution-wide count (appraisal_requests awaiting HR action, past
+   * HoD review) so this figure matches what HR Payroll's own dashboard shows.
+   */
+  private async employeeSnapshot() {
+    const today = startOfToday();
+
+    const [facultyTotalActive, facultyDailyRows, pendingAppraisals] =
+      await Promise.all([
+        this.prisma.faculty.count({ where: { status: 'active' } }),
+        this.prisma.faculty_daily_attendance.findMany({
+          where: { attendance_date: today },
+          select: { status: true },
+        }),
+        this.prisma.appraisal_requests.count({
+          where: { status: { in: ['hod_reviewed', 'hr_scored'] } },
+        }),
+      ]);
+
+    const reportedToday = facultyDailyRows.filter((r) =>
+      ['full_day', 'half_day', 'on_duty'].includes(r.status),
+    ).length;
+    const onLeaveToday = facultyDailyRows.filter(
+      (r) => r.status === 'on_leave',
+    ).length;
+
+    return {
+      total_active: facultyTotalActive,
+      attendance_marked_today: facultyDailyRows.length > 0,
+      attendance_percentage_today:
+        facultyDailyRows.length > 0
+          ? Math.round((reportedToday / facultyDailyRows.length) * 1000) / 10
+          : null,
+      on_leave_today: onLeaveToday,
+      pending_appraisals: pendingAppraisals,
+    };
   }
 
   private async attentionFlags() {

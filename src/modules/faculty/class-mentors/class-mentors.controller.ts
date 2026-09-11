@@ -3,6 +3,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -40,14 +41,24 @@ export class ClassMentorsController {
    * (mentor of this class). Powers the "Class Result" screen: full roster
    * with attendance %, CGPA/arrears (both derived from exam_marks — see
    * getMenteeClassResult's doc comment), mentor, guardian, contact.
+   *
+   * Optional `?scope=today` narrows attendance_percent to just today's
+   * marked periods (used by the Dashboard's Today/This term toggle); any
+   * other value, or omitting it, keeps the original all-time computation
+   * every other caller of this endpoint already relies on.
    */
   @Get('mentee-classes/:class_id/students')
   @Roles(ROLES.FACULTY, ROLES.HOD)
   getMenteeClassResult(
     @Param('class_id', ParseIntPipe) classId: number,
+    @Query('scope') scope: string | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.classMentorsService.getMenteeClassResult(classId, user.sub);
+    return this.classMentorsService.getMenteeClassResult(
+      classId,
+      user.sub,
+      scope === 'today',
+    );
   }
 
   /** GET /api/v1/me/mentees/:student_id/profile — Faculty only (the mentee's class mentor). */
@@ -98,6 +109,25 @@ export class ClassMentorsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.classMentorsService.getMenteePlacements(studentId, user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/mentees/:student_id/academic-record — Faculty only (the
+   * mentee's class mentor). Semester-wise GPA, monthly attendance and
+   * per-subject internal/end-sem/grade/attendance — see
+   * getMenteeAcademicRecord's doc comment for exactly what is and isn't
+   * derived here.
+   */
+  @Get('mentees/:student_id/academic-record')
+  @Roles(ROLES.FACULTY)
+  getMenteeAcademicRecord(
+    @Param('student_id', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classMentorsService.getMenteeAcademicRecord(
+      studentId,
+      user.sub,
+    );
   }
 
   /** GET /api/v1/me/children/:student_id/mentor — Parent only. */

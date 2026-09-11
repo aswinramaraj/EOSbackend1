@@ -1,13 +1,42 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 
 /** Accreditation/NBA — Secretary Portal "Accreditation Documentation"
- * screen. Institution-wide for Secretary/Admin/Principal. */
+ * screen. Institution-wide for Admin/Principal; a Secretary is locked to her
+ * own department (resolved from her non_teaching_staff row, same pattern
+ * HOD uses via faculty.department_id) — any department_id she supplies is
+ * ignored in favour of her own. */
 @Injectable()
 export class AccreditationService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getOverview(departmentId?: number) {
+  /** Secretary is always forced to her own department; other roles keep whatever was requested (or none = institution-wide). */
+  private async resolveEffectiveDepartmentId(
+    user: JwtPayload,
+    requested?: number,
+  ): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return requested;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
+
+  async getOverview(user: JwtPayload, departmentId?: number) {
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, departmentId);
+    return this.getOverviewForDepartment(effectiveDepartmentId);
+  }
+
+  private async getOverviewForDepartment(departmentId?: number) {
     const criteria = await this.prisma.nba_criteria.findMany({
       where:
         departmentId !== undefined
@@ -59,13 +88,19 @@ export class AccreditationService {
   }
 
   async createCriterion(
+    user: JwtPayload,
     departmentId: number,
     code: string,
     name: string,
     maxMarks: number,
   ) {
+    // departmentId is required on this call (unlike getOverview's optional
+    // filter), so the result is never actually undefined here — it's either
+    // the caller-supplied value (non-Secretary) or the Secretary's own
+    // resolved department (resolveEffectiveDepartmentId throws otherwise).
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, departmentId);
     return this.prisma.nba_criteria.create({
-      data: { department_id: departmentId, code, name, max_marks: maxMarks },
+      data: { department_id: effectiveDepartmentId!, code, name, max_marks: maxMarks },
     });
   }
 

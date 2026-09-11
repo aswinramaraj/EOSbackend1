@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -6,8 +7,21 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { ROLES } from 'src/common/constants/roles.constant';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { CreateAcademicCalendarEventDto } from './dto/create-academic-calendar-event.dto';
 import { UpdateAcademicCalendarEventDto } from './dto/update-academic-calendar-event.dto';
+
+/**
+ * Roles that may publish their own events onto the shared academic calendar
+ * but must not be able to edit or delete anyone else's. The calendar also
+ * carries institution-wide entries (semester boundaries, exam dates, holidays),
+ * so blanket write access here would let a departmental role remove them.
+ */
+const OWN_EVENTS_ONLY_ROLES: readonly string[] = [
+  ROLES.MEDIA_ROOM,
+  ROLES.PLACEMENT,
+];
 
 @Injectable()
 export class AcademicCalendarEventsService {
@@ -36,6 +50,40 @@ export class AcademicCalendarEventsService {
     );
   }
 
+  /**
+   * The typed Prisma client hands back @db.Time(6) columns as Date objects
+   * anchored at 1970-01-01 — left as-is, NestJS's default JSON serializer
+   * renders the full ISO string ("1970-01-01T09:00:00.000Z"), and every
+   * caller expecting a plain "HH:MM" (e.g. `start_time.slice(0, 5)`) reads
+   * back "1970-" instead of the actual time. Formatted to "HH:MM" here so
+   * every response carries what callers actually expect.
+   */
+  private toTimeString(value: Date | null): string | null {
+    if (!value) return null;
+    return value.toISOString().slice(11, 16);
+  }
+
+  private serializeEvent<
+    T extends { event_date: Date; start_time: Date | null; end_time: Date | null },
+  >(
+    event: T,
+  ): Omit<T, 'event_date' | 'start_time' | 'end_time'> & {
+    event_date: string;
+    start_time: string | null;
+    end_time: string | null;
+  } {
+    return {
+      ...event,
+      // Same Date-vs-string mismatch as start_time/end_time — left as a
+      // Date, this serializes to a full ISO string ("2026-08-20T00:00:00.000Z")
+      // instead of the plain "YYYY-MM-DD" every other academic-calendar
+      // endpoint in this app returns (see HodAcademicCalendarService).
+      event_date: event.event_date.toISOString().slice(0, 10),
+      start_time: this.toTimeString(event.start_time),
+      end_time: this.toTimeString(event.end_time),
+    };
+  }
+
   private assertDateWithinCalendar(
     eventDate: Date,
     calendar: { start_date: Date; end_date: Date },
@@ -53,6 +101,26 @@ export class AcademicCalendarEventsService {
       throw new UnprocessableEntityException({
         message: 'end_time must be after start_time',
         errorCode: 'INVALID_EVENT_TIME_RANGE',
+      });
+    }
+  }
+
+  /**
+   * Departmental roles may only mutate the events they themselves created.
+   * The privileged calendar owners (coordinator/principal/secretary) keep
+   * unrestricted access, so this narrows the two newly-granted roles only.
+   */
+  private assertMayMutate(
+    event: { created_by_user_id: number | null },
+    currentUser?: JwtPayload,
+  ): void {
+    if (!currentUser || !OWN_EVENTS_ONLY_ROLES.includes(currentUser.role)) {
+      return;
+    }
+    if (event.created_by_user_id !== currentUser.sub) {
+      throw new ForbiddenException({
+        message: 'You can only modify calendar events you created',
+        errorCode: 'FORBIDDEN',
       });
     }
   }
@@ -76,7 +144,7 @@ export class AcademicCalendarEventsService {
     this.assertTimeRange(startTime, endTime);
 
     try {
-      return await this.prisma.calendar_events.create({
+      const created = await this.prisma.calendar_events.create({
         data: {
           academic_calendar_id: dto.academic_calendar_id,
           title: dto.title,
@@ -88,6 +156,7 @@ export class AcademicCalendarEventsService {
           created_by_user_id: userId,
         },
       });
+      return this.serializeEvent(created);
     } catch (err) {
       this.logger.error('DB error creating academic calendar event', err);
       throw new InternalServerErrorException({
@@ -97,16 +166,18 @@ export class AcademicCalendarEventsService {
     }
   }
 
-  findAll(academicCalendarId?: number) {
-    return this.prisma.calendar_events.findMany({
+  async findAll(academicCalendarId?: number) {
+    const events = await this.prisma.calendar_events.findMany({
       where: academicCalendarId
         ? { academic_calendar_id: academicCalendarId }
         : undefined,
       orderBy: { event_date: 'asc' },
     });
+    return events.map((e) => this.serializeEvent(e));
   }
 
-  async findOne(id: number) {
+  /** Internal — returns the raw row (Date-typed times) for callers that need to compare/reuse them, e.g. `update()`. */
+  private async findOneRaw(id: number) {
     const event = await this.prisma.calendar_events.findUnique({
       where: { id },
     });
@@ -119,8 +190,17 @@ export class AcademicCalendarEventsService {
     return event;
   }
 
-  async update(id: number, dto: UpdateAcademicCalendarEventDto) {
-    const event = await this.findOne(id);
+  async findOne(id: number) {
+    return this.serializeEvent(await this.findOneRaw(id));
+  }
+
+  async update(
+    id: number,
+    dto: UpdateAcademicCalendarEventDto,
+    currentUser?: JwtPayload,
+  ) {
+    const event = await this.findOneRaw(id);
+    this.assertMayMutate(event, currentUser);
 
     let finalCalendar: { start_date: Date; end_date: Date };
 
@@ -170,7 +250,7 @@ export class AcademicCalendarEventsService {
     }
 
     try {
-      return await this.prisma.calendar_events.update({
+      const updated = await this.prisma.calendar_events.update({
         where: { id },
         data: {
           academic_calendar_id: dto.academic_calendar_id,
@@ -182,6 +262,7 @@ export class AcademicCalendarEventsService {
           end_time: dto.end_time !== undefined ? endTime : undefined,
         },
       });
+      return this.serializeEvent(updated);
     } catch (err) {
       this.logger.error(
         `DB error updating academic calendar event #${id}`,
@@ -194,8 +275,9 @@ export class AcademicCalendarEventsService {
     }
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, currentUser?: JwtPayload) {
+    const event = await this.findOneRaw(id);
+    this.assertMayMutate(event, currentUser);
     await this.prisma.calendar_events.delete({ where: { id } });
     return { message: 'Academic calendar event deleted successfully' };
   }

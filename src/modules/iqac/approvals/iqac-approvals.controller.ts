@@ -37,13 +37,13 @@ export class IqacApprovalsController {
   constructor(private readonly approvals: IqacApprovalsService) {}
 
   @Get('stats')
-  stats() {
-    return this.approvals.stats();
+  stats(@CurrentUser() user: JwtPayload) {
+    return this.approvals.stats(user);
   }
 
   @Get()
-  findAll(@Query() query: ListDocumentsQueryDto) {
-    return this.approvals.findAll(query);
+  findAll(@CurrentUser() user: JwtPayload, @Query() query: ListDocumentsQueryDto) {
+    return this.approvals.findAll(user, query);
   }
 
   @Patch(':id/verify')
@@ -51,6 +51,6 @@ export class IqacApprovalsController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.approvals.toggleVerify(id, user.sub);
+    return this.approvals.toggleVerify(user, id, user.sub);
   }
 }

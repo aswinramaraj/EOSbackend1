@@ -31,15 +31,18 @@ export class FacultyAttendanceController {
   constructor(private readonly attendanceService: FacultyAttendanceService) {}
 
   // Secretary added — per-faculty attendance % feeds the Secretary Portal's
-  // Reports "faculty summary" table (same institution-wide posture as the
-  // other principal-*/faculty routes granted to Secretary elsewhere).
+  // Reports "faculty summary" table. Secretary is now department-scoped
+  // (one account per department, mirroring HOD) — forced to her own
+  // department server-side, regardless of any client-supplied
+  // department_id; every other role's behavior is unchanged.
   @Get('attendance/overview')
   @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
-  getOverview(@Query() query: QueryAttendanceOverviewDto) {
+  getOverview(@Query() query: QueryAttendanceOverviewDto, @CurrentUser() user: JwtPayload) {
     return this.attendanceService.getOverview(
       query.department_id,
       query.academic_year,
       query.search,
+      user,
     );
   }
 

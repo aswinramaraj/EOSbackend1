@@ -1,5 +1,5 @@
 // dto/create-revaluation.dto.ts
-import { IsInt, IsPositive } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsPositive, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateRevaluationDto {
@@ -12,4 +12,19 @@ export class CreateRevaluationDto {
   @IsInt({ message: 'student_id must be an integer' })
   @IsPositive({ message: 'student_id must be a positive integer' })
   student_id!: number;
+
+  // Both optional so the existing student-side apply flow (which never sent
+  // either) keeps defaulting exactly as before (schema default: revaluation,
+  // fee_paid false) — only the new COE counter-entry flow sets them.
+  @IsOptional()
+  @IsIn(['revaluation', 'retotaling'])
+  request_kind?: 'revaluation' | 'retotaling';
+
+  @IsOptional()
+  @MaxLength(1000)
+  remarks?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  fee_paid?: boolean;
 }

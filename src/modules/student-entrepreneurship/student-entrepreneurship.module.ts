@@ -1,11 +1,21 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from 'src/prisma/prisma.module';
-import { StudentEntrepreneurshipController, MeMenteeEntrepreneurshipController, MeEdcEntrepreneurshipController } from './student-entrepreneurship.controller';
+import {
+  StudentEntrepreneurshipController,
+  MeMenteeEntrepreneurshipController,
+  MeEdcEntrepreneurshipController,
+  MeEntrepreneurshipController,
+} from './student-entrepreneurship.controller';
 import { StudentEntrepreneurshipService } from './student-entrepreneurship.service';
 
 @Module({
   imports: [PrismaModule],
-  controllers: [StudentEntrepreneurshipController, MeMenteeEntrepreneurshipController, MeEdcEntrepreneurshipController],
+  controllers: [
+    StudentEntrepreneurshipController,
+    MeMenteeEntrepreneurshipController,
+    MeEdcEntrepreneurshipController,
+    MeEntrepreneurshipController,
+  ],
   providers: [StudentEntrepreneurshipService],
 })
 export class StudentEntrepreneurshipModule {}

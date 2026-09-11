@@ -6,6 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { ROLES } from 'src/common/constants/roles.constant';
 import type { Prisma } from 'generated/prisma/client';
 import { INTERNAL_ERROR } from '../common/sports-common';
 import { CreateBudgetRequestDto } from './dto/create-budget-request.dto';
@@ -45,7 +47,10 @@ function toBudgetRequestResponse(row: BudgetRequestWithRelations) {
 export class BudgetService {
   private readonly logger = new Logger(BudgetService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /** GET /sports-admin/budget-requests?status= */
   async findAll(dto: SearchBudgetRequestsDto) {
@@ -78,6 +83,12 @@ export class BudgetService {
         },
         include: BUDGET_REQUEST_INCLUDE,
       });
+
+      // Finance is the approver, so Finance is who gets told there is
+      // something waiting. Without this the request sat in a queue nobody was
+      // watching.
+      await this.notifyFinance(row.id, row.title, row.amount.toString());
+
       return toBudgetRequestResponse(row);
     } catch (err) {
       this.logger.error('DB error while creating budget request', err);
@@ -157,10 +168,68 @@ export class BudgetService {
         },
         include: BUDGET_REQUEST_INCLUDE,
       });
+
+      await this.notifyRaiser(updated.raised_by_user_id, updated.title, status);
+
       return toBudgetRequestResponse(updated);
     } catch (err) {
       this.logger.error('DB error while deciding budget request', err);
       throw new InternalServerErrorException(INTERNAL_ERROR);
+    }
+  }
+
+  /**
+   * Tells every Finance user a request is waiting. Notification failures are
+   * logged and swallowed: the request itself is already saved, and losing an
+   * alert must not turn a successful submission into an error.
+   */
+  private async notifyFinance(
+    requestId: number,
+    title: string,
+    amount: string,
+  ): Promise<void> {
+    try {
+      const financeUsers = await this.prisma.users.findMany({
+        where: { roles: { name: ROLES.FINANCE } },
+        select: { id: true },
+      });
+      for (const u of financeUsers) {
+        await this.notifications.notify({
+          user_id: u.id,
+          title: 'Sports budget request',
+          message: `${title} — Rs. ${amount} awaiting your approval`,
+          type: 'approval_request_pending',
+          related_entity_type: 'sports_budget_request',
+          related_entity_id: requestId,
+        });
+      }
+    } catch (err) {
+      this.logger.error(
+        `Failed to notify Finance of budget request ${requestId}`,
+        err,
+      );
+    }
+  }
+
+  private async notifyRaiser(
+    raisedByUserId: number,
+    title: string,
+    status: 'approved' | 'rejected',
+  ): Promise<void> {
+    try {
+      await this.notifications.notify({
+        user_id: raisedByUserId,
+        title: `Budget request ${status}`,
+        message: `${title} was ${status} by Finance`,
+        type:
+          status === 'approved'
+            ? 'approval_request_approved'
+            : 'approval_request_rejected',
+        related_entity_type: 'sports_budget_request',
+        related_entity_id: 0,
+      });
+    } catch (err) {
+      this.logger.error('Failed to notify budget request raiser', err);
     }
   }
 

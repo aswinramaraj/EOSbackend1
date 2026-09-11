@@ -2,6 +2,8 @@ import { Controller, Get, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { PrincipalPlacementsService } from './principal-placements.service';
 
@@ -13,7 +15,7 @@ export class PrincipalPlacementsController {
 
   /** GET /principal-placements/overview — season stats + department-wise placement %. */
   @Get('overview')
-  getOverview() {
-    return this.service.getOverview();
+  getOverview(@CurrentUser() user: JwtPayload) {
+    return this.service.getOverview(user);
   }
 }

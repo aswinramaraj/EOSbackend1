@@ -20,9 +20,9 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { FacultyService } from './faculty.service';
 import { CreateFacultyDto } from './dto/create-faculty.dto';
-import { UpdateFacultyDto } from './dto/update-faculty.dto';
 import { AdminUpdateFacultyDto } from './dto/admin-update-faculty.dto';
 import { ListFacultyQueryDto } from './dto/list-faculty-query.dto';
+import { NotifyEntityDto } from 'src/common/dto/notify-entity.dto';
 
 @Controller('me')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -39,15 +39,16 @@ export class FacultyController {
 
   /**
    * GET /api/v1/faculty — Admin/HoD/HR Payroll/Secretary. Paginated list,
-   * filterable by department_id/status. Secretary added for the Secretary
-   * Portal's Reports "faculty summary" table — same institution-wide
-   * posture as /announcements and /principal-* (no secretary→department
-   * table exists, so this reads unscoped like Admin does).
+   * filterable by department_id/status. Secretary is now department-scoped
+   * (one account per department, mirroring HOD) — forced to her own
+   * department server-side inside FacultyService.findAll(), regardless of
+   * any client-supplied department_id; every other role's behavior is
+   * unchanged.
    */
   @Get('faculty')
   @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
-  findAll(@Query() query: ListFacultyQueryDto) {
-    return this.facultyService.findAll(query);
+  findAll(@Query() query: ListFacultyQueryDto, @CurrentUser() user: JwtPayload) {
+    return this.facultyService.findAll(query, user);
   }
 
   /**
@@ -109,5 +110,13 @@ export class FacultyController {
   @Roles(ROLES.ADMIN, ROLES.HOD, ROLES.HR_PAYROLL)
   listActivity(@Param('id', ParseIntPipe) id: number) {
     return this.facultyService.listActivity(id);
+  }
+
+  /** POST /api/v1/faculty/:id/notify — Admin/HR Payroll. Sends an ad-hoc message to this faculty member's notification inbox. */
+  @Post('faculty/:id/notify')
+  @Roles(ROLES.ADMIN, ROLES.HR_PAYROLL)
+  @HttpCode(HttpStatus.OK)
+  notify(@Param('id', ParseIntPipe) id: number, @Body() dto: NotifyEntityDto) {
+    return this.facultyService.notifyFaculty(id, dto);
   }
 }

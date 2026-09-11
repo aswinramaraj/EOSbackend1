@@ -37,6 +37,32 @@ const FACULTY_LEAVE_SELECT = {
       },
     },
   },
+  // faculty_leaves.faculty_id is NULLABLE: a request raised by non-teaching
+  // staff (Secretary, HR Payroll, warden) has staff_user_id set and faculty
+  // null. Without this relation such a row carried no name at all, and every
+  // client had to guess - the HR review list in the mobile app asserted
+  // `row.faculty!` and threw on the first staff-submitted row, which took the
+  // whole queue down with "Couldn't load faculty leave requests".
+  // Prisma auto-names this relation after the FK column. Plain `users` is a
+
+  // DIFFERENT relation (or absent), so the generated name must be used
+
+  // verbatim - see the note in FacultyLeavesService.resolveDepartmentHodUserId
+
+  // about these names not being stable across `db pull`.
+
+  users_faculty_leaves_staff_user_idTousers: {
+    select: {
+      email: true,
+      non_teaching_staff: {
+        select: {
+          first_name: true,
+          last_name: true,
+          departments: { select: { id: true, name: true, code: true } },
+        },
+      },
+    },
+  },
   leave_types: { select: { id: true, name: true } },
 } as const;
 
@@ -67,6 +93,17 @@ interface FacultyLeaveRow {
     departments: { id: number; name: string; code: string } | null;
   } | null;
   leave_types: { id: number; name: string } | null;
+  // The requester's user row, present so a staff-submitted request (faculty
+  // null) still has a name to show. non_teaching_staff.user_id is nullable, so
+  // Prisma models the relation as a list.
+  users_faculty_leaves_staff_user_idTousers: {
+    email: string;
+    non_teaching_staff: {
+      first_name: string;
+      last_name: string | null;
+      departments: { id: number; name: string; code: string } | null;
+    }[];
+  } | null;
 }
 
 function computeOverallStatus(
@@ -98,6 +135,44 @@ function toResponse(leave: FacultyLeaveRow) {
     created_at: leave.created_at,
     faculty: leave.faculty,
     staff_user_id: leave.staff_user_id,
+    // One display identity the client can always render, whichever register
+    // the requester lives in. Clients must read this rather than reaching into
+    // `faculty`, which is null for staff-submitted rows.
+    requester: resolveRequester(leave),
+  };
+}
+
+/**
+ * Display identity for a leave request, from whichever register holds the
+ * requester: faculty -> non_teaching_staff -> email. Same order used by
+ * resolveRequesterName in media-requests.service.ts and resolveMarkerName in
+ * attendance.service.ts.
+ */
+function resolveRequester(leave: FacultyLeaveRow) {
+  if (leave.faculty) {
+    return {
+      kind: 'faculty' as const,
+      name: `${leave.faculty.first_name} ${leave.faculty.last_name}`,
+      designation: leave.faculty.designation,
+      department: leave.faculty.departments?.code ?? null,
+    };
+  }
+  const staff =
+    leave.users_faculty_leaves_staff_user_idTousers?.non_teaching_staff?.[0];
+  if (staff) {
+    return {
+      kind: 'staff' as const,
+      name: [staff.first_name, staff.last_name].filter(Boolean).join(' '),
+      designation: 'Non-teaching staff',
+      department: staff.departments?.code ?? null,
+    };
+  }
+  return {
+    kind: 'unknown' as const,
+    // Last resort only - an account in neither register.
+    name: leave.users_faculty_leaves_staff_user_idTousers?.email ?? 'Unknown',
+    designation: null,
+    department: null,
   };
 }
 
@@ -136,12 +211,34 @@ export class FacultyLeavesService {
       throw new BadRequestException('from_date must be on or before to_date');
     }
 
-    // Secretary (or any non-Faculty staff account) — no faculty row exists,
-    // so there's no HoD to review this at all; goes straight to the HR
-    // Payroll stage (hod_approval_status pre-approved), keyed by
-    // staff_user_id instead of faculty_id. Mirrors the existing "an HoD's
-    // own leave skips the HoD stage" precedent below.
-    if (currentUser.role === ROLES.SECRETARY) {
+    // Any non-teaching staff account — no faculty row exists, so there's no
+    // HoD to review this at all; goes straight to the HR Payroll stage
+    // (hod_approval_status pre-approved), keyed by staff_user_id instead of
+    // faculty_id. Mirrors the existing "an HoD's own leave skips the HoD
+    // stage" precedent below.
+    //
+    // Branches on whether the caller ACTUALLY HAS a faculty row, not on their
+    // role name. This used to test `role === SECRETARY`, so HR Payroll,
+    // warden and every other non-teaching role fell through to the faculty
+    // path below and got a FACULTY_NOT_FOUND 404 when applying for their own
+    // leave — even though the comment already said "or any non-Faculty staff
+    // account". Anything role-shaped here has to be re-edited for every new
+    // role; a capability check does not.
+    // Full row, not a narrow select: the faculty path below reads
+    // department_id/first_name/last_name off it, exactly as
+    // resolveFacultyByUserId used to return.
+    const facultyRow = await this.prisma.faculty.findUnique({
+      where: { user_id: currentUser.sub },
+    });
+
+    if (!facultyRow) {
+      // Confirm this really is a staff account before writing a staff-keyed
+      // row, rather than assuming "not faculty" means "staff".
+      // No non_teaching_staff membership check: the row this writes is keyed
+      // on staff_user_id, whose FK is to `users` — which the authenticated
+      // caller demonstrably has. Demanding a personnel row as well added no
+      // integrity and 404d real employees whose non_teaching_staff row was
+      // never created.
       const leave = await this.prisma.faculty_leaves.create({
         data: {
           staff_user_id: currentUser.sub,
@@ -156,7 +253,7 @@ export class FacultyLeavesService {
       return toResponse(leave);
     }
 
-    const faculty = await this.resolveFacultyByUserId(currentUser.sub);
+    const faculty = facultyRow;
 
     const leave = await this.prisma.faculty_leaves.create({
       data: {

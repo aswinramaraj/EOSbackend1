@@ -11,7 +11,11 @@ import { HostelDashboardService } from './dashboard.service';
 
 @Controller('hostel/dashboard')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.ADMIN, ROLES.GATE_WARDEN, ROLES.WARDEN)
+// Gate warden deliberately NOT granted: their duty is the gate log
+// (check-in/check-out) only, and the gate-warden screens call no
+// endpoint on this controller. Hostel residents' complaints, fees,
+// leave and attendance are warden/admin business.
+@Roles(ROLES.ADMIN, ROLES.WARDEN)
 export class HostelDashboardController {
   constructor(
     private readonly dashboardService: HostelDashboardService,

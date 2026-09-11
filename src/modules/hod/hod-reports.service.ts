@@ -315,12 +315,16 @@ export class HodReportsService {
    * — the only year-level signal classes actually stores.
    *
    * Current/previous semester is resolved PER CLASS (its own
-   * current_semester, and current_semester - 1) rather than one global pair
+   * current_semester, and current_semester - 2) rather than one global pair
    * for the whole department — different year-groups are at different
    * semesters at the same point in time (a 4th-year class's "previous
-   * semester" is semester 6, a 2nd-year class's is semester 2), so a single
+   * semester" is semester 5, a 2nd-year class's is semester 1), so a single
    * department-wide pair applied to every row would compare a class against
-   * an unrelated semester (or a semester it was never even in).
+   * an unrelated semester (or a semester it was never even in). -2 rather
+   * than -1: this system only ever holds exam data for odd semesters
+   * (1,3,5,7 — see scripts/seed-cse-sem5/04-exam-infra-sem1-3.ts), so a
+   * class's real "previous" term is the prior ODD semester, not N-1 (which
+   * is always even and never has data).
    */
   async getClassPassRates(user: JwtPayload, year: string | null) {
     const departmentId = await this.resolveDepartmentId(user);
@@ -354,7 +358,7 @@ export class HodReportsService {
       for (const cl of yearFiltered) {
         const currentSem = cl.current_semester;
         if (currentSem == null) continue;
-        const previousSem = currentSem > 1 ? currentSem - 1 : undefined;
+        const previousSem = currentSem > 2 ? currentSem - 2 : undefined;
 
         const [currentRow] = await this.prisma.$queryRaw<
           PassPctRow[]
@@ -503,7 +507,9 @@ export class HodReportsService {
     departmentId: number,
     currentSem: number,
   ): Promise<{ sections: string[]; subjects: HodSubjectResult[] }> {
-    const previousSem = currentSem > 1 ? currentSem - 1 : undefined;
+    // -2, not -1: see getClassPassRates' doc comment — this system only
+    // ever holds exam data for odd semesters.
+    const previousSem = currentSem > 2 ? currentSem - 2 : undefined;
 
     // Every (subject, class) combo examined this semester in this
     // department, with its per-section pass %.

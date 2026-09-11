@@ -20,31 +20,31 @@ export class MeetingsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateMeetingDto, @CurrentUser() user: JwtPayload) {
-    return this.meetingsService.create(dto, user.sub);
+    return this.meetingsService.create(user, dto, user.sub);
   }
 
   @Get()
-  findAll(@Query('department_id') departmentId?: string) {
-    return this.meetingsService.findAll(departmentId ? +departmentId : undefined);
+  findAll(@CurrentUser() user: JwtPayload, @Query('department_id') departmentId?: string) {
+    return this.meetingsService.findAll(user, departmentId ? +departmentId : undefined);
   }
 
   @Patch(':id/mom')
-  updateMom(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateMomDto) {
-    return this.meetingsService.updateMom(id, dto.mom_text);
+  updateMom(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateMomDto, @CurrentUser() user: JwtPayload) {
+    return this.meetingsService.updateMom(user, id, dto.mom_text);
   }
 
   @Patch(':id/circulate')
-  circulate(@Param('id', ParseIntPipe) id: number) {
-    return this.meetingsService.circulate(id);
+  circulate(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.meetingsService.circulate(user, id);
   }
 
   @Post(':id/action-items')
-  addActionItem(@Param('id', ParseIntPipe) id: number, @Body() dto: AddActionItemDto) {
-    return this.meetingsService.addActionItem(id, dto.label);
+  addActionItem(@Param('id', ParseIntPipe) id: number, @Body() dto: AddActionItemDto, @CurrentUser() user: JwtPayload) {
+    return this.meetingsService.addActionItem(user, id, dto.label);
   }
 
   @Patch(':id/action-items/:itemId/toggle')
-  toggleActionItem(@Param('id', ParseIntPipe) id: number, @Param('itemId', ParseIntPipe) itemId: number) {
-    return this.meetingsService.toggleActionItem(id, itemId);
+  toggleActionItem(@Param('id', ParseIntPipe) id: number, @Param('itemId', ParseIntPipe) itemId: number, @CurrentUser() user: JwtPayload) {
+    return this.meetingsService.toggleActionItem(user, id, itemId);
   }
 }

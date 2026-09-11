@@ -17,10 +17,10 @@ const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
  * DTO/service split CreateHostelOutingDto/CreateLeaveDto both use.
  */
 export class CreateCampusOutingDto {
-  @IsDateString()
+  @IsDateString({}, { message: 'Please choose a valid out date' })
   from_date: string;
 
-  @IsDateString()
+  @IsDateString({}, { message: 'Please choose a valid return date' })
   to_date: string;
 
   @Matches(TIME_PATTERN, { message: 'start_time must be a valid HH:MM time' })

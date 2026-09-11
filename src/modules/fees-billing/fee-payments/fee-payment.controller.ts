@@ -37,6 +37,7 @@ export class FeePaymentController {
    *  403 FORBIDDEN      – authenticated user is not an admin
    *  500 INTERNAL_ERROR – unexpected server failure
    */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('fee-payments')
   findAll() {
     return this.feePaymentService.findAll();
@@ -53,6 +54,7 @@ export class FeePaymentController {
    *  403 FORBIDDEN      – authenticated user is not an admin
    *  500 INTERNAL_ERROR – unexpected server failure
    */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('fee-payments/dashboard')
   dashboard() {
     return this.feePaymentService.dashboard();
@@ -67,6 +69,7 @@ export class FeePaymentController {
    *  404 STUDENT_NOT_FOUND – no student with the given id
    *  500 INTERNAL_ERROR   – unexpected server failure
    */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('fee-payments/students/:studentId/workspace')
   getStudentWorkspace(@Param('studentId', ParseIntPipe) studentId: number) {
     return this.feePaymentService.getStudentWorkspace(studentId);
@@ -112,6 +115,7 @@ export class FeePaymentController {
    *  404 STUDENT_FEE_DEMAND_NOT_FOUND – no demand mapping with the given id
    *  500 INTERNAL_ERROR               – unexpected server failure
    */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
   @Get('student-fee-demand-mappings/:id/category-breakdown')
   getCategoryBreakdown(@Param('id', ParseIntPipe) id: number) {
     return this.feePaymentService.getCategoryBreakdown(id);
@@ -161,7 +165,10 @@ export class FeePaymentController {
    */
   @Post('fee-payments/receipt-numbers')
   @HttpCode(HttpStatus.CREATED)
-  issueReceiptNumber(@Body() dto: IssueReceiptNumberDto, @CurrentUser() user: JwtPayload) {
+  issueReceiptNumber(
+    @Body() dto: IssueReceiptNumberDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.feePaymentService.issueReceiptNumber(dto, user.sub);
   }
 
@@ -214,5 +221,33 @@ export class FeePaymentController {
   @Delete('fee-payments/:id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.feePaymentService.remove(id);
+  }
+
+  /**
+   * POST /api/v1/fee-payments/send-due-soon-reminders
+   *
+   * Manual trigger for the same reminder the daily @Cron
+   * (FeePaymentService.runFeeDueDateReminders) already sends automatically
+   * — exposed here purely so staff can force a run on demand, same as the
+   * library module's equivalent endpoint. Inert (0 sent) until
+   * fee_structures.due_date exists — see query.md.
+   */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
+  @Post('fee-payments/send-due-soon-reminders')
+  @HttpCode(HttpStatus.OK)
+  sendFeeDueSoonReminders() {
+    return this.feePaymentService.sendFeeDueSoonReminders();
+  }
+
+  /**
+   * POST /api/v1/fee-payments/send-overdue-reminders
+   *
+   * Same as above, for the past-due sibling reminder.
+   */
+  @Roles(ROLES.ADMIN, ROLES.BILLING, ROLES.FINANCE)
+  @Post('fee-payments/send-overdue-reminders')
+  @HttpCode(HttpStatus.OK)
+  sendFeeOverdueReminders() {
+    return this.feePaymentService.sendFeeOverdueReminders();
   }
 }

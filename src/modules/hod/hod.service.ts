@@ -423,7 +423,7 @@ export class HodService {
       const upNext = upNextRows
         .map((row) => ({
           id: row.id,
-          period_label: `Period ${row.period_number}`,
+          period_label: `P${row.period_number}`,
           subject_code: row.subjects.subject_code,
           subject_name: row.subjects.name,
           class_label: row.classes.section,

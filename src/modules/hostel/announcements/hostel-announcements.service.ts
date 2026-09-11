@@ -56,8 +56,9 @@ export class HostelAnnouncementsService {
   }
 
   async create(dto: CreateHostelAnnouncementDto, userId: number) {
+    let created: AnnouncementWithRelations;
     try {
-      const created = await this.prisma.announcements.create({
+      created = await this.prisma.announcements.create({
         data: {
           posted_by_user_id: userId,
           title: dto.title,
@@ -68,7 +69,6 @@ export class HostelAnnouncementsService {
         },
         include: ANNOUNCEMENT_INCLUDE,
       });
-      return toAnnouncementResponse(created);
     } catch (err) {
       this.logger.error('DB error while creating hostel announcement', err);
       throw new InternalServerErrorException({
@@ -76,5 +76,26 @@ export class HostelAnnouncementsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    // A warden's notice board is inherently for residents — hardcoded, not
+    // a picker, since this endpoint has no other purpose. Proposed in
+    // query.md #7 — not yet run against the live database. Deliberately
+    // NOT a Prisma-typed field on `announcements` (unlike a brand-new
+    // table, this one is read elsewhere via `include`-based queries that
+    // implicitly select every column, so adding it to schema.prisma would
+    // break those reads until the column exists) — a best-effort raw
+    // UPDATE instead, wrapped so a missing column never blocks the
+    // announcement itself from being created.
+    try {
+      await this.prisma.$executeRaw`
+        UPDATE announcements SET audience_student_type = 'hosteller' WHERE id = ${created.id}
+      `;
+    } catch (err) {
+      this.logger.warn(
+        `audience_student_type unavailable (see query.md #7) — announcement ${created.id} created without hostel-only targeting: ${String(err)}`,
+      );
+    }
+
+    return toAnnouncementResponse(created);
   }
 }

@@ -1,4 +1,5 @@
 import {
+  IsDateString,
   IsEnum,
   IsInt,
   IsNotEmpty,
@@ -27,4 +28,9 @@ export class UpdateFeeStructureDto {
   @IsString()
   @IsNotEmpty()
   academic_year?: string;
+
+  /** See CreateFeeStructureDto.due_date — same field, same semantics. */
+  @IsOptional()
+  @IsDateString()
+  due_date?: string;
 }

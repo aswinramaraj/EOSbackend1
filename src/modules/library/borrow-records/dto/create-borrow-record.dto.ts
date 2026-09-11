@@ -24,6 +24,10 @@ export class CreateBorrowRecordDto {
   @Min(1)
   faculty_id?: number;
 
+  // Optional — the librarian's Issue page always supplies this explicitly,
+  // but a student self-checkout call can omit it entirely; the service
+  // defaults it from library_settings.default_borrowing_days.
+  @IsOptional()
   @IsDateString()
-  due_date: string;
+  due_date?: string;
 }

@@ -117,10 +117,30 @@ export class ServiceRequestsService {
     private readonly notifications: NotificationsService,
   ) {}
 
+  /** Secretary is always forced to her own department; other roles keep whatever was requested. */
+  private async resolveEffectiveDepartmentId(
+    user: JwtPayload,
+    requested?: number,
+  ): Promise<number | undefined> {
+    if (user.role !== ROLES.SECRETARY) return requested;
+    const staff = await this.prisma.non_teaching_staff.findFirst({
+      where: { user_id: user.sub },
+      select: { department_id: true },
+    });
+    if (!staff?.department_id) {
+      throw new ForbiddenException({
+        message: 'No department is assigned to this secretary account',
+        errorCode: 'SECRETARY_NO_DEPARTMENT',
+      });
+    }
+    return staff.department_id;
+  }
+
   /** POST /me/service-requests (Secretary only). */
-  async create(dto: CreateServiceRequestDto, userId: number) {
+  async create(dto: CreateServiceRequestDto, userId: number, currentUser: JwtPayload) {
+    const effectiveDepartmentId = (await this.resolveEffectiveDepartmentId(currentUser, dto.department_id))!;
     const department = await this.prisma.departments.findUnique({
-      where: { id: dto.department_id },
+      where: { id: effectiveDepartmentId },
     });
     if (!department) {
       throw new NotFoundException({
@@ -132,7 +152,7 @@ export class ServiceRequestsService {
     const indent = await this.prisma.service_indents.create({
       data: {
         requested_by_user_id: userId,
-        department_id: dto.department_id,
+        department_id: effectiveDepartmentId,
         title: dto.title,
         service_description: dto.service_description,
         quantity: dto.quantity,
@@ -147,7 +167,7 @@ export class ServiceRequestsService {
     });
 
     this.logger.log(
-      `Service request created: proposal=${proposal.id} indent=${indent.id} by user=${userId} dept=${dto.department_id}`,
+      `Service request created: proposal=${proposal.id} indent=${indent.id} by user=${userId} dept=${effectiveDepartmentId}`,
     );
     return toResponse(proposal as unknown as ProposalRow);
   }

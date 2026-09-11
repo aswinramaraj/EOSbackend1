@@ -47,14 +47,36 @@ describe('StudentOdsService', () => {
       faculty: { first_name: 'Kavitha', last_name: 'R' },
       od_teams: {
         unique_code: 'H7QR4A',
-        od_team_members: [{ student_id: 42 }, { student_id: 43 }],
+        od_team_members: [
+          {
+            student_id: 42,
+            students: {
+              id: 42,
+              student_id_no: '23EC056',
+              soa_applications: { first_name: 'Arjun', last_name: 'Kumar' },
+              users: { id: 100, email: 'arjun@sece.ac.in' },
+            },
+          },
+          {
+            student_id: 43,
+            students: {
+              id: 43,
+              student_id_no: '23EC057',
+              soa_applications: { first_name: 'Divya', last_name: 'S' },
+              users: { id: 101, email: 'divya@sece.ac.in' },
+            },
+          },
+        ],
         students: {
           id: 42,
           student_id_no: '23EC056',
           class_id: 5,
           soa_applications: { first_name: 'Arjun', last_name: 'Kumar' },
           users: { id: 100, email: 'arjun@sece.ac.in' },
-          classes: { section: 'B', departments: { name: 'Electronics Engineering' } },
+          classes: {
+            section: 'B',
+            departments: { name: 'Electronics Engineering' },
+          },
         },
       },
       ...overrides,
@@ -81,7 +103,9 @@ describe('StudentOdsService', () => {
         createMany: jest.fn(),
         updateMany: jest.fn(),
       },
-      $transaction: jest.fn((queries: Promise<unknown>[]) => Promise.all(queries)),
+      $transaction: jest.fn((queries: Promise<unknown>[]) =>
+        Promise.all(queries),
+      ),
     };
     notifications = { notify: jest.fn() };
 
@@ -105,7 +129,10 @@ describe('StudentOdsService', () => {
       prisma.faculty.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.findAll({ limit: 20, page: 1 } as any, { sub: 1, role: 'faculty' } as any),
+        service.findAll(
+          { limit: 20, page: 1 } as any,
+          { sub: 1, role: 'faculty' } as any,
+        ),
       ).rejects.toThrow('Faculty profile not found for the authenticated user');
     });
 
@@ -132,10 +159,10 @@ describe('StudentOdsService', () => {
       prisma.od_requests.findMany.mockResolvedValue([odRequestRow()]);
       prisma.od_requests.count.mockResolvedValue(1);
 
-      const result = await service.findAll(
-        { limit: 20, page: 1, skip: 0 } as any,
-        { sub: 1, role: 'faculty' } as any,
-      );
+      const result = await service.findAll({ limit: 20, page: 1, skip: 0 }, {
+        sub: 1,
+        role: 'faculty',
+      } as any);
 
       const [findManyArgs] = prisma.od_requests.findMany.mock.calls[0] as [
         { where: Record<string, unknown> },
@@ -188,7 +215,11 @@ describe('StudentOdsService', () => {
 
       expect(result.data[0]).toMatchObject({
         faculty_guide_name: null,
-        creator: { name: 'arjun@sece.ac.in', section: null, department_name: null },
+        creator: {
+          name: 'arjun@sece.ac.in',
+          section: null,
+          department_name: null,
+        },
       });
     });
   });
@@ -245,7 +276,9 @@ describe('StudentOdsService', () => {
         od_teams: { students: { class_id: 5 } },
       });
       prisma.class_mentors.findFirst.mockResolvedValue({ id: 1 });
-      prisma.od_requests.update.mockResolvedValue(odRequestRow({ mentor_approval_status: 'approved' }));
+      prisma.od_requests.update.mockResolvedValue(
+        odRequestRow({ mentor_approval_status: 'approved' }),
+      );
 
       await service.facultyApprove(1, { decision: 'approved' }, 1);
 
@@ -271,7 +304,9 @@ describe('StudentOdsService', () => {
         od_teams: { students: { class_id: 5 } },
       });
       prisma.class_mentors.findFirst.mockResolvedValue({ id: 1 });
-      prisma.od_requests.update.mockResolvedValue(odRequestRow({ mentor_approval_status: 'rejected' }));
+      prisma.od_requests.update.mockResolvedValue(
+        odRequestRow({ mentor_approval_status: 'rejected' }),
+      );
 
       await service.facultyApprove(1, { decision: 'rejected' }, 1);
 
@@ -326,7 +361,9 @@ describe('StudentOdsService', () => {
         { status: 'pending' },
       ]);
       prisma.od_requests.findUniqueOrThrow.mockResolvedValue(odRequestRow());
-      prisma.departments.findUnique.mockResolvedValue({ name: 'Electronics Engineering' });
+      prisma.departments.findUnique.mockResolvedValue({
+        name: 'Electronics Engineering',
+      });
 
       await service.hodApprove(1, { decision: 'approved' }, 1);
 
@@ -350,7 +387,9 @@ describe('StudentOdsService', () => {
         { status: 'pending' },
       ]);
       prisma.od_requests.findUniqueOrThrow.mockResolvedValue(odRequestRow());
-      prisma.departments.findUnique.mockResolvedValue({ name: 'Electronics Engineering' });
+      prisma.departments.findUnique.mockResolvedValue({
+        name: 'Electronics Engineering',
+      });
 
       await service.hodApprove(1, { decision: 'rejected' }, 1);
 

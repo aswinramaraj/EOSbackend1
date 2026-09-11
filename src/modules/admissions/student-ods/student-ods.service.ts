@@ -28,7 +28,21 @@ const OD_REQUEST_SELECT = {
   od_teams: {
     select: {
       unique_code: true,
-      od_team_members: { select: { student_id: true } },
+      od_team_members: {
+        select: {
+          student_id: true,
+          students: {
+            select: {
+              id: true,
+              student_id_no: true,
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
+              users: { select: { id: true, email: true } },
+            },
+          },
+        },
+      },
       students: {
         select: {
           id: true,
@@ -61,7 +75,18 @@ interface OdRequestRow {
   faculty: { first_name: string; last_name: string | null } | null;
   od_teams: {
     unique_code: string;
-    od_team_members: { student_id: number }[];
+    od_team_members: {
+      student_id: number;
+      students: {
+        id: number;
+        student_id_no: string;
+        soa_applications: {
+          first_name: string;
+          last_name: string | null;
+        } | null;
+        users: { id: number; email: string };
+      };
+    }[];
     students: {
       id: number;
       student_id_no: string;
@@ -74,7 +99,10 @@ interface OdRequestRow {
 }
 
 /** Same fallback chain as student-leaves' resolveStudentName - no generic display-name column on `students`. */
-function resolveStudentName(student: OdRequestRow['od_teams']['students']): string {
+function resolveStudentName(student: {
+  soa_applications: { first_name: string; last_name: string | null } | null;
+  users: { email: string };
+}): string {
   if (student.soa_applications) {
     const { first_name, last_name } = student.soa_applications;
     return last_name ? `${first_name} ${last_name}` : first_name;
@@ -93,6 +121,18 @@ function formatTime(time: Date | null): string | null {
 function toResponse(request: OdRequestRow, hodApprovalStatus?: string) {
   const team = request.od_teams;
   const creator = team.students;
+  // od_team_members always includes the creator as one of its rows — excluded
+  // here since the creator is already surfaced separately below; this array
+  // is specifically "the OTHER members of the team" for display purposes
+  // (was previously discarded entirely, only its length ever left this
+  // function, so a card showing "+2 more" had no way to say who they were).
+  const otherMembers = team.od_team_members
+    .filter((m) => m.student_id !== creator.id)
+    .map((m) => ({
+      id: m.students.id,
+      student_id_no: m.students.student_id_no,
+      name: resolveStudentName(m.students),
+    }));
   return {
     id: request.id,
     team_id: request.team_id,
@@ -105,6 +145,7 @@ function toResponse(request: OdRequestRow, hodApprovalStatus?: string) {
       section: creator.classes?.section ?? null,
       department_name: creator.classes?.departments.name ?? null,
     },
+    other_members: otherMembers,
     from_date: toDateOnly(request.from_date),
     to_date: toDateOnly(request.to_date),
     from_time: formatTime(request.from_time),
@@ -157,21 +198,26 @@ export class StudentOdsService {
       // distinct: ['od_request_id'] — a team can contribute more than one
       // member from this department, which would otherwise list the same
       // request once per member row.
-      const [approvalRows, distinctRequestIds] = await this.prisma.$transaction([
-        this.prisma.od_request_hod_approvals.findMany({
-          where,
-          distinct: ['od_request_id'],
-          skip: query.skip,
-          take: query.limit,
-          orderBy: { id: 'desc' },
-          select: { status: true, od_requests: { select: OD_REQUEST_SELECT } },
-        }),
-        this.prisma.od_request_hod_approvals.findMany({
-          where,
-          distinct: ['od_request_id'],
-          select: { od_request_id: true },
-        }),
-      ]);
+      const [approvalRows, distinctRequestIds] = await this.prisma.$transaction(
+        [
+          this.prisma.od_request_hod_approvals.findMany({
+            where,
+            distinct: ['od_request_id'],
+            skip: query.skip,
+            take: query.limit,
+            orderBy: { id: 'desc' },
+            select: {
+              status: true,
+              od_requests: { select: OD_REQUEST_SELECT },
+            },
+          }),
+          this.prisma.od_request_hod_approvals.findMany({
+            where,
+            distinct: ['od_request_id'],
+            select: { od_request_id: true },
+          }),
+        ],
+      );
 
       return paginate(
         approvalRows.map((row) => toResponse(row.od_requests, row.status)),
@@ -208,7 +254,11 @@ export class StudentOdsService {
       this.prisma.od_requests.count({ where }),
     ]);
 
-    return paginate(rows.map((r) => toResponse(r)), total, query);
+    return paginate(
+      rows.map((r) => toResponse(r)),
+      total,
+      query,
+    );
   }
 
   /**
@@ -227,7 +277,9 @@ export class StudentOdsService {
 
     const request = await this.prisma.od_requests.findUnique({
       where: { id },
-      include: { od_teams: { include: { students: { select: { class_id: true } } } } },
+      include: {
+        od_teams: { include: { students: { select: { class_id: true } } } },
+      },
     });
     if (!request) {
       throw new NotFoundException({
@@ -265,9 +317,15 @@ export class StudentOdsService {
 
     await this.notifications.notify({
       user_id: updated.od_teams.students.users.id,
-      title: dto.decision === 'approved' ? 'OD request approved by mentor' : 'OD request rejected by mentor',
+      title:
+        dto.decision === 'approved'
+          ? 'OD request approved by mentor'
+          : 'OD request rejected by mentor',
       message: `Your OD request (${toDateOnly(updated.from_date)} to ${toDateOnly(updated.to_date)}) was ${dto.decision} by your mentor.`,
-      type: dto.decision === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+      type:
+        dto.decision === 'approved'
+          ? 'approval_request_approved'
+          : 'approval_request_rejected',
       related_entity_type: 'od_request',
       related_entity_id: id,
     });
@@ -311,7 +369,11 @@ export class StudentOdsService {
             ? classesById.get(m.students.class_id)
             : undefined;
           return departmentId !== undefined
-            ? { od_request_id: id, student_id: m.student_id, department_id: departmentId }
+            ? {
+                od_request_id: id,
+                student_id: m.student_id,
+                department_id: departmentId,
+              }
             : null;
         })
         .filter((row): row is NonNullable<typeof row> => row !== null);
@@ -364,7 +426,11 @@ export class StudentOdsService {
     }
 
     await this.prisma.od_request_hod_approvals.updateMany({
-      where: { od_request_id: id, department_id: hod.department_id, status: 'pending' },
+      where: {
+        od_request_id: id,
+        department_id: hod.department_id,
+        status: 'pending',
+      },
       data: {
         status: dto.decision,
         hod_user_id: hodUserId,
@@ -392,7 +458,10 @@ export class StudentOdsService {
           ? 'OD request approved by HoD'
           : 'OD request rejected by HoD',
       message: `Your OD request (${toDateOnly(request.from_date)} to ${toDateOnly(request.to_date)}) was ${dto.decision} by the HoD of ${department?.name ?? 'a department on your team'}.`,
-      type: dto.decision === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+      type:
+        dto.decision === 'approved'
+          ? 'approval_request_approved'
+          : 'approval_request_rejected',
       related_entity_type: 'od_request',
       related_entity_id: id,
     });
