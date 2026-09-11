@@ -3,6 +3,8 @@ import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { IoAdapter } from '@nestjs/platform-socket.io';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -20,6 +22,13 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const logger = new Logger('Bootstrap');
+
+  // ── Security headers ─────────────────────────────────────────────────────────
+  // CSP disabled: this is a JSON API, not an HTML app, and the non-production
+  // Swagger UI below (swagger-ui-dist's inline scripts/styles) would be broken
+  // by helmet's default CSP — the other headers (X-Content-Type-Options,
+  // X-Frame-Options, HSTS, etc.) still apply.
+  app.use(helmet({ contentSecurityPolicy: false }));
 
   // ── Body size ────────────────────────────────────────────────────────────────
   // Express/body-parser's default JSON limit is 100kb - fine for every
@@ -56,6 +65,15 @@ async function bootstrap() {
     // arrived as the same "placement-summary.xlsx".
     exposedHeaders: ['Content-Disposition'],
   });
+
+  // ── WebSocket adapter ────────────────────────────────────────────────────────
+  // app.enableCors(...) above is Express-only and does not extend to the
+  // Socket.IO transport used by MessagingGateway — without registering this
+  // explicitly, the deployed frontend origin can be silently rejected at the
+  // WS handshake while every REST route keeps working fine, a confusing
+  // failure mode to debug after the fact. MessagingGateway's own
+  // @WebSocketGateway({ cors }) carries the actual allowed-origin list.
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   // ── Global pipes ─────────────────────────────────────────────────────────────
   app.useGlobalPipes(globalValidationPipe);
@@ -107,4 +125,11 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  // Without this, a bootstrap failure (e.g. a bad module wiring, a DB
+  // connection error) can fail silently — the process exits with no
+  // stack trace at all, which is exactly what happened here while wiring
+  // MessagingModule's circular gateway/service dependency.
+  console.error('Bootstrap failed:', err);
+  process.exit(1);
+});

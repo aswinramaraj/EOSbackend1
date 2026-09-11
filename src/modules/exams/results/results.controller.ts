@@ -32,18 +32,27 @@ export class ResultsController {
   }
 
   @Get('results')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
   async findAll() {
     const results = await this.resultsService.findAll();
     return ApiResponse.ok(results, 'Results fetched successfully.');
   }
 
   @Get('results/stats')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
   async getStats() {
     const stats = await this.resultsService.getStats();
-    return ApiResponse.ok(stats, 'Result publication stats fetched successfully.');
+    return ApiResponse.ok(
+      stats,
+      'Result publication stats fetched successfully.',
+    );
   }
 
   @Get('results/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.COE)
   async findOne(@Param('id') id: string) {
     const result = await this.resultsService.findOne(+id);
     return ApiResponse.ok(result, 'Result fetched successfully.');
@@ -64,7 +73,10 @@ export class ResultsController {
   @Roles(ROLES.COE)
   async schedule(@Param('id') id: string, @Body() dto: ScheduleResultDto) {
     const result = await this.resultsService.schedule(+id, dto);
-    return ApiResponse.ok(result, 'Result release schedule updated successfully.');
+    return ApiResponse.ok(
+      result,
+      'Result release schedule updated successfully.',
+    );
   }
 
   // results.controller.ts — add this method (Delete already imported from before)

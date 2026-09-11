@@ -271,10 +271,12 @@ export class AnnouncementsService {
               priority: dto.priority,
               // Real column that nothing was writing, so a scheduled post kept
               // no record of when it was meant to go out.
-              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
-            // Real column that was never written; a scheduled post kept no
-            // record of when it was meant to go out.
-              },
+              scheduled_at: dto.scheduled_at
+                ? new Date(dto.scheduled_at)
+                : null,
+              // Real column that was never written; a scheduled post kept no
+              // record of when it was meant to go out.
+            },
           });
 
           // Social post details live in their own 1:1 table. Written inside
@@ -383,10 +385,12 @@ export class AnnouncementsService {
               priority: dto.priority,
               // Real column that nothing was writing, so a scheduled post kept
               // no record of when it was meant to go out.
-              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
-            // Real column that was never written; a scheduled post kept no
-            // record of when it was meant to go out.
-              },
+              scheduled_at: dto.scheduled_at
+                ? new Date(dto.scheduled_at)
+                : null,
+              // Real column that was never written; a scheduled post kept no
+              // record of when it was meant to go out.
+            },
           });
 
           await tx.announcement_role_mapping.createMany({
@@ -461,7 +465,7 @@ export class AnnouncementsService {
             scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
             // Real column that was never written; a scheduled post kept no
             // record of when it was meant to go out.
-            },
+          },
         });
       } catch (err) {
         this.logger.error('DB error while creating announcement', err);
@@ -491,7 +495,10 @@ export class AnnouncementsService {
       dto.target_audience === 'edc_inside_college' ||
       dto.target_audience === 'edc_all_entrepreneurs'
     ) {
-      if (context.role !== ROLES.EDC_COORDINATOR && context.role !== ROLES.ADMIN) {
+      if (
+        context.role !== ROLES.EDC_COORDINATOR &&
+        context.role !== ROLES.ADMIN
+      ) {
         throw new ForbiddenException({
           message: 'You are not permitted to post EDC announcements',
           errorCode: 'ROLE_NOT_PERMITTED',
@@ -515,7 +522,7 @@ export class AnnouncementsService {
             scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
             // Real column that was never written; a scheduled post kept no
             // record of when it was meant to go out.
-              category: dto.category,
+            category: dto.category,
           },
         });
       } catch (err) {
@@ -533,7 +540,10 @@ export class AnnouncementsService {
         {},
       );
 
-      return this.toResponseShape({ ...announcement, announcement_class_mapping: [] });
+      return this.toResponseShape({
+        ...announcement,
+        announcement_class_mapping: [],
+      });
     }
 
     await this.assertClassesValid(dto.class_ids!, context);
@@ -557,7 +567,7 @@ export class AnnouncementsService {
             scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
             // Real column that was never written; a scheduled post kept no
             // record of when it was meant to go out.
-            },
+          },
         });
 
         await tx.announcement_class_mapping.createMany({
@@ -927,6 +937,13 @@ export class AnnouncementsService {
         where,
         include: ANNOUNCEMENT_RESPONSE_INCLUDE,
         orderBy: { created_at: 'desc' },
+        // Every role's notices board hits this on every visit, unfiltered —
+        // with no cap this returns the entire visible history (and its full
+        // response/media join) as the table grows over years of real use.
+        // 500 is a safety ceiling, not a real pagination UI — comfortably
+        // above any realistic single board's current volume, so it changes
+        // nothing visible today while bounding the worst case.
+        take: 500,
       });
     } catch (err) {
       this.logger.error('DB error while fetching announcements', err);
@@ -1130,10 +1147,12 @@ export class AnnouncementsService {
               priority: dto.priority,
               // Real column that nothing was writing, so a scheduled post kept
               // no record of when it was meant to go out.
-              scheduled_at: dto.scheduled_at ? new Date(dto.scheduled_at) : null,
-            // Real column that was never written; a scheduled post kept no
-            // record of when it was meant to go out.
-              },
+              scheduled_at: dto.scheduled_at
+                ? new Date(dto.scheduled_at)
+                : null,
+              // Real column that was never written; a scheduled post kept no
+              // record of when it was meant to go out.
+            },
           });
         }
 
@@ -1442,7 +1461,11 @@ export class AnnouncementsService {
         return { role: ROLES.PRINCIPAL, userId: user.sub, roleId: user.roleId };
 
       case ROLES.EDC_COORDINATOR:
-        return { role: ROLES.EDC_COORDINATOR, userId: user.sub, roleId: user.roleId };
+        return {
+          role: ROLES.EDC_COORDINATOR,
+          userId: user.sub,
+          roleId: user.roleId,
+        };
 
       // Secretary is now department-scoped (one account per department,
       // non_teaching_staff.department_id), mirroring HOD — resolved fresh
@@ -2545,7 +2568,9 @@ export class AnnouncementsService {
         ? {
             format: socialRow.format,
             link_url: socialRow.link_url,
-            expires_at: socialRow.expires_at ? socialRow.expires_at.toISOString() : null,
+            expires_at: socialRow.expires_at
+              ? socialRow.expires_at.toISOString()
+              : null,
             is_pinned: socialRow.is_pinned ?? false,
             allow_comments: socialRow.allow_comments ?? true,
           }

@@ -48,11 +48,14 @@ export class HallTicketClearanceController {
     return this.hallTicketClearanceService.findMy(query, user.sub);
   }
 
-  /** GET /api/v1/hall-ticket-clearance/pending — HoD only. */
+  /** GET /api/v1/hall-ticket-clearance/pending — HoD only, own department. */
   @Get('pending')
   @Roles(ROLES.HOD)
-  findPending(@Query() query: ListClearanceQueryDto) {
-    return this.hallTicketClearanceService.findPending(query);
+  findPending(
+    @Query() query: ListClearanceQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.hallTicketClearanceService.findPending(query, user.sub);
   }
 
   /** GET /api/v1/hall-ticket-clearance/:id — Student (own) / HoD (any). */

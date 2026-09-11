@@ -30,8 +30,14 @@ export class RevaluationController {
   @Post('revaluation-requests')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.STUDENT, ROLES.COE)
-  async create(@Body() createRevaluationDto: CreateRevaluationDto) {
-    const request = await this.revaluationService.create(createRevaluationDto);
+  async create(
+    @Body() createRevaluationDto: CreateRevaluationDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const request = await this.revaluationService.create(
+      createRevaluationDto,
+      user,
+    );
     return ApiResponse.created(
       request,
       'Revaluation request created successfully.',

@@ -15,7 +15,6 @@ import { CoursesModule } from './modules/academic-structure/courses/courses.modu
 import { DepartmentsModule } from './modules/academic-structure/departments/departments.module';
 import { SubjectsModule } from './modules/academic-structure/subjects/subjects.module';
 
-import { BonafideModule } from './modules/admissions/bonafide/bonafide.module';
 import { BonafideRequestsModule } from './modules/admin/bonafide-requests/bonafide-requests.module';
 import { BonafideReasonsModule } from './modules/admissions/bonafide-reasons/bonafide-reasons.module';
 import { CertificatesModule } from './modules/admissions/certificates/certificates.module';
@@ -227,6 +226,7 @@ import { NotificationsModule } from './modules/notifications/notifications/notif
 import { CoeBroadcastsModule } from './modules/notifications/coe-broadcasts/coe-broadcasts.module';
 import { NotificationsRestModule } from './modules/notifications/notifications-rest/notifications-rest.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
+import { MessagingModule } from './modules/messaging/messaging.module';
 import { AcademicCoordinatorFacultyModule } from './modules/academic-coordinator/faculty/academic-coordinator-faculty.module';
 import { AcademicCoordinatorAttendanceModule } from './modules/academic-coordinator/attendance/academic-coordinator-attendance.module';
 import { AcademicCoordinatorCourseProgressModule } from './modules/academic-coordinator/course-progress/academic-coordinator-course-progress.module';
@@ -290,7 +290,6 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     DepartmentsModule,
     SubjectsModule,
 
-    BonafideModule,
     BonafideRequestsModule,
     BonafideReasonsModule,
     CertificatesModule,
@@ -495,6 +494,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     CoeBroadcastsModule,
     NotificationsRestModule,
     FeedbackModule,
+    MessagingModule,
     AcademicCoordinatorFacultyModule,
     AcademicCoordinatorAttendanceModule,
     AcademicCoordinatorCourseProgressModule,

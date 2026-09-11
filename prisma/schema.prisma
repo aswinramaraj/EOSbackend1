@@ -2518,6 +2518,10 @@ model users {
   medical_appointments_medical_appointments_decided_by_user_idTousers               medical_appointments[]                  @relation("medical_appointments_decided_by_user_idTousers")
   medical_camp_registrations                                                        medical_camp_registrations[]
   medical_staff                                                                     medical_staff[]
+  message_conversations                                                             message_conversations[]
+  message_participants                                                              message_participants[]
+  messages_messages_deleted_by_user_idTousers                                       messages[]                              @relation("messages_deleted_by_user_idTousers")
+  messages_messages_sender_user_idTousers                                           messages[]                              @relation("messages_sender_user_idTousers")
   nba_evidence_items                                                                nba_evidence_items[]
   non_teaching_staff                                                                non_teaching_staff[]
   notifications                                                                     notifications[]
@@ -2577,6 +2581,7 @@ model users {
   students                                                                          students?
   transport_notices                                                                 transport_notices[]
   user_preferences                                                                  user_preferences?
+  user_presence                                                                     user_presence?
   user_roles                                                                        user_roles[]
   user_social_links                                                                 user_social_links[]
   roles                                                                             roles                                   @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -5877,6 +5882,73 @@ model subject_academic_clearance {
   @@index([faculty_subject_class_mapping_id], map: "idx_subject_academic_clearance_mapping")
 }
 
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an index with non-default null sort order and requires additional setup for migrations. Visit https://pris.ly/d/default-index-null-ordering for more info.
+model message_conversations {
+  id                   BigInt                 @id @default(autoincrement())
+  is_group             Boolean                @default(false)
+  dm_key               String?                @unique(map: "uniq_message_conversations_dm_key", where: raw("(dm_key IS NOT NULL)")) @db.VarChar(40)
+  title                String?                @db.VarChar(150)
+  created_by_user_id   Int
+  last_message_id      BigInt?
+  last_message_at      DateTime?              @db.Timestamptz(6)
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  users                users                  @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  message_participants message_participants[]
+  messages             messages[]
+
+  @@index([last_message_at(sort: Desc)], map: "idx_message_conversations_last_message_at")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model message_participants {
+  id                    BigInt                @id @default(autoincrement())
+  conversation_id       BigInt
+  user_id               Int
+  joined_at             DateTime              @default(now()) @db.Timestamptz(6)
+  last_read_message_id  BigInt?
+  last_read_at          DateTime?             @db.Timestamptz(6)
+  is_muted              Boolean               @default(false)
+  message_conversations message_conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                 users                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([conversation_id, user_id])
+  @@index([user_id], map: "idx_message_participants_user")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model messages {
+  id                                       BigInt                @id @default(autoincrement())
+  conversation_id                          BigInt
+  sender_user_id                           Int
+  body                                     String
+  status                                   message_status_enum   @default(sent)
+  is_edited                                Boolean               @default(false)
+  edited_at                                DateTime?             @db.Timestamptz(6)
+  is_deleted_for_everyone                  Boolean               @default(false)
+  deleted_at                               DateTime?             @db.Timestamptz(6)
+  deleted_by_user_id                       Int?
+  client_generated_id                      String?               @db.VarChar(64)
+  created_at                               DateTime              @default(now()) @db.Timestamptz(6)
+  delivered_at                             DateTime?             @db.Timestamptz(6)
+  read_at                                  DateTime?             @db.Timestamptz(6)
+  message_conversations                    message_conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_messages_deleted_by_user_idTousers users?                @relation("messages_deleted_by_user_idTousers", fields: [deleted_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_messages_sender_user_idTousers     users                 @relation("messages_sender_user_idTousers", fields: [sender_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([conversation_id, sender_user_id, client_generated_id], map: "uniq_messages_conv_sender_client_id", where: raw("(client_generated_id IS NOT NULL)"))
+  @@index([conversation_id, id(sort: Desc)], map: "idx_messages_conversation_created")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model user_presence {
+  user_id      Int       @id
+  last_seen_at DateTime? @db.Timestamptz(6)
+  updated_at   DateTime  @default(now()) @db.Timestamptz(6)
+  users        users     @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
 enum achievement_media_type_enum {
   photo
   video
@@ -6368,6 +6440,8 @@ enum notification_type_enum {
   revaluation_status_updated
   invigilation_duty_assigned
   fee_overdue_reminder
+  feedback_form_published
+  direct_message_received
 }
 
 enum coordinator_calendar_entry_type_enum {
@@ -6766,4 +6840,10 @@ enum stationary_pages_enum {
 enum stationary_request_status_enum {
   pending_payment
   paid
+}
+
+enum message_status_enum {
+  sent
+  delivered
+  read
 }

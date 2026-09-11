@@ -49,8 +49,7 @@ export class CreateFeedbackFormDto {
   /**
    * Optional category — also acts as a reusable question-bank key (see
    * GET question-templates). Leave unset to target everyone with a custom
-   * question list, same as before this field existed. Silently ignored
-   * until the pending migration in academic_coordinator.query.md #1 runs.
+   * question list.
    */
   @IsOptional()
   @IsEnum(feedback_course_type_enum)
