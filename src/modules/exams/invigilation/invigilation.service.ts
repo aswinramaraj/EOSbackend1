@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { CreateInvigilationDto } from './dto/create-invigilation.dto';
 import { UpdateInvigilationDto } from './dto/update-invigilation.dto';
@@ -118,13 +119,20 @@ export class InvigilationService {
     };
     const ineligible = await this.getIneligibleFacultyIds(dutyDate, query.session, window);
 
+    // Each word must independently match first/last name (order-
+    // independent — "Malar Sekar" and "Sekar Malar" both match
+    // first_name="Malar", last_name="Sekar"); staff_code is a single token,
+    // matched against the whole raw search string.
+    const nameWhere = buildMultiWordNameWhere(query.search, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
     const candidates = await this.prisma.faculty.findMany({
       where: {
         status: 'active',
         OR: query.search
           ? [
-              { first_name: { contains: query.search, mode: 'insensitive' } },
-              { last_name: { contains: query.search, mode: 'insensitive' } },
+              ...(nameWhere ? [nameWhere] : []),
               { staff_code: { contains: query.search, mode: 'insensitive' } },
             ]
           : undefined,

@@ -11,6 +11,7 @@ import { Prisma } from 'generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { StorageService } from 'src/common/storage/storage.service';
@@ -682,19 +683,18 @@ export class VenuesService {
 
     const bookerConditions: Record<string, unknown>[] = [];
     if (query.search) {
+      // Each word must independently match the booker's first/last name
+      // (order-independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); email is a single token,
+      // matched against the whole raw search string.
+      const nameWhere = buildMultiWordNameWhere(query.search, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       bookerConditions.push({
         OR: [
           { email: { contains: query.search, mode: 'insensitive' } },
-          {
-            faculty: {
-              first_name: { contains: query.search, mode: 'insensitive' },
-            },
-          },
-          {
-            faculty: {
-              last_name: { contains: query.search, mode: 'insensitive' },
-            },
-          },
+          ...(nameWhere ? [{ faculty: nameWhere }] : []),
         ],
       });
     }

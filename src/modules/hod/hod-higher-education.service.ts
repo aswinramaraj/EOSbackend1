@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
 /** Same GRADE_LOOKUP formula as HodService/PrincipalExamsService, reused verbatim. */
@@ -70,6 +71,14 @@ export class HodHigherEducationService {
         });
       }
 
+      // Each word must independently match the student's first/last name
+      // (order-independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); student_id_no is a single
+      // token, matched against the whole raw search string.
+      const nameWhere = buildMultiWordNameWhere(search, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       const applicants = await this.prisma.student_higher_education.findMany({
         where: {
           students: {
@@ -87,22 +96,7 @@ export class HodHigherEducationService {
                         mode: 'insensitive' as const,
                       },
                     },
-                    {
-                      soa_applications: {
-                        first_name: {
-                          contains: search,
-                          mode: 'insensitive' as const,
-                        },
-                      },
-                    },
-                    {
-                      soa_applications: {
-                        last_name: {
-                          contains: search,
-                          mode: 'insensitive' as const,
-                        },
-                      },
-                    },
+                    ...(nameWhere ? [{ soa_applications: nameWhere }] : []),
                   ],
                 }
               : {}),

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
 function yearLabel(semester: number | null): string | null {
@@ -66,6 +67,14 @@ export class HodEdcService {
       // to the caller's own department.
       const scopeDepartmentId = otherDepartmentId ?? departmentId;
 
+      // Each word must independently match the student's first/last name
+      // (order-independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); student_id_no is a single
+      // token, matched against the whole raw search string.
+      const nameWhere = buildMultiWordNameWhere(search, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       const ventures = await this.prisma.student_entrepreneurship.findMany({
         where: {
           students: {
@@ -83,22 +92,7 @@ export class HodEdcService {
                         mode: 'insensitive' as const,
                       },
                     },
-                    {
-                      soa_applications: {
-                        first_name: {
-                          contains: search,
-                          mode: 'insensitive' as const,
-                        },
-                      },
-                    },
-                    {
-                      soa_applications: {
-                        last_name: {
-                          contains: search,
-                          mode: 'insensitive' as const,
-                        },
-                      },
-                    },
+                    ...(nameWhere ? [{ soa_applications: nameWhere }] : []),
                   ],
                 }
               : {}),

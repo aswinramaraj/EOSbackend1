@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import { buildMultiWordNameSql } from 'src/common/utils/name-search.util';
 import type { CreateWalkinDto } from './dto/create-walkin.dto';
 import type { OpdSearchQueryDto } from './dto/medical-crud.dto';
 import { visitStaffColumnReady } from './medical-appointments.util';
@@ -70,6 +71,20 @@ export class MedicalCentreOpdService {
   async searchPatients(query: OpdSearchQueryDto) {
     const like = `%${query.q}%`;
     const kind = query.kind ?? 'all';
+    // Each word must independently match first/last name (order-
+    // independent — "Malar Sekar" and "Sekar Malar" both match
+    // first_name="Malar", last_name="Sekar"); roll/register/id/staff-code
+    // are single tokens, matched against the whole raw q (via `like` above).
+    const studentNameSql = buildMultiWordNameSql(
+      query.q,
+      Prisma.raw('sa.first_name'),
+      Prisma.raw('sa.last_name'),
+    );
+    const facultyNameSql = buildMultiWordNameSql(
+      query.q,
+      Prisma.raw('f.first_name'),
+      Prisma.raw('f.last_name'),
+    );
 
     try {
       const students =
@@ -94,8 +109,7 @@ export class MedicalCentreOpdService {
               WHERE s.roll_no ILIKE ${like}
                  OR s.register_no ILIKE ${like}
                  OR s.student_id_no ILIKE ${like}
-                 OR sa.first_name ILIKE ${like}
-                 OR sa.last_name ILIKE ${like}
+                 ${studentNameSql === Prisma.empty ? Prisma.empty : Prisma.sql`OR ${studentNameSql}`}
               ORDER BY sa.first_name NULLS LAST, s.id
               LIMIT 20
             `);
@@ -116,9 +130,8 @@ export class MedicalCentreOpdService {
                      f.staff_code, d.code AS dept
               FROM faculty f
               LEFT JOIN departments d ON d.id = f.department_id
-              WHERE f.first_name ILIKE ${like}
-                 OR f.last_name ILIKE ${like}
-                 OR f.staff_code ILIKE ${like}
+              WHERE f.staff_code ILIKE ${like}
+                 ${facultyNameSql === Prisma.empty ? Prisma.empty : Prisma.sql`OR ${facultyNameSql}`}
               ORDER BY f.first_name, f.id
               LIMIT 20
             `);

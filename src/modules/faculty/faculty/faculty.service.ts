@@ -12,6 +12,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import type {
   faculty_employment_status_enum,
   faculty_employment_type_enum,
@@ -247,6 +248,14 @@ export class FacultyService {
   /** GET /faculty (Admin/HoD/Secretary) — paginated list, filterable by department_id, status, designation, joining year, and a name/email search. Secretary is always forced to her own department, ignoring any client-supplied department_id. */
   async findAll(query: ListFacultyQueryDto, user: JwtPayload) {
     const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, query.department_id);
+    // Each word must independently match first/last name (order-
+    // independent — "Malar Sekar" and "Sekar Malar" both match
+    // first_name="Malar", last_name="Sekar"); email/staff_code/designation
+    // are single tokens, matched against the whole raw search string.
+    const nameWhere = buildMultiWordNameWhere(query.search, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
     const where = {
       department_id: effectiveDepartmentId,
       status: query.status,
@@ -261,18 +270,7 @@ export class FacultyService {
         : undefined,
       OR: query.search
         ? [
-            {
-              first_name: {
-                contains: query.search,
-                mode: 'insensitive' as const,
-              },
-            },
-            {
-              last_name: {
-                contains: query.search,
-                mode: 'insensitive' as const,
-              },
-            },
+            ...(nameWhere ? [nameWhere] : []),
             {
               users: {
                 email: { contains: query.search, mode: 'insensitive' as const },

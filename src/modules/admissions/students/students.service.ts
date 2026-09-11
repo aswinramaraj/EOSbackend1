@@ -14,6 +14,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/common/storage/storage.service';
 import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { AdminUpdateStudentDto } from './dto/admin-update-student.dto';
 import { AdminAttendanceSummaryQueryDto } from './dto/admin-attendance-summary-query.dto';
@@ -151,22 +152,21 @@ export class StudentsService {
     }
 
     if (query.q) {
+      // Each word must independently match the student's first/last name
+      // (order-independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); id/roll/register/admission/
+      // email fields are single tokens, matched against the whole raw q.
+      const nameWhere = buildMultiWordNameWhere(query.q, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       where.OR = [
         { student_id_no: { contains: query.q, mode: 'insensitive' } },
         { roll_no: { contains: query.q, mode: 'insensitive' } },
         { register_no: { contains: query.q, mode: 'insensitive' } },
         { admission_no: { contains: query.q, mode: 'insensitive' } },
         { users: { email: { contains: query.q, mode: 'insensitive' } } },
-        {
-          soa_applications: {
-            first_name: { contains: query.q, mode: 'insensitive' },
-          },
-        },
-        {
-          soa_applications: {
-            last_name: { contains: query.q, mode: 'insensitive' },
-          },
-        },
+        ...(nameWhere ? [{ soa_applications: nameWhere }] : []),
       ];
     }
 

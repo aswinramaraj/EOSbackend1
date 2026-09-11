@@ -1,5 +1,6 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import {
   INTERNAL_ERROR,
   resolveFacultyName,
@@ -28,6 +29,15 @@ export class SportsLookupService {
     const term = q.trim();
     if (term.length < 2) return [];
 
+    // Each word must independently match first/last name (order-
+    // independent — "Malar Sekar" and "Sekar Malar" both match
+    // first_name="Malar", last_name="Sekar"); id/roll/register/admission
+    // are single tokens, matched against the whole raw term.
+    const nameWhere = buildMultiWordNameWhere(term, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
+
     try {
       const students = await this.prisma.students.findMany({
         where: {
@@ -36,14 +46,7 @@ export class SportsLookupService {
             { register_no: { contains: term, mode: 'insensitive' } },
             { student_id_no: { contains: term, mode: 'insensitive' } },
             { admission_no: { contains: term, mode: 'insensitive' } },
-            {
-              soa_applications: {
-                OR: [
-                  { first_name: { contains: term, mode: 'insensitive' } },
-                  { last_name: { contains: term, mode: 'insensitive' } },
-                ],
-              },
-            },
+            ...(nameWhere ? [{ soa_applications: nameWhere }] : []),
           ],
         },
         include: STUDENT_DISPLAY_INCLUDE,
@@ -69,12 +72,20 @@ export class SportsLookupService {
     const term = q.trim();
     if (term.length < 2) return [];
 
+    // Each word must independently match first/last name (order-
+    // independent — "Malar Sekar" and "Sekar Malar" both match
+    // first_name="Malar", last_name="Sekar"); email is a single token,
+    // matched against the whole raw term.
+    const facultyNameWhere = buildMultiWordNameWhere(term, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
+
     try {
       const faculty = await this.prisma.faculty.findMany({
         where: {
           OR: [
-            { first_name: { contains: term, mode: 'insensitive' } },
-            { last_name: { contains: term, mode: 'insensitive' } },
+            ...(facultyNameWhere ? [facultyNameWhere] : []),
             { users: { email: { contains: term, mode: 'insensitive' } } },
           ],
         },

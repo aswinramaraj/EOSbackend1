@@ -10,6 +10,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { notification_type_enum } from '../../../generated/prisma/enums';
 import {
   MESSAGING_PUSHER,
@@ -25,7 +26,53 @@ import type { SearchPeopleQueryDto } from './dto/search-people-query.dto';
 /** A student's search/send target is blocked at both layers — this code name is what the client matches on. */
 export const STUDENT_TO_STUDENT_BLOCKED = 'STUDENT_TO_STUDENT_BLOCKED';
 
+/**
+ * Human-friendly labels for "office" accounts — a role with no linked
+ * faculty/student profile row (principal, admin, coe, billing, ...), so
+ * `users` has nothing but a raw email to identify them by. Without this,
+ * personDisplayName's only option was the literal email, and
+ * personRoleLabel's only option was the raw snake_case role slug directly
+ * underneath it — e.g. "principal@sece.ac.in" over "principal", the same
+ * word twice. Any role not listed here (a legacy/unseeded one) still gets a
+ * reasonable label from the Title Case fallback below, never a raw slug.
+ */
+const OFFICE_ROLE_LABEL: Record<string, string> = {
+  admin: 'Admin',
+  principal: 'Principal',
+  coe: 'Controller of Examinations',
+  placement: 'Placement Cell',
+  library: 'Library',
+  billing: 'Billing',
+  hr_payroll: 'HR & Payroll',
+  finance: 'Finance',
+  iqac: 'IQAC',
+  secretary: 'Secretary',
+  gate_warden: 'Gate Warden',
+  warden: 'Hostel Warden',
+  media_room: 'Media Room',
+  academic_coordinator: 'Academic Coordinator',
+  alumni: 'Alumni',
+  non_teaching_staff: 'Non-Teaching Staff',
+  transport: 'Transport',
+  higheredu: 'Higher Education',
+  medical_centre: 'Medical Centre',
+  sports_admin: 'Sports Admin',
+  edc_coordinator: 'EDC Coordinator',
+  parent: 'Parent',
+};
+
+function humanizeRoleName(roleName: string): string {
+  return (
+    OFFICE_ROLE_LABEL[roleName] ??
+    roleName
+      .split('_')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ')
+  );
+}
+
 function personDisplayName(row: {
+  roles: { name: string };
   faculty?: { first_name: string; last_name: string } | null;
   students?: {
     soa_applications?: { first_name: string; last_name: string | null } | null;
@@ -36,11 +83,15 @@ function personDisplayName(row: {
     return `${row.faculty.first_name} ${row.faculty.last_name}`.trim();
   const app = row.students?.soa_applications;
   if (app) return `${app.first_name} ${app.last_name ?? ''}`.trim();
-  return row.email;
+  // No personal profile exists for this role (principal, admin, billing,
+  // ...) — the role itself IS their identity, so it's the name, not a
+  // subtitle repeating what the (unreadable) email already implied.
+  return humanizeRoleName(row.roles.name);
 }
 
 function personRoleLabel(row: {
   roles: { name: string };
+  email: string;
   faculty?: {
     designation: string;
     departments: { name: string; code: string };
@@ -62,7 +113,9 @@ function personRoleLabel(row: {
       .filter(Boolean)
       .join(' · ');
   }
-  return row.roles.name;
+  // The name line above already carries the humanized role — the email is
+  // the useful second line here, not a repeat of the same word.
+  return row.email;
 }
 
 @Injectable()
@@ -119,6 +172,19 @@ export class MessagingService {
     const q = query.q?.trim();
     if (!q || q.length < 1) return [];
 
+    // Each word must independently match first/last name (order-independent
+    // — "Malar Sekar" and "Sekar Malar" both match first_name="Malar",
+    // last_name="Sekar"); email is a single token, matched against the
+    // whole raw query.
+    const facultyNameWhere = buildMultiWordNameWhere(q, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
+    const studentNameWhere = buildMultiWordNameWhere(q, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
+
     const rows = await this.prisma.users.findMany({
       where: {
         id: { not: callerUserId },
@@ -130,24 +196,10 @@ export class MessagingService {
           roles: { name: { not: ROLES.STUDENT } },
         }),
         OR: [
-          {
-            faculty: {
-              OR: [
-                { first_name: { contains: q, mode: 'insensitive' } },
-                { last_name: { contains: q, mode: 'insensitive' } },
-              ],
-            },
-          },
-          {
-            students: {
-              soa_applications: {
-                OR: [
-                  { first_name: { contains: q, mode: 'insensitive' } },
-                  { last_name: { contains: q, mode: 'insensitive' } },
-                ],
-              },
-            },
-          },
+          ...(facultyNameWhere ? [{ faculty: facultyNameWhere }] : []),
+          ...(studentNameWhere
+            ? [{ students: { soa_applications: studentNameWhere } }]
+            : []),
           { email: { contains: q, mode: 'insensitive' } },
         ],
       },
@@ -744,6 +796,7 @@ export class MessagingService {
               where: { id: senderUserId },
               select: {
                 email: true,
+                roles: { select: { name: true } },
                 faculty: { select: { first_name: true, last_name: true } },
                 students: {
                   select: {
