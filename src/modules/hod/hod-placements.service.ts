@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import { buildMultiWordNameSql } from 'src/common/utils/name-search.util';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
 function yearLabel(semester: number | null): string {
@@ -135,9 +136,20 @@ export class HodPlacementsService {
         orderBy: [{ current_semester: 'asc' }, { section: 'asc' }],
       });
 
-      const searchClause = search
-        ? Prisma.sql`AND (soa.first_name ILIKE ${`%${search}%`} OR soa.last_name ILIKE ${`%${search}%`} OR st.student_id_no ILIKE ${`%${search}%`})`
-        : Prisma.empty;
+      // Each word must independently match first/last name (order-
+      // independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); student_id_no is a single
+      // token, matched against the whole raw search string.
+      const nameSql = buildMultiWordNameSql(
+        search,
+        Prisma.raw('soa.first_name'),
+        Prisma.raw('soa.last_name'),
+      );
+      const searchClause = !search
+        ? Prisma.empty
+        : nameSql === Prisma.empty
+          ? Prisma.sql`AND st.student_id_no ILIKE ${`%${search}%`}`
+          : Prisma.sql`AND (${nameSql} OR st.student_id_no ILIKE ${`%${search}%`})`;
       const classClause = classId
         ? Prisma.sql`AND st.class_id = ${classId}`
         : Prisma.empty;

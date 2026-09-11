@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { ListBundlesQueryDto } from './dto/list-bundles-query.dto';
 import { AllocateBundleDto } from './dto/allocate-bundle.dto';
 import { EnterScriptMarkDto } from './dto/enter-script-mark.dto';
@@ -59,6 +60,14 @@ export class ScriptBundlesService {
       where.exam_subject_mapping = mappingWhere;
 
     if (query.search) {
+      // Faculty name: each word must independently match first/last name
+      // (order-independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"). Bundle code/subject
+      // name/code are single tokens, matched against the whole raw string.
+      const facultyNameWhere = buildMultiWordNameWhere(query.search, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       where.OR = [
         { bundle_code: { contains: query.search, mode: 'insensitive' } },
         {
@@ -73,14 +82,7 @@ export class ScriptBundlesService {
             },
           },
         },
-        {
-          faculty: {
-            OR: [
-              { first_name: { contains: query.search, mode: 'insensitive' } },
-              { last_name: { contains: query.search, mode: 'insensitive' } },
-            ],
-          },
-        },
+        ...(facultyNameWhere ? [{ faculty: facultyNameWhere }] : []),
       ];
     }
 

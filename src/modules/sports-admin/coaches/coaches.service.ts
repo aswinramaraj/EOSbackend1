@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import {
   FACULTY_DISPLAY_SELECT,
   INTERNAL_ERROR,
@@ -161,10 +162,17 @@ export class CoachesService {
     if (discipline_id) where.discipline_id = discipline_id;
     if (duty_status) where.duty_status = duty_status;
     if (q) {
+      // Each word must independently match first/last name (order-
+      // independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); designation is a single
+      // token, matched against the whole raw q.
+      const nameWhere = buildMultiWordNameWhere(q, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       where.faculty = {
         OR: [
-          { first_name: { contains: q, mode: 'insensitive' } },
-          { last_name: { contains: q, mode: 'insensitive' } },
+          ...(nameWhere ? [nameWhere] : []),
           { designation: { contains: q, mode: 'insensitive' } },
         ],
       };

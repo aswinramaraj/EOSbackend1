@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { PrincipalDashboardService } from '../dashboard/dashboard.service';
 import { ListPrincipalStudentsQueryDto } from './dto/list-principal-students-query.dto';
 
@@ -176,6 +177,15 @@ export class PrincipalStudentsService {
     }
     if (query.q) {
       const q = query.q;
+      // Each word must independently match the student's first/last name
+      // (order-independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); id/roll/register/email/
+      // department fields are single tokens, matched against the whole
+      // raw query.
+      const nameWhere = buildMultiWordNameWhere(q, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       where.AND = [
         {
           OR: [
@@ -183,16 +193,7 @@ export class PrincipalStudentsService {
             { roll_no: { contains: q, mode: 'insensitive' } },
             { register_no: { contains: q, mode: 'insensitive' } },
             { users: { email: { contains: q, mode: 'insensitive' } } },
-            {
-              soa_applications: {
-                first_name: { contains: q, mode: 'insensitive' },
-              },
-            },
-            {
-              soa_applications: {
-                last_name: { contains: q, mode: 'insensitive' },
-              },
-            },
+            ...(nameWhere ? [{ soa_applications: nameWhere }] : []),
             {
               courses: {
                 departments: { name: { contains: q, mode: 'insensitive' } },

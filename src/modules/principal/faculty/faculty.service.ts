@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { PrincipalDashboardService } from '../dashboard/dashboard.service';
 import { ListPrincipalFacultyQueryDto } from './dto/list-principal-faculty-query.dto';
 
@@ -177,9 +178,16 @@ export class PrincipalFacultyService {
     if (query.department_id) where.department_id = query.department_id;
     if (query.q) {
       const q = query.q;
+      // Each word must independently match first/last name (order-
+      // independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"), while designation/email are
+      // matched against the whole raw query since they're single tokens.
+      const nameWhere = buildMultiWordNameWhere(q, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       where.OR = [
-        { first_name: { contains: q, mode: 'insensitive' } },
-        { last_name: { contains: q, mode: 'insensitive' } },
+        ...(nameWhere ? [nameWhere] : []),
         { designation: { contains: q, mode: 'insensitive' } },
         { users: { email: { contains: q, mode: 'insensitive' } } },
       ];

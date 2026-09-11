@@ -7,6 +7,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { MarkFacultyAttendanceDto } from './dto/mark-attendance.dto';
 
 const MONTH_LABELS = [
@@ -320,18 +321,18 @@ export class FacultyAttendanceService {
     user?: JwtPayload,
   ) {
     const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(departmentId, user);
+    // Each word must independently match first/last name (order-
+    // independent — "Malar Sekar" and "Sekar Malar" both match
+    // first_name="Malar", last_name="Sekar").
+    const nameWhere = buildMultiWordNameWhere(search, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
     const facultyRows = await this.prisma.faculty.findMany({
       where: {
         department_id: effectiveDepartmentId,
         status: 'active',
-        OR: search
-          ? [
-              {
-                first_name: { contains: search, mode: 'insensitive' as const },
-              },
-              { last_name: { contains: search, mode: 'insensitive' as const } },
-            ]
-          : undefined,
+        ...(nameWhere ? { OR: [nameWhere] } : {}),
       },
       select: {
         id: true,

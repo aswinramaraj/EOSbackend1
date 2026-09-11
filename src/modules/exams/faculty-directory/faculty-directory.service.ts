@@ -1,5 +1,6 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { ListFacultyDirectoryQueryDto } from './dto/list-faculty-directory-query.dto';
 
 function fullName(p: { prefix?: string | null; first_name: string; last_name?: string | null }): string {
@@ -14,14 +15,21 @@ export class FacultyDirectoryService {
 
   async findAll(query: ListFacultyDirectoryQueryDto) {
     try {
+      // Each word must independently match first/last name (order-
+      // independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); designation is a single
+      // token, matched against the whole raw search string.
+      const nameWhere = buildMultiWordNameWhere(query.search, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       const rows = await this.prisma.faculty.findMany({
         where: {
           status: 'active',
           department_id: query.department_id,
           OR: query.search
             ? [
-                { first_name: { contains: query.search, mode: 'insensitive' } },
-                { last_name: { contains: query.search, mode: 'insensitive' } },
+                ...(nameWhere ? [nameWhere] : []),
                 { designation: { contains: query.search, mode: 'insensitive' } },
               ]
             : undefined,
