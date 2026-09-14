@@ -30,13 +30,15 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 export class BorrowRecordsController {
   constructor(private readonly borrowRecordsService: BorrowRecordsService) {}
 
-  // Only these four roles have any legitimate reason to hit this resource —
-  // student/faculty are self-scoped to their own records inside the service,
-  // library/admin see everything. Missing RolesGuard here previously let any
-  // other authenticated role (HR, transport, canteen, ...) fall through to
-  // the service's unrestricted else-branch and read every borrow record.
+  // Only these five roles have any legitimate reason to hit this resource —
+  // student/faculty/hod are self-scoped to their own records inside the
+  // service (a HoD account has a real faculty row - see
+  // resolveOwnFacultyId), library/admin see everything. Missing RolesGuard
+  // here previously let any other authenticated role (HR, transport,
+  // canteen, ...) fall through to the service's unrestricted else-branch
+  // and read every borrow record.
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('student', 'faculty', 'library', 'admin')
+  @Roles('student', 'faculty', 'hod', 'library', 'admin')
   @Get('library/borrow-records')
   findAll(
     @Query() query: SearchBorrowRecordsDto,
@@ -46,7 +48,7 @@ export class BorrowRecordsController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('student', 'faculty', 'library', 'admin')
+  @Roles('student', 'faculty', 'hod', 'library', 'admin')
   @Get('library/borrow-records/:id')
   findOne(
     @Param('id', ParseIntPipe) id: number,
@@ -153,10 +155,14 @@ export class BorrowRecordsController {
     return this.borrowRecordsService.getMyDuesSummary(user);
   }
 
-  // GET /me/library/staff-borrow-records — Secretary's own borrow history,
-  // mirroring the student-only route above but keyed by staff_user_id.
+  // GET /me/library/staff-borrow-records — Secretary/HR Payroll's own borrow
+  // history, mirroring the student-only route above but keyed by
+  // staff_user_id (a plain users.id) rather than a faculty/student row -
+  // the resolution inside findMyStaffBorrowRecords is already role-agnostic
+  // (keyed purely by currentUser.sub), unlike the faculty/hod path above,
+  // since HR Payroll accounts have no faculty row to self-scope through.
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('secretary')
+  @Roles('secretary', 'hr_payroll')
   @Get('me/library/staff-borrow-records')
   findMyStaffBorrowRecords(
     @Query() query: GetMyBorrowRecordsDto,

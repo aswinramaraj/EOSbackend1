@@ -9,13 +9,14 @@ import {
   Put,
   Query,
   Res,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { renderFeeReceiptPdf } from './receipt-pdf.util';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -264,6 +265,27 @@ export class MeController {
   @Roles(ROLES.STUDENT)
   getLeaves(@CurrentUser() user: JwtPayload, @Query() dto: GetLeavesDto) {
     return this.meLeavesListService.getMyLeaves(user.sub, dto);
+  }
+
+  /**
+   * POST /api/v1/me/leaves/:id/attachment
+   *
+   * multipart/form-data: a single "certificate" file - the supporting
+   * document (e.g. a medical certificate) field the Leave tab's form
+   * already showed but never actually uploaded anywhere. Creator-only
+   * (unlike the OD attachment endpoint, a leave request has no team to
+   * share it with) - see MeLeavesService.uploadAttachment.
+   */
+  @Post('leaves/:id/attachment')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  @UseInterceptors(FileInterceptor('certificate'))
+  uploadLeaveAttachment(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.meLeavesService.uploadAttachment(id, user.sub, file);
   }
 
   /**

@@ -2125,6 +2125,7 @@ model student_leaves {
   also_on_hostel_leave                                   Boolean                   @default(false)
   routed_to_warden                                       Boolean                   @default(false)
   approved_by_warden_user_id                             Int?
+  attachment_url                                         String?                   @db.VarChar(500)
   faculty                                                faculty?                  @relation(fields: [approved_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                                                  users?                    @relation(fields: [approved_by_hod_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_student_leaves_approved_by_warden_user_idTousers users?                    @relation("student_leaves_approved_by_warden_user_idTousers", fields: [approved_by_warden_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)

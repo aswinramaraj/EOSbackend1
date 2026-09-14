@@ -71,6 +71,7 @@ export class MeLeavesListService {
         status: row.status,
         also_on_hostel_leave: row.also_on_hostel_leave,
         routed_to_warden: row.routed_to_warden,
+        attachment_url: row.attachment_url,
         approved_by_faculty: row.faculty
           ? `${row.faculty.first_name} ${row.faculty.last_name}`
           : null,
@@ -115,6 +116,7 @@ export class MeLeavesListService {
             created_at: true,
             also_on_hostel_leave: true,
             routed_to_warden: true,
+            attachment_url: true,
             faculty: { select: { first_name: true, last_name: true } },
             users: { select: { email: true } },
             users_student_leaves_approved_by_warden_user_idTousers: {

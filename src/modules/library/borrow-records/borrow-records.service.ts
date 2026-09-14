@@ -624,7 +624,10 @@ export class BorrowRecordsService {
     if (currentUser?.role === 'student') {
       where.student_id =
         (await this.resolveOwnStudentId(currentUser.sub)) ?? -1;
-    } else if (currentUser?.role === 'faculty') {
+    } else if (currentUser?.role === 'faculty' || currentUser?.role === 'hod') {
+      // A HoD account has a real faculty row of its own (same resolution
+      // as every hod/*.service.ts uses) - self-scoped exactly like a plain
+      // faculty caller, never widened to "see the whole department".
       where.faculty_id =
         (await this.resolveOwnFacultyId(currentUser.sub)) ?? -1;
     }
@@ -676,7 +679,7 @@ export class BorrowRecordsService {
       if (record.student_id !== ownId) {
         throw new NotFoundException('Borrow record not found.');
       }
-    } else if (currentUser?.role === 'faculty') {
+    } else if (currentUser?.role === 'faculty' || currentUser?.role === 'hod') {
       const ownId = await this.resolveOwnFacultyId(currentUser.sub);
       if (record.faculty_id !== ownId) {
         throw new NotFoundException('Borrow record not found.');
