@@ -134,6 +134,17 @@ export class HodDepartmentController {
     return this.examinations.getGrid(user, classId, examTypeId, semester);
   }
 
+  @Get('examinations/kpis')
+  @Roles(ROLES.HOD)
+  getExaminationKpis(
+    @CurrentUser() user: JwtPayload,
+    @Query('class_id', ParseIntPipe) classId: number,
+    @Query('exam_type_id', ParseIntPipe) examTypeId: number,
+    @Query('semester', ParseIntPipe) semester: number,
+  ) {
+    return this.examinations.getKpis(user, classId, examTypeId, semester);
+  }
+
   /** GET /hod/examinations/grid/export — same grid as above, as a real .xlsx download. */
   @Get('examinations/grid/export')
   @Roles(ROLES.HOD)

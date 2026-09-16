@@ -163,6 +163,17 @@ export class HodExaminationsService {
     return this.examResultsGrid.buildGrid(classId, examTypeId, semester);
   }
 
+  /** GET /hod/examinations/kpis — pass %, fail %, average CGPA and topper for the same class + exam type + semester selection as getGrid(). */
+  async getKpis(
+    user: JwtPayload,
+    classId: number,
+    examTypeId: number,
+    semester: number,
+  ) {
+    await this.assertOwnsClass(user, classId);
+    return this.examResultsGrid.buildKpis(classId, examTypeId, semester);
+  }
+
   /**
    * GET /hod/examinations/grid/export — same data as getGrid(), reshaped
    * into the shared ReportTable the export utility expects. One column per

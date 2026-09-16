@@ -12,6 +12,7 @@ import { NotificationsService } from 'src/modules/notifications/notifications/no
 import { ROLES } from 'src/common/constants/roles.constant';
 import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { notification_type_enum } from '../../../generated/prisma/enums';
+import { Prisma } from '../../../generated/prisma/client';
 import {
   MESSAGING_PUSHER,
   type MessagingPusher,
@@ -89,6 +90,22 @@ function personDisplayName(row: {
   return humanizeRoleName(row.roles.name);
 }
 
+const ROMAN_YEAR = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+
+/**
+ * Semesters 1-2 -> "I", 3-4 -> "II", 5-6 -> "III", etc. Mirrors
+ * EOS-web-frontend's src/lib/utils/academic.ts#yearLabelForSemester — kept
+ * as its own copy since the two apps don't share code, but must stay in
+ * sync with it.
+ */
+function yearLabelForSemester(
+  semester: number | null | undefined,
+): string | null {
+  if (semester == null) return null;
+  const yearIndex = Math.ceil(semester / 2) - 1;
+  return ROMAN_YEAR[yearIndex] ?? String(yearIndex + 1);
+}
+
 function personRoleLabel(row: {
   roles: { name: string };
   email: string;
@@ -97,7 +114,11 @@ function personRoleLabel(row: {
     departments: { name: string; code: string };
   } | null;
   students?: {
-    classes: { section: string; departments: { code: string } } | null;
+    classes: {
+      section: string;
+      current_semester: number | null;
+      departments: { code: string };
+    } | null;
   } | null;
 }): string {
   if (row.faculty)
@@ -108,7 +129,17 @@ function personRoleLabel(row: {
     const cls = row.students.classes;
     return [
       'Student',
-      cls ? `${cls.departments.code} · Sec ${cls.section}` : null,
+      cls
+        ? [
+            yearLabelForSemester(cls.current_semester)
+              ? `${yearLabelForSemester(cls.current_semester)} Year`
+              : null,
+            cls.departments.code,
+            `Sec ${cls.section}`,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : null,
     ]
       .filter(Boolean)
       .join(' · ');
@@ -117,6 +148,54 @@ function personRoleLabel(row: {
   // the useful second line here, not a repeat of the same word.
   return row.email;
 }
+
+/**
+ * Shared shape for "give me a conversation plus enough of both participants'
+ * profiles to render a ConversationSummary" — used by every read path that
+ * needs one (getOrCreateConversation's existing-conversation fast path, its
+ * race-recovery fallback, and toConversationSummary's by-id lookup) so none
+ * of them have to fetch the row once just to know it exists and then fetch
+ * it again in full a second time.
+ */
+const CONVERSATION_PARTICIPANTS_INCLUDE = {
+  message_participants: {
+    include: {
+      users: {
+        select: {
+          id: true,
+          email: true,
+          roles: { select: { name: true } },
+          faculty: {
+            select: {
+              first_name: true,
+              last_name: true,
+              designation: true,
+              departments: { select: { name: true, code: true } },
+            },
+          },
+          students: {
+            select: {
+              classes: {
+                select: {
+                  section: true,
+                  current_semester: true,
+                  departments: { select: { code: true } },
+                },
+              },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.message_conversationsInclude;
+
+type ConversationWithParticipants = Prisma.message_conversationsGetPayload<{
+  include: typeof CONVERSATION_PARTICIPANTS_INCLUDE;
+}>;
 
 @Injectable()
 export class MessagingService {
@@ -221,6 +300,7 @@ export class MessagingService {
             classes: {
               select: {
                 section: true,
+                current_semester: true,
                 departments: { select: { code: true } },
               },
             },
@@ -322,10 +402,17 @@ export class MessagingService {
 
     const dmKey = [callerUserId, otherUserId].sort((a, b) => a - b).join(':');
 
+    // Reopening a conversation you've messaged before is the overwhelmingly
+    // common case (far more frequent than a genuine first contact) — fetch
+    // full participant/profile detail directly in this one lookup instead of
+    // a bare existence check followed by a second, separate query
+    // re-fetching the exact same row (what this used to do), so the common
+    // path is one round trip instead of two.
     const existing = await this.prisma.message_conversations.findUnique({
       where: { dm_key: dmKey },
+      include: CONVERSATION_PARTICIPANTS_INCLUDE,
     });
-    if (existing) return this.toConversationSummary(existing.id, callerUserId);
+    if (existing) return this.summarizeConversation(existing, callerUserId);
 
     try {
       const created = await this.prisma.$transaction(async (tx) => {
@@ -351,8 +438,9 @@ export class MessagingService {
       // rejected our insert, so the real row now exists; fetch and return it.
       const row = await this.prisma.message_conversations.findUniqueOrThrow({
         where: { dm_key: dmKey },
+        include: CONVERSATION_PARTICIPANTS_INCLUDE,
       });
-      return this.toConversationSummary(row.id, callerUserId);
+      return this.summarizeConversation(row, callerUserId);
     }
   }
 
@@ -428,6 +516,7 @@ export class MessagingService {
                   classes: {
                     select: {
                       section: true,
+                      current_semester: true,
                       departments: { select: { code: true } },
                     },
                   },
@@ -535,43 +624,22 @@ export class MessagingService {
   ) {
     const conversation = await this.prisma.message_conversations.findUnique({
       where: { id: conversationId },
-      include: {
-        message_participants: {
-          include: {
-            users: {
-              select: {
-                id: true,
-                email: true,
-                roles: { select: { name: true } },
-                faculty: {
-                  select: {
-                    first_name: true,
-                    last_name: true,
-                    designation: true,
-                    departments: { select: { name: true, code: true } },
-                  },
-                },
-                students: {
-                  select: {
-                    classes: {
-                      select: {
-                        section: true,
-                        departments: { select: { code: true } },
-                      },
-                    },
-                    soa_applications: {
-                      select: { first_name: true, last_name: true },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
+      include: CONVERSATION_PARTICIPANTS_INCLUDE,
     });
     if (!conversation) return null;
+    return this.summarizeConversation(conversation, callerUserId);
+  }
 
+  /**
+   * Pure post-processing on an already-fetched row — split out of
+   * toConversationSummary() so getOrCreateConversation's existing-conversation
+   * path can reuse a row it already fetched with CONVERSATION_PARTICIPANTS_INCLUDE
+   * instead of querying for the exact same conversation a second time.
+   */
+  private async summarizeConversation(
+    conversation: ConversationWithParticipants,
+    callerUserId: number,
+  ) {
     const me = conversation.message_participants.find(
       (p) => p.user_id === callerUserId,
     );
@@ -580,28 +648,47 @@ export class MessagingService {
     );
     if (!otherParticipant) return null;
 
-    const lastMessage = conversation.last_message_id
-      ? await this.prisma.messages.findUnique({
-          where: { id: conversation.last_message_id },
-          select: {
-            id: true,
-            body: true,
-            sender_user_id: true,
-            created_at: true,
-            is_deleted_for_everyone: true,
-          },
-        })
-      : null;
+    // A conversation with no last_message_id yet has zero messages, full
+    // stop — no query needed to know its unread count is 0 or that it has
+    // no last message to fetch. This is the exact, common shape of a
+    // conversation opened straight from search results (created but never
+    // sent into yet), so skipping both round trips here is what makes that
+    // path fast instead of paying for a count() that could only ever be 0.
+    if (!conversation.last_message_id) {
+      return {
+        id: Number(conversation.id),
+        otherUser: {
+          userId: otherParticipant.users.id,
+          name: personDisplayName(otherParticipant.users),
+          roleLabel: personRoleLabel(otherParticipant.users),
+        },
+        lastMessage: null,
+        lastMessageAt: null,
+        unreadCount: 0,
+      };
+    }
 
-    const unread = await this.prisma.messages.count({
-      where: {
-        conversation_id: conversation.id,
-        sender_user_id: { not: callerUserId },
-        ...(me?.last_read_message_id
-          ? { id: { gt: me.last_read_message_id } }
-          : {}),
-      },
-    });
+    const [lastMessage, unread] = await Promise.all([
+      this.prisma.messages.findUnique({
+        where: { id: conversation.last_message_id },
+        select: {
+          id: true,
+          body: true,
+          sender_user_id: true,
+          created_at: true,
+          is_deleted_for_everyone: true,
+        },
+      }),
+      this.prisma.messages.count({
+        where: {
+          conversation_id: conversation.id,
+          sender_user_id: { not: callerUserId },
+          ...(me?.last_read_message_id
+            ? { id: { gt: me.last_read_message_id } }
+            : {}),
+        },
+      }),
+    ]);
 
     return {
       id: Number(conversation.id),

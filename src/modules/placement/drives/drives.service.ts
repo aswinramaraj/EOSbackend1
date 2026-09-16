@@ -727,6 +727,16 @@ export class DrivesService {
    * scoped to one class (the same drill-down the page's own filter uses),
    * so the exported file matches whatever's on screen.
    */
+  // Institution-wide, no-filter exports render fully synchronously and
+  // fully buffered in memory (see report-export.util.ts) — with neither
+  // batch_id nor class supplied this returned every student in one request,
+  // the single highest-priority finding in docs/production/PERFORMANCE_AUDIT.md
+  // §4. Fail fast with a clear message instead of silently rendering an
+  // arbitrarily large report on the one shared Node process. (Threshold is a
+  // placeholder pending real confirmation with Placement Cell on typical
+  // export sizes — raise it if a genuine, larger legitimate use case exists.)
+  private static readonly MAX_STUDENT_REPORT_EXPORT_ROWS = 2000;
+
   async buildStudentReportTable(
     batchId: number | undefined,
     classLabel?: string,
@@ -735,6 +745,13 @@ export class DrivesService {
     const rows = classLabel
       ? allRows.filter((r) => r.class_label === classLabel)
       : allRows;
+
+    if (rows.length > DrivesService.MAX_STUDENT_REPORT_EXPORT_ROWS) {
+      throw new BadRequestException({
+        message: `This export would include ${rows.length} students, above the ${DrivesService.MAX_STUDENT_REPORT_EXPORT_ROWS}-row limit. Narrow the report with a batch or class filter and try again.`,
+        errorCode: 'EXPORT_TOO_LARGE',
+      });
+    }
 
     const batch = batchId
       ? await this.prisma.batches.findUnique({
