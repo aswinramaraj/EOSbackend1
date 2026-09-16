@@ -205,6 +205,54 @@ export class MeFeesService {
       });
     }
 
+    return this.buildReceiptData(student, paymentId);
+  }
+
+  /**
+   * Same as getReceiptData, but for a student chosen by id rather than
+   * resolved from the caller's own JWT - used by ParentsService once it has
+   * verified (via parent_student_mapping) that the caller is actually this
+   * student's parent. Ownership of the payment against this exact
+   * studentId is still enforced below (buildReceiptData's
+   * RECEIPT_NOT_YOURS check), so a parent can never pull a sibling's or
+   * another family's receipt even with a guessed payment id.
+   */
+  async getReceiptDataForStudentId(
+    studentId: number,
+    paymentId: number,
+  ): Promise<FeeReceiptData> {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: {
+        id: true,
+        register_no: true,
+        roll_no: true,
+        classes: { select: { section: true } },
+        soa_applications: { select: { first_name: true, last_name: true } },
+        users: { select: { email: true } },
+      },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student profile not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    return this.buildReceiptData(student, paymentId);
+  }
+
+  private async buildReceiptData(
+    student: {
+      id: number;
+      register_no: string | null;
+      roll_no: string | null;
+      classes: { section: string } | null;
+      soa_applications: { first_name: string; last_name: string | null } | null;
+      users: { email: string };
+    },
+    paymentId: number,
+  ): Promise<FeeReceiptData> {
     const payment = await this.prisma.fee_payments.findUnique({
       where: { id: paymentId },
       select: {

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -16,6 +17,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { renderFeeReceiptPdf } from './receipt-pdf.util';
+import { renderMarksheetPdf } from './marksheet-pdf.util';
 import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -140,7 +142,7 @@ export class MeController {
    */
   @Get('profile')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.STUDENT)
+  @Roles(ROLES.STUDENT, ROLES.ALUMNI)
   getProfile(@CurrentUser() user: JwtPayload) {
     return this.meProfileService.getMyProfile(user.sub);
   }
@@ -205,12 +207,56 @@ export class MeController {
    */
   @Get('exam-results')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.STUDENT)
+  @Roles(ROLES.STUDENT, ROLES.ALUMNI)
   getExamResults(
     @CurrentUser() user: JwtPayload,
     @Query() dto: GetExamResultsDto,
   ) {
     return this.meExamResultsService.getMyExamResults(user.sub, dto);
+  }
+
+  /**
+   * GET /api/v1/me/exam-results/:semester/marksheet
+   *
+   * Self-scoped: student_id resolved from the JWT. Renders the requested
+   * semester's END SEMESTER exam results (not internals) as a PDF, in the
+   * same "Sri Eshwar College of Engineering" letterhead style as the fee
+   * receipt PDF (see receipt-pdf.util.ts / marksheet-pdf.util.ts). Returns
+   * a rendered PDF, not JSON — @Res() opts this handler out of the global
+   * response envelope, same pattern as getFeeReceipt above.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR             – semester out of range (1-8)
+   *  401 UNAUTHORIZED                 – missing/invalid JWT
+   *  403 FORBIDDEN                    – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND            – authenticated user has no linked student record
+   *  404 SEMESTER_EXAM_NOT_PUBLISHED  – this semester's end-semester exam has no published results yet
+   *  500 INTERNAL_ERROR               – unexpected server failure
+   */
+  @Get('exam-results/:semester/marksheet')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT, ROLES.ALUMNI)
+  async getMarksheet(
+    @Param('semester', new ParseIntPipe()) semester: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ) {
+    if (semester < 1 || semester > 8) {
+      throw new BadRequestException({
+        message: 'semester must be between 1 and 8',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    const sheet = await this.meExamResultsService.getMyMarksheetData(
+      user.sub,
+      semester,
+    );
+    const buffer = await renderMarksheetPdf(sheet);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="Marksheet-Sem${semester}.pdf"`,
+    });
+    res.send(buffer);
   }
 
   /**
@@ -809,7 +855,7 @@ export class MeController {
    */
   @Get('exam-schedule')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.STUDENT)
+  @Roles(ROLES.STUDENT, ROLES.ALUMNI)
   getExamSchedule(@CurrentUser() user: JwtPayload) {
     return this.meExamScheduleService.getMyExamSchedule(user.sub);
   }

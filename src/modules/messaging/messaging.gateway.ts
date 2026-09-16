@@ -234,6 +234,12 @@ export class MessagingGateway
       .socketsJoin(`conversation:${conversationId}`);
   }
 
+  leaveUserFromConversation(userId: number, conversationId: number): void {
+    this.server
+      .in(`user:${userId}`)
+      .socketsLeave(`conversation:${conversationId}`);
+  }
+
   /** Called by MessagingService after a REST edit/delete mutation commits, to broadcast the resulting change live to every participant. */
   pushToConversation(
     conversationId: number,

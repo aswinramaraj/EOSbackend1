@@ -771,7 +771,11 @@ export class AnnouncementsService {
       // HR & Payroll is the same shape — institution-wide, no department
       // linkage of its own (appraisal/payroll circulars go to every
       // faculty account, not one department).
-      context.role === ROLES.HR_PAYROLL
+      context.role === ROLES.HR_PAYROLL ||
+      // Stationary Portal's "Staff"/"All users" announcement audiences
+      // (see stationary/api/announcements.ts) — same institution-wide, no-
+      // department-of-its-own posture as Billing/IQAC/HR_PAYROLL above.
+      context.role === ROLES.STATIONARY
     ) {
       if (requestedDepartmentId === undefined) {
         return null;
@@ -1906,7 +1910,11 @@ export class AnnouncementsService {
       context.role === ROLES.SECRETARY ||
       context.role === ROLES.BILLING ||
       context.role === ROLES.IQAC ||
-      context.role === ROLES.MEDIA_ROOM
+      context.role === ROLES.MEDIA_ROOM ||
+      // Stationary Portal's "Students"/"All users" announcement audiences
+      // (see stationary/api/announcements.ts) — institution-wide, same
+      // unrestricted class selection as Billing/IQAC/Media Room above.
+      context.role === ROLES.STATIONARY
     ) {
       return;
     }

@@ -23,4 +23,9 @@ export const STORAGE_BUCKETS = {
   /** Department Document Management uploads (Secretary Portal) — dedicated
    * bucket, public, created via the Supabase Storage Management API. */
   DEPARTMENT_DOCUMENTS: 'department_documents',
+  /** Faculty class-group chat images — not yet confirmed to exist in the
+   * Supabase project, same caveat as VENUE_PHOTOS above; create it (public)
+   * before this feature's upload endpoint is exercised for real if
+   * StorageService.upload() doesn't auto-create it. */
+  GROUP_PHOTOS: 'group_photos',
 } as const;

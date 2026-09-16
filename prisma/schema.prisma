@@ -2521,6 +2521,8 @@ model users {
   medical_staff                                                                     medical_staff[]
   message_conversations                                                             message_conversations[]
   message_participants                                                              message_participants[]
+  message_requests_message_requests_sender_user_idTousers                          message_requests[]                      @relation("message_requests_message_requests_sender_user_idTousers")
+  message_requests_message_requests_receiver_user_idTousers                        message_requests[]                      @relation("message_requests_message_requests_receiver_user_idTousers")
   messages_messages_deleted_by_user_idTousers                                       messages[]                              @relation("messages_deleted_by_user_idTousers")
   messages_messages_sender_user_idTousers                                           messages[]                              @relation("messages_sender_user_idTousers")
   nba_evidence_items                                                                nba_evidence_items[]
@@ -5863,6 +5865,61 @@ model stationary_requests {
   @@index([user_id, created_at])
 }
 
+// Stationary Portal Operations page - "Printers & Machines" tab.
+model stationary_machines {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(100)
+  model      String   @db.VarChar(150)
+  category   String   @default("printer") @db.VarChar(20)
+  status     String   @default("working") @db.VarChar(20)
+  note       String?  @db.VarChar(300)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now()) @db.Timestamp(3)
+  updated_at DateTime @default(now()) @db.Timestamp(3)
+}
+
+// Stationary Portal Operations page - "Price Detail" tab's printing rate card.
+model stationary_print_rates {
+  id           Int      @id @default(autoincrement())
+  service      String   @db.VarChar(100)
+  paper_size   String   @db.VarChar(20)
+  bw_price     Decimal  @db.Decimal(10, 2)
+  bw_unit      String   @db.VarChar(20)
+  colour_price Decimal  @db.Decimal(10, 2)
+  colour_unit  String   @db.VarChar(20)
+  bulk_price   Decimal  @db.Decimal(10, 2)
+  bulk_unit    String   @db.VarChar(20)
+  sort_order   Int      @default(0)
+  created_at   DateTime @default(now()) @db.Timestamp(3)
+  updated_at   DateTime @default(now()) @db.Timestamp(3)
+}
+
+// Stationary Portal Operations page - "Price Detail" tab's binding & finishing list.
+model stationary_finishing_rates {
+  id         Int      @id @default(autoincrement())
+  item_name  String   @db.VarChar(100)
+  note       String?  @db.VarChar(150)
+  price      Decimal  @db.Decimal(10, 2)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now()) @db.Timestamp(3)
+  updated_at DateTime @default(now()) @db.Timestamp(3)
+}
+
+// Stationary Portal Dashboard's "Stock alerts" panel - paper/spiral-comb/
+// lamination-pouch levels. full_stock_quantity is "what 100% looks like"
+// for that item, so the dashboard bar can render quantity_left /
+// full_stock_quantity as a percent.
+model stationary_stock_items {
+  id                  Int      @id @default(autoincrement())
+  item_name           String   @unique @db.VarChar(150)
+  unit                String   @db.VarChar(50)
+  quantity_left       Int      @default(0)
+  full_stock_quantity Int
+  low_stock_threshold Int      @default(0)
+  created_at          DateTime @default(now()) @db.Timestamp(3)
+  updated_at          DateTime @default(now()) @db.Timestamp(3)
+}
+
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model subject_academic_clearance {
   id                               BigInt                        @id @default(autoincrement())
@@ -5890,6 +5947,7 @@ model message_conversations {
   is_group             Boolean                @default(false)
   dm_key               String?                @unique(map: "uniq_message_conversations_dm_key", where: raw("(dm_key IS NOT NULL)")) @db.VarChar(40)
   title                String?                @db.VarChar(150)
+  image_url            String?                @db.VarChar(500)
   created_by_user_id   Int
   last_message_id      BigInt?
   last_message_at      DateTime?              @db.Timestamptz(6)
@@ -5899,7 +5957,43 @@ model message_conversations {
   message_participants message_participants[]
   messages             messages[]
 
+  message_requests     message_requests[]
+
   @@index([last_message_at(sort: Desc)], map: "idx_message_conversations_last_message_at")
+}
+
+/// Tracks pending/accepted/rejected student-to-student DM chat requests and
+/// student-created-group invitations — the consent step that must happen
+/// before a student ever gets a real message_participants row (see
+/// message-requests.service.ts). Reuses message_conversations/
+/// message_participants for the actual messaging once accepted; this table
+/// never substitutes for either.
+model message_requests {
+  id                BigInt                 @id @default(autoincrement())
+  /// 'dm' | 'group_invite'
+  request_type      String                 @db.VarChar(20)
+  sender_user_id    Int
+  receiver_user_id  Int
+  /// dm: null until accepted, then the created/reused DM conversation.
+  /// group_invite: the (already-existing) group being invited into.
+  conversation_id   BigInt?
+  /// 'pending' | 'accepted' | 'rejected' | 'cancelled'
+  status            String                 @default("pending") @db.VarChar(20)
+  /// Non-null only while this row is "in the way" of a new duplicate request
+  /// (dm: pending or accepted; group_invite: pending only) — cleared to null
+  /// on reject/cancel to free the pair/slot for a future request. Same
+  /// nullable+partial-unique pattern as message_conversations.dm_key.
+  active_key        String?                @unique(map: "uniq_message_requests_active_key", where: raw("(active_key IS NOT NULL)")) @db.VarChar(60)
+  created_at        DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime               @default(now()) @db.Timestamptz(6)
+
+  sender       users                  @relation("message_requests_message_requests_sender_user_idTousers", fields: [sender_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  receiver     users                  @relation("message_requests_message_requests_receiver_user_idTousers", fields: [receiver_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  conversation message_conversations? @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([receiver_user_id, status], map: "idx_message_requests_receiver_status")
+  @@index([sender_user_id, status], map: "idx_message_requests_sender_status")
+  @@index([conversation_id], map: "idx_message_requests_conversation")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -5911,6 +6005,11 @@ model message_participants {
   last_read_message_id  BigInt?
   last_read_at          DateTime?             @db.Timestamptz(6)
   is_muted              Boolean               @default(false)
+  /// Personal-to-this-participant, same as is_muted above — pinning a
+  /// conversation never touches message_conversations.last_message_at or
+  /// affects any other participant's own row.
+  is_pinned             Boolean               @default(false)
+  pinned_at             DateTime?             @db.Timestamptz(6)
   message_conversations message_conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                 users                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -6841,6 +6940,10 @@ enum stationary_pages_enum {
 enum stationary_request_status_enum {
   pending_payment
   paid
+  processing
+  ready_for_pickup
+  completed
+  rejected
 }
 
 enum message_status_enum {

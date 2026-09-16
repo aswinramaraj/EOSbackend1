@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Post, Query, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -10,6 +11,8 @@ import { GetExamResultsDto } from 'src/modules/admissions/students/me-profile/dt
 import { GetMyTimetableQueryDto } from 'src/modules/faculty/timetable/dto/get-my-timetable-query.dto';
 import { CreateFeePaymentOrderDto } from 'src/modules/fees-billing/fee-payments/dto/create-fee-payment-order.dto';
 import { VerifyFeePaymentDto } from 'src/modules/fees-billing/fee-payments/dto/verify-fee-payment.dto';
+import { renderFeeReceiptPdf } from 'src/modules/admissions/students/me-profile/receipt-pdf.util';
+import { renderMarksheetPdf } from 'src/modules/admissions/students/me-profile/marksheet-pdf.util';
 import { ParentsService } from './parents.service';
 
 @Controller('me')
@@ -44,6 +47,33 @@ export class ParentsController {
     return this.parentsService.getChildPerformance(user.sub, studentId, query);
   }
 
+  /**
+   * GET /api/v1/me/children/:studentId/marksheet/:semester — Parent only,
+   * own child. Returns a rendered PDF, not JSON - same
+   * @Res()-opts-out-of-envelope pattern as getChildFeeReceipt below.
+   */
+  @Get('children/:studentId/marksheet/:semester')
+  async getChildMarksheet(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Param('semester', ParseIntPipe) semester: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ) {
+    if (semester < 1 || semester > 8) {
+      throw new BadRequestException({
+        message: 'semester must be between 1 and 8',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    const sheet = await this.parentsService.getChildMarksheet(user.sub, studentId, semester);
+    const buffer = await renderMarksheetPdf(sheet);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="Marksheet-Sem${semester}.pdf"`,
+    });
+    res.send(buffer);
+  }
+
   /** GET /api/v1/me/children/:studentId/fees — Parent only, own child. */
   @Get('children/:studentId/fees')
   getChildFees(
@@ -51,6 +81,28 @@ export class ParentsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.parentsService.getChildFees(user.sub, studentId);
+  }
+
+  /**
+   * GET /api/v1/me/children/:studentId/fees/payments/:paymentId/receipt —
+   * Parent only, own child. Returns a rendered PDF, not JSON - same
+   * @Res()-opts-out-of-envelope pattern as the student's own
+   * MeProfileController.getFeeReceipt.
+   */
+  @Get('children/:studentId/fees/payments/:paymentId/receipt')
+  async getChildFeeReceipt(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Param('paymentId', ParseIntPipe) paymentId: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ) {
+    const receipt = await this.parentsService.getChildFeeReceipt(user.sub, studentId, paymentId);
+    const buffer = await renderFeeReceiptPdf(receipt);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${receipt.receipt_no}.pdf"`,
+    });
+    res.send(buffer);
   }
 
   /** POST /api/v1/me/children/:studentId/fees/demands/:id/payment-order — Parent only, own child. */

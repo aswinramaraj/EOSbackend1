@@ -122,10 +122,44 @@ export class ParentsService {
     return this.meExamResultsService.getExamResultsForStudentId(studentId, dto);
   }
 
+  /**
+   * GET /me/children/:studentId/marksheet/:semester (Parent only). Same
+   * rendered PDF as the student's own marksheet download — see
+   * MeExamResultsService.getMarksheetDataForStudentId.
+   */
+  async getChildMarksheet(
+    parentUserId: number,
+    studentId: number,
+    semester: number,
+  ) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.meExamResultsService.getMarksheetDataForStudentId(
+      studentId,
+      semester,
+    );
+  }
+
   /** GET /me/children/:studentId/fees (Parent only). */
   async getChildFees(parentUserId: number, studentId: number) {
     await this.assertOwnChild(parentUserId, studentId);
     return this.meFeesService.getFeesForStudentId(studentId);
+  }
+
+  /**
+   * GET /me/children/:studentId/fees/payments/:paymentId/receipt (Parent
+   * only). Same rendered PDF as the student's own receipt download - see
+   * MeFeesService.getReceiptDataForStudentId, which independently re-checks
+   * that the payment actually belongs to this exact studentId (not just
+   * that the parent owns the child), so this can never leak a sibling's or
+   * another family's receipt even with a guessed payment id.
+   */
+  async getChildFeeReceipt(
+    parentUserId: number,
+    studentId: number,
+    paymentId: number,
+  ) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.meFeesService.getReceiptDataForStudentId(studentId, paymentId);
   }
 
   /** POST /me/children/:studentId/fees/demands/:id/payment-order (Parent only, own child). */

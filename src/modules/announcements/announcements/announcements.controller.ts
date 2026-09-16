@@ -69,6 +69,8 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.FINANCE,
+    // Stationary Portal's "Selected departments" announcement audience.
+    ROLES.STATIONARY,
   )
   lookupDepartments(@Query('batch_id', ParseIntPipe) batchId: number) {
     return this.announcementsService.lookupDepartmentsForBatch(batchId);
@@ -92,6 +94,8 @@ export class AnnouncementsController {
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.FINANCE,
+    // Stationary Portal's "Selected departments" announcement audience.
+    ROLES.STATIONARY,
   )
   lookupClasses(
     @Query('batch_id', ParseIntPipe) batchId: number,
@@ -123,7 +127,14 @@ export class AnnouncementsController {
    * every department) with no department/batch scope to narrow by.
    */
   @Get('lookup/all-classes')
-  @Roles(ROLES.HIGHER_EDUCATION, ROLES.BILLING, ROLES.IQAC, ROLES.MEDIA_ROOM)
+  @Roles(
+    ROLES.HIGHER_EDUCATION,
+    ROLES.BILLING,
+    ROLES.IQAC,
+    ROLES.MEDIA_ROOM,
+    // Stationary Portal's "All users"/"Students" announcement audiences.
+    ROLES.STATIONARY,
+  )
   lookupAllClasses() {
     return this.announcementsService.lookupAllClasses();
   }
@@ -170,6 +181,9 @@ export class AnnouncementsController {
     // Media Room publishes the college app Explore feed through this
     // controller. Restored after the hot-fix-krishna merge dropped it.
     ROLES.MEDIA_ROOM,
+    // Stationary Portal's own Announcements page (counter timing/rate
+    // changes/machine downtime notices to students/staff).
+    ROLES.STATIONARY,
   )
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }),
@@ -211,6 +225,9 @@ export class AnnouncementsController {
     // Media Room publishes the college app Explore feed through this
     // controller. Restored after the hot-fix-krishna merge dropped it.
     ROLES.MEDIA_ROOM,
+    // Stationary Portal's own Announcements page (counter timing/rate
+    // changes/machine downtime notices to students/staff).
+    ROLES.STATIONARY,
   )
   async create(
     @Body() dto: CreateAnnouncementDto,
@@ -329,6 +346,9 @@ export class AnnouncementsController {
     // Media Room publishes the college app Explore feed through this
     // controller. Restored after the hot-fix-krishna merge dropped it.
     ROLES.MEDIA_ROOM,
+    // Stationary Portal's own Announcements page (counter timing/rate
+    // changes/machine downtime notices to students/staff).
+    ROLES.STATIONARY,
   )
   async update(
     @Param('id', ParseIntPipe) id: number,
@@ -370,6 +390,9 @@ export class AnnouncementsController {
     // Media Room publishes the college app Explore feed through this
     // controller. Restored after the hot-fix-krishna merge dropped it.
     ROLES.MEDIA_ROOM,
+    // Stationary Portal's own Announcements page (counter timing/rate
+    // changes/machine downtime notices to students/staff).
+    ROLES.STATIONARY,
   )
   async patch(
     @Param('id', ParseIntPipe) id: number,
@@ -412,6 +435,9 @@ export class AnnouncementsController {
     // Media Room publishes the college app Explore feed through this
     // controller. Restored after the hot-fix-krishna merge dropped it.
     ROLES.MEDIA_ROOM,
+    // Stationary Portal's own Announcements page (counter timing/rate
+    // changes/machine downtime notices to students/staff).
+    ROLES.STATIONARY,
   )
   async remove(
     @Param('id', ParseIntPipe) id: number,
