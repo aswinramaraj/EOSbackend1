@@ -28,11 +28,14 @@ export class FacultyReportsService {
    * student in every class this faculty is mapped to teach
    * (faculty_subject_class_mapping — the same "classes you handle" set the
    * Reports page's other KPIs already use), grouped by the Monday of each
-   * ISO week. Only the most recent WEEKS_RETURNED weeks that actually have
-   * at least one record are returned — no invented zero-filled weeks for
-   * periods before the faculty had any classes.
+   * ISO week. With no from/to, only the most recent WEEKS_RETURNED weeks
+   * that actually have at least one record are returned — no invented
+   * zero-filled weeks for periods before the faculty had any classes. With
+   * from/to (the Reports page's date-range filter), every week in that
+   * range is returned instead, uncapped — the caller explicitly asked for
+   * that window, so trimming it would silently drop real data.
    */
-  async getWeeklyAttendanceTrend(userId: number) {
+  async getWeeklyAttendanceTrend(userId: number, from?: string, to?: string) {
     const faculty = await this.prisma.faculty.findUnique({
       where: { user_id: userId },
     });
@@ -60,8 +63,17 @@ export class FacultyReportsService {
       return { weeks: [] };
     }
 
+    const hasRange = Boolean(from || to);
     const records = await this.prisma.attendance_records.findMany({
-      where: { student_id: { in: studentIds } },
+      where: {
+        student_id: { in: studentIds },
+        attendance_date: hasRange
+          ? {
+              gte: from ? new Date(from) : undefined,
+              lte: to ? new Date(to) : undefined,
+            }
+          : undefined,
+      },
       select: { attendance_date: true, status: true },
     });
 
@@ -74,14 +86,14 @@ export class FacultyReportsService {
       byWeek.set(weekStart, entry);
     }
 
-    const weeks = [...byWeek.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-WEEKS_RETURNED)
-      .map(([week_start, { present, total }]) => ({
+    const sorted = [...byWeek.entries()].sort(([a], [b]) => a.localeCompare(b));
+    const weeks = (hasRange ? sorted : sorted.slice(-WEEKS_RETURNED)).map(
+      ([week_start, { present, total }]) => ({
         week_start,
         present_percent: Math.round((present / total) * 10000) / 100,
         marked_count: total,
-      }));
+      }),
+    );
 
     return { weeks };
   }

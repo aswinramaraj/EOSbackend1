@@ -414,6 +414,39 @@ describe('AppraisalService', () => {
       expect(prisma.users.findMany).not.toHaveBeenCalled();
     });
 
+    it('persists the HoD reject reason to hod_remarks (previously silently dropped)', async () => {
+      prisma.appraisal_requests.findUnique.mockResolvedValue({
+        faculty_id: 5,
+        status: 'submitted',
+        faculty: { department_id: 2 },
+      });
+      prisma.faculty.findUnique.mockImplementation(({ where }: any) =>
+        where.user_id === 23
+          ? Promise.resolve({ id: 9, department_id: 2 })
+          : where.id === 5
+            ? Promise.resolve({ user_id: 501 })
+            : Promise.resolve(null),
+      );
+      prisma.appraisal_requests.update.mockResolvedValue(requestRow({ status: 'rejected' }));
+
+      await service.update(
+        1,
+        { status: 'rejected', remarks: 'Missing supporting documents' } as any,
+        { sub: 23, role: ROLES.HOD } as any,
+      );
+
+      expect(prisma.appraisal_requests.update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: {
+          status: 'rejected',
+          hod_reviewed_by: 23,
+          hod_reviewed_at: expect.any(Date),
+          hod_remarks: 'Missing supporting documents',
+        },
+        select: expect.any(Object),
+      });
+    });
+
     it('throws 409 when a HOD caller reviews a request that has already moved past submitted', async () => {
       prisma.appraisal_requests.findUnique.mockResolvedValue({
         status: 'hod_reviewed',

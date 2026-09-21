@@ -80,9 +80,9 @@ export class ClassMentorsController {
   }
 
   /**
-   * GET /api/v1/me/mentees/:student_id/report — Faculty only (the mentee's
-   * class mentor). Sensitive — includes Aadhar/PAN, deliberately separate
-   * from /profile.
+   * GET /api/v1/me/mentees/:student_id/report — Faculty or HoD (the
+   * mentee's class mentor). Sensitive — includes Aadhar/PAN, deliberately
+   * separate from /profile.
    */
   @Get('mentees/:student_id/report')
   @Roles(ROLES.FACULTY, ROLES.HOD)
@@ -94,11 +94,11 @@ export class ClassMentorsController {
   }
 
   /**
-   * GET /api/v1/me/mentees/:student_id/documents — Faculty only (the
+   * GET /api/v1/me/mentees/:student_id/documents — Faculty or HoD (the
    * mentee's class mentor). Real `student_certificates` rows (admin-set
    * is_available/file_url/verified_at, one per certificate_types entry) —
    * this table existed in the schema with zero endpoints anywhere reading
-   * it before this; same mentor-only auth pattern as /profile and /report.
+   * it before this; same mentor-scoped auth pattern as /profile and /report.
    */
   @Get('mentees/:student_id/documents')
   @Roles(ROLES.FACULTY, ROLES.HOD)
@@ -109,7 +109,7 @@ export class ClassMentorsController {
     return this.classMentorsService.getMenteeDocuments(studentId, user.sub);
   }
 
-  /** GET /api/v1/me/mentees/:student_id/placements — Faculty only (the mentee's class mentor). */
+  /** GET /api/v1/me/mentees/:student_id/placements — Faculty or HoD (the mentee's class mentor). */
   @Get('mentees/:student_id/placements')
   @Roles(ROLES.FACULTY, ROLES.HOD)
   getMenteePlacements(
@@ -120,8 +120,8 @@ export class ClassMentorsController {
   }
 
   /**
-   * GET /api/v1/me/mentees/:student_id/academic-record — Faculty only (the
-   * mentee's class mentor). Semester-wise GPA, monthly attendance and
+   * GET /api/v1/me/mentees/:student_id/academic-record — Faculty or HoD
+   * (the mentee's class mentor). Semester-wise GPA, monthly attendance and
    * per-subject internal/end-sem/grade/attendance — see
    * getMenteeAcademicRecord's doc comment for exactly what is and isn't
    * derived here.

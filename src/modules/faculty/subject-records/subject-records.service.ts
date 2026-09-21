@@ -52,6 +52,8 @@ const MAPPING_SELECT = {
       id: true,
       academic_year: true,
       semester: true,
+      start_date: true,
+      end_date: true,
       exam_types: { select: { id: true, name: true, category: true } },
     },
   },
@@ -72,6 +74,8 @@ type MappingRow = {
     id: number;
     academic_year: string;
     semester: number;
+    start_date: Date | null;
+    end_date: Date | null;
     exam_types: { id: number; name: string; category: 'internal' | 'external' };
   };
 };
@@ -94,6 +98,8 @@ function toSummary(mapping: MappingRow, enteredCount: number) {
       category: mapping.exams.exam_types.category,
       academic_year: mapping.exams.academic_year,
       semester: mapping.exams.semester,
+      start_date: mapping.exams.start_date?.toISOString().slice(0, 10) ?? null,
+      end_date: mapping.exams.end_date?.toISOString().slice(0, 10) ?? null,
     },
     is_published: mapping.is_published,
     published_at: mapping.published_at,
@@ -116,12 +122,11 @@ export class SubjectRecordsService {
   async findMappings(userId: number) {
     const faculty = await this.resolveFacultyByUserId(userId);
 
-    const taughtMappings = await this.prisma.faculty_subject_class_mapping.findMany(
-      {
+    const taughtMappings =
+      await this.prisma.faculty_subject_class_mapping.findMany({
         where: { faculty_id: faculty.id },
         select: { subject_id: true, class_id: true },
-      },
-    );
+      });
     if (taughtMappings.length === 0) {
       return [];
     }

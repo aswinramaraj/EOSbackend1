@@ -8,6 +8,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { CreatePayslipRequestDto } from './dto/create-payslip-request.dto';
 import { UpdatePayslipRequestDto } from './dto/update-payslip-request.dto';
@@ -325,8 +326,30 @@ export class PayslipRequestsService {
       select: PAYSLIP_SELECT,
     });
 
+    await this.trySetRejectionReason(id, dto.rejection_reason);
     this.logger.log(`Payslip request ${id} updated to status=${dto.status}`);
     return toResponse(updated);
+  }
+
+  /**
+   * `rejection_reason` is real once decision_reason_columns.query.md's
+   * payslip_requests.rejection_reason runs — silently no-ops on an
+   * undefined-column error until then.
+   */
+  private async trySetRejectionReason(
+    id: number,
+    rejectionReason: string | undefined,
+  ) {
+    if (!rejectionReason) return;
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE payslip_requests SET rejection_reason = ${rejectionReason} WHERE id = ${id}`;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'rejection_reason')) {
+        return;
+      }
+      throw err;
+    }
   }
 
   /**

@@ -13,10 +13,18 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import { CreateRevaluationDto } from './dto/create-revaluation.dto';
 import { UpdateRevaluationDto } from './dto/update-revaluation.dto';
 
-const VALID_STATUSES = ['requested', 'under_review', 'revised', 'no_change', 'approved', 'rejected'];
+const VALID_STATUSES = [
+  'requested',
+  'under_review',
+  'revised',
+  'no_change',
+  'approved',
+  'rejected',
+];
 
 /**
  * Prisma Decimal fields serialize to JSON as strings (decimal.js's toJSON is
@@ -25,7 +33,12 @@ const VALID_STATUSES = ['requested', 'under_review', 'revised', 'no_change', 'ap
  * number instead of a real currency total. Convert at the API boundary, same
  * pattern as certificate-requests.service.ts's withNumericFee.
  */
-function withNumericFee<T extends { fee_amount: Prisma.Decimal | null; revised_marks: Prisma.Decimal | null }>(row: T) {
+function withNumericFee<
+  T extends {
+    fee_amount: Prisma.Decimal | null;
+    revised_marks: Prisma.Decimal | null;
+  },
+>(row: T) {
   return {
     ...row,
     fee_amount: row.fee_amount != null ? Number(row.fee_amount) : null,
@@ -33,7 +46,9 @@ function withNumericFee<T extends { fee_amount: Prisma.Decimal | null; revised_m
   };
 }
 
-const STUDENT_INCLUDE = { soa_applications: { select: { first_name: true, last_name: true } } } as const;
+const STUDENT_INCLUDE = {
+  soa_applications: { select: { first_name: true, last_name: true } },
+} as const;
 const FACULTY_SELECT = { id: true, first_name: true, last_name: true } as const;
 const EXAM_MARKS_INCLUDE = {
   include: {
@@ -41,7 +56,12 @@ const EXAM_MARKS_INCLUDE = {
       include: {
         exams: true,
         subjects: true,
-        classes: { select: { department_id: true, departments: { select: { code: true, name: true } } } },
+        classes: {
+          select: {
+            department_id: true,
+            departments: { select: { code: true, name: true } },
+          },
+        },
       },
     },
   },
@@ -54,11 +74,14 @@ export class RevaluationService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(createRevaluationDto: CreateRevaluationDto, user: JwtPayload) {
-    const { exam_marks_id, request_kind, remarks, fee_paid } = createRevaluationDto;
+    const { exam_marks_id, request_kind, remarks, fee_paid } =
+      createRevaluationDto;
 
     const examMark = await this.prisma.exam_marks.findUnique({
       where: { id: exam_marks_id },
-      include: { exam_subject_mapping: { select: { exam_id: true, subject_id: true } } },
+      include: {
+        exam_subject_mapping: { select: { exam_id: true, subject_id: true } },
+      },
     });
 
     if (!examMark) {
@@ -108,7 +131,9 @@ export class RevaluationService {
     // Real fee comes from the exam's own revaluation window when one has
     // been configured; falls back to null (shown as "—", not a fabricated
     // number) rather than a hardcoded amount when no window exists yet.
-    const window = await this.prisma.revaluation_windows.findUnique({ where: { exam_id: examMark.exam_subject_mapping.exam_id } });
+    const window = await this.prisma.revaluation_windows.findUnique({
+      where: { exam_id: examMark.exam_subject_mapping.exam_id },
+    });
 
     try {
       const created = await this.prisma.revaluation_requests.create({
@@ -139,14 +164,28 @@ export class RevaluationService {
       where: { id },
       include: {
         students: { select: { user_id: true } },
-        exam_marks: { include: { exam_subject_mapping: { include: { subjects: { select: { name: true, subject_code: true } } } } } },
+        exam_marks: {
+          include: {
+            exam_subject_mapping: {
+              include: {
+                subjects: { select: { name: true, subject_code: true } },
+              },
+            },
+          },
+        },
       },
     });
     if (!request) {
-      throw new NotFoundException({ message: 'Revaluation request not found.', errorCode: 'REVALUATION_REQUEST_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Revaluation request not found.',
+        errorCode: 'REVALUATION_REQUEST_NOT_FOUND',
+      });
     }
     if (request.fee_paid) {
-      throw new ConflictException({ message: 'This application’s fee is already marked paid.', errorCode: 'FEE_ALREADY_PAID' });
+      throw new ConflictException({
+        message: 'This application’s fee is already marked paid.',
+        errorCode: 'FEE_ALREADY_PAID',
+      });
     }
 
     return this.prisma.notifications.create({
@@ -231,7 +270,8 @@ export class RevaluationService {
       });
     }
 
-    const { status, revised_marks, evaluator_faculty_id } = updateRevaluationDto;
+    const { status, revised_marks, evaluator_faculty_id } =
+      updateRevaluationDto;
 
     // Was previously hard-locked to "only while status === requested", so
     // approved/rejected (real enum values) could never actually be reached —
@@ -240,7 +280,13 @@ export class RevaluationService {
     // straightforward one); once under_review/revised/no_change, only the
     // final approve/reject remains; approved/rejected is terminal.
     const ALLOWED_NEXT: Record<string, string[]> = {
-      requested: ['under_review', 'revised', 'no_change', 'approved', 'rejected'],
+      requested: [
+        'under_review',
+        'revised',
+        'no_change',
+        'approved',
+        'rejected',
+      ],
       under_review: ['revised', 'no_change', 'approved', 'rejected'],
       revised: ['approved', 'rejected'],
       no_change: ['approved', 'rejected'],
@@ -256,7 +302,10 @@ export class RevaluationService {
           errorCode: 'REVALUATION_INVALID_TRANSITION',
         });
       }
-    } else if (existing.status === 'approved' || existing.status === 'rejected') {
+    } else if (
+      existing.status === 'approved' ||
+      existing.status === 'rejected'
+    ) {
       throw new ConflictException({
         message: 'This revaluation request has already been processed.',
         errorCode: 'REVALUATION_ALREADY_PROCESSED',
@@ -280,7 +329,9 @@ export class RevaluationService {
     }
 
     if (evaluator_faculty_id !== undefined) {
-      const faculty = await this.prisma.faculty.findUnique({ where: { id: evaluator_faculty_id } });
+      const faculty = await this.prisma.faculty.findUnique({
+        where: { id: evaluator_faculty_id },
+      });
       if (!faculty) {
         throw new NotFoundException({
           message: 'Faculty not found.',
@@ -296,7 +347,10 @@ export class RevaluationService {
           status,
           revised_marks,
           evaluator_faculty_id,
-          resolved_at: status === 'approved' || status === 'rejected' ? new Date() : undefined,
+          resolved_at:
+            status === 'approved' || status === 'rejected'
+              ? new Date()
+              : undefined,
         },
       });
 
@@ -312,6 +366,11 @@ export class RevaluationService {
         });
       }
 
+      await this.trySetDecisionRemarks(
+        id,
+        updateRevaluationDto.decision_remarks,
+      );
+
       return withNumericFee(updated);
     } catch (err: any) {
       if (err?.code === 'P2025') {
@@ -326,6 +385,30 @@ export class RevaluationService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
+    }
+  }
+
+  /**
+   * Real once decision_reason_columns.query.md's revaluation_requests.
+   * decision_remarks runs — silently no-ops (reason not persisted) until
+   * then, same convention as HodApprovalsService's trySet*Remarks methods.
+   */
+  private async trySetDecisionRemarks(
+    id: number,
+    decisionRemarks: string | undefined,
+  ) {
+    if (!decisionRemarks) return;
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE revaluation_requests SET decision_remarks = ${decisionRemarks} WHERE id = ${id}`;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'decision_remarks')) {
+        this.logger.warn(
+          'revaluation_requests.decision_remarks missing — see decision_reason_columns.query.md; reason not persisted',
+        );
+        return;
+      }
+      throw err;
     }
   }
 

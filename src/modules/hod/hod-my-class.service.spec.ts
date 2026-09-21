@@ -13,13 +13,10 @@ describe('HodMyClassService', () => {
   let service: HodMyClassService;
   let prisma: {
     faculty: { findUnique: jest.Mock };
-    faculty_subject_class_mapping: {
-      findFirst: jest.Mock;
-      findMany: jest.Mock;
-    };
-    timetable_slots: { groupBy: jest.Mock };
-    assignments: { groupBy: jest.Mock };
-    lms_notes: { groupBy: jest.Mock };
+    faculty_subject_class_mapping: { findMany: jest.Mock };
+    exam_subject_mapping: { findMany: jest.Mock };
+    exam_marks: { findMany: jest.Mock };
+    students: { findMany: jest.Mock };
   };
   const user: JwtPayload = {
     sub: 1,
@@ -30,13 +27,10 @@ describe('HodMyClassService', () => {
   beforeEach(async () => {
     prisma = {
       faculty: { findUnique: jest.fn() },
-      faculty_subject_class_mapping: {
-        findFirst: jest.fn(),
-        findMany: jest.fn(),
-      },
-      timetable_slots: { groupBy: jest.fn() },
-      assignments: { groupBy: jest.fn() },
-      lms_notes: { groupBy: jest.fn() },
+      faculty_subject_class_mapping: { findMany: jest.fn() },
+      exam_subject_mapping: { findMany: jest.fn().mockResolvedValue([]) },
+      exam_marks: { findMany: jest.fn().mockResolvedValue([]) },
+      students: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -49,43 +43,40 @@ describe('HodMyClassService', () => {
     service = module.get<HodMyClassService>(HodMyClassService);
   });
 
-  describe('getCurrentSemester', () => {
+  describe('getSubjectRecords (exercises the private getHandledClasses helper)', () => {
     it('throws 404 when the JWT user has no linked faculty record', async () => {
       prisma.faculty.findUnique.mockResolvedValue(null);
 
-      await expect(service.getCurrentSemester(user)).rejects.toThrow(
+      await expect(service.getSubjectRecords(user)).rejects.toThrow(
         NotFoundException,
       );
     });
 
-    it('returns an empty subject list when the HOD has no handled-class mappings', async () => {
-      prisma.faculty.findUnique.mockResolvedValue({
-        id: 5,
-        first_name: 'R',
-        last_name: 'Subha',
-      });
-      prisma.faculty_subject_class_mapping.findFirst.mockResolvedValue(null);
+    it('returns an empty handled-classes list when the HOD teaches nothing', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 5 });
+      prisma.faculty_subject_class_mapping.findMany.mockResolvedValue([]);
 
-      const result = await service.getCurrentSemester(user);
+      const result = await service.getSubjectRecords(user);
 
-      expect(result).toEqual({ academic_year: null, subjects: [] });
-      expect(prisma.timetable_slots.groupBy).not.toHaveBeenCalled();
+      expect(result.handled_classes).toEqual([]);
+      expect(result.selected_class).toBeNull();
     });
 
-    it('batches hours/tasks/materials via 3 groupBy calls (not one query per mapping) and maps counts by class+subject', async () => {
-      prisma.faculty.findUnique.mockResolvedValue({
-        id: 5,
-        first_name: 'R',
-        last_name: 'Subha',
-      });
-      prisma.faculty_subject_class_mapping.findFirst.mockResolvedValue({
-        academic_year: '2025-2026',
-      });
+    it('keeps a mapping whose academic_year string sorts lower even though it is a different, still-current (subject,class) combo — the ported year-parsing fix', async () => {
+      // Same real scenario TimetableService.getCurrentSemesterForFaculty's
+      // own fix documents: two DIFFERENT (subject,class) combos, taught at
+      // the same time, whose academic_year strings sort the "wrong" way
+      // lexicographically ("2026-27" > "2026-2007" as text, even though
+      // neither is actually older/newer than the other — they're just
+      // different batches). The old single-global-"latest" findFirst
+      // would have picked one academic_year value and silently dropped
+      // every mapping under the other.
+      prisma.faculty.findUnique.mockResolvedValue({ id: 5 });
       prisma.faculty_subject_class_mapping.findMany.mockResolvedValue([
         {
           class_id: 20,
           subject_id: 10,
-          academic_year: '2025-2026',
+          academic_year: '2026-2007', // leadingYear 2026, sorts LOWER as text than "2026-27"
           classes: {
             section: 'A',
             current_semester: 7,
@@ -96,7 +87,7 @@ describe('HodMyClassService', () => {
         {
           class_id: 21,
           subject_id: 11,
-          academic_year: '2025-2026',
+          academic_year: '2026-27',
           classes: {
             section: 'B',
             current_semester: 5,
@@ -105,41 +96,49 @@ describe('HodMyClassService', () => {
           subjects: { name: 'Networks', subject_code: 'CS8551' },
         },
       ]);
-      prisma.timetable_slots.groupBy.mockResolvedValue([
-        { class_id: 20, subject_id: 10, _count: { _all: 3 } },
-      ]);
-      prisma.assignments.groupBy.mockResolvedValue([
-        { class_id: 20, subject_id: 10, _count: { _all: 4 } },
-        { class_id: 21, subject_id: 11, _count: { _all: 1 } },
-      ]);
-      prisma.lms_notes.groupBy.mockResolvedValue([
-        { class_id: 21, subject_id: 11, _count: { _all: 6 } },
-      ]);
 
-      const result = await service.getCurrentSemester(user);
+      const result = await service.getSubjectRecords(user);
 
-      // Exactly 3 DB round trips for counts, regardless of mapping count.
-      expect(prisma.timetable_slots.groupBy).toHaveBeenCalledTimes(1);
-      expect(prisma.assignments.groupBy).toHaveBeenCalledTimes(1);
-      expect(prisma.lms_notes.groupBy).toHaveBeenCalledTimes(1);
+      expect(result.handled_classes).toEqual([
+        expect.objectContaining({ class_id: 20, subject_id: 10 }),
+        expect.objectContaining({ class_id: 21, subject_id: 11 }),
+      ]);
+    });
 
-      expect(result.academic_year).toBe('2025-2026');
-      expect(result.subjects).toEqual([
-        expect.objectContaining({
+    it('keeps only the most recent row per (subject,class) combo when the same combo has multiple historical mapping rows', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 5 });
+      prisma.faculty_subject_class_mapping.findMany.mockResolvedValue([
+        {
           class_id: 20,
           subject_id: 10,
-          hours_per_week: 3,
-          tasks_count: 4,
-          materials_count: 0,
-        }),
-        expect.objectContaining({
-          class_id: 21,
-          subject_id: 11,
-          hours_per_week: 0,
-          tasks_count: 1,
-          materials_count: 6,
-        }),
+          academic_year: '2022-2023',
+          classes: {
+            section: 'A',
+            current_semester: 7,
+            departments: { name: 'CSE' },
+          },
+          subjects: { name: 'Cryptography', subject_code: 'CS8792' },
+        },
+        {
+          class_id: 20,
+          subject_id: 10,
+          academic_year: '2026-2027',
+          classes: {
+            section: 'A',
+            current_semester: 7,
+            departments: { name: 'CSE' },
+          },
+          subjects: { name: 'Cryptography', subject_code: 'CS8792' },
+        },
       ]);
+
+      const result = await service.getSubjectRecords(user);
+
+      expect(result.handled_classes).toHaveLength(1);
+      expect(result.handled_classes[0]).toMatchObject({
+        class_id: 20,
+        subject_id: 10,
+      });
     });
   });
 });

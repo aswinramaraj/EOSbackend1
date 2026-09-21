@@ -290,6 +290,7 @@ export class FacultyLeavesService {
           from_date: fromDate,
           to_date: toDate,
           reason: dto.reason,
+          leave_type_id: dto.leave_type_id,
           hod_approval_status: 'approved',
           hr_approval_status: isPrincipal ? 'approved' : undefined,
           correspondent_approval_status: isPrincipal ? 'pending' : undefined,

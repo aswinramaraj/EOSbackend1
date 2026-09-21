@@ -404,28 +404,52 @@ export class PrincipalDashboardService {
     }
   }
 
+  /**
+   * `drive_type` is real once internship_drive_type.query.md runs — the
+   * raw query returns no rows (no filtering) until then, so this
+   * full-time-placement summary is unaffected either way.
+   */
+  private async internshipDriveIds(): Promise<Set<number>> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM placement_drives WHERE drive_type = 'internship'
+      `;
+      return new Set(rows.map((r) => r.id));
+    } catch {
+      return new Set();
+    }
+  }
+
   private async placementSummary() {
     const today = startOfToday();
     const weekFromNow = new Date(today);
     weekFromNow.setDate(weekFromNow.getDate() + 7);
 
-    const [drives, applications, registeredStudentIds] = await Promise.all([
-      this.prisma.placement_drives.findMany({
-        select: {
-          id: true,
-          company_id: true,
-          status: true,
-          scheduled_date: true,
-        },
-      }),
-      this.prisma.student_drive_applications.findMany({
-        select: { status: true, offered_package: true },
-      }),
-      this.prisma.student_drive_applications.findMany({
-        select: { student_id: true },
-        distinct: ['student_id'],
-      }),
-    ]);
+    const [allDrives, allApplications, registeredStudentIds, internshipIds] =
+      await Promise.all([
+        this.prisma.placement_drives.findMany({
+          select: {
+            id: true,
+            company_id: true,
+            status: true,
+            scheduled_date: true,
+          },
+        }),
+        this.prisma.student_drive_applications.findMany({
+          select: { drive_id: true, status: true, offered_package: true },
+        }),
+        this.prisma.student_drive_applications.findMany({
+          select: { student_id: true },
+          distinct: ['student_id'],
+        }),
+        this.internshipDriveIds(),
+      ]);
+    // Full-time-placement summary — excludes internship drives (see
+    // internship_drive_type.query.md; Internships get their own view).
+    const drives = allDrives.filter((d) => !internshipIds.has(d.id));
+    const applications = allApplications.filter(
+      (a) => !internshipIds.has(a.drive_id),
+    );
 
     const companiesVisited = new Set(drives.map((d) => d.company_id)).size;
     const drivesThisWeek = drives.filter(

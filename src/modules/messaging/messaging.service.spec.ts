@@ -18,7 +18,7 @@ describe('MessagingService', () => {
       findUnique: jest.Mock;
       findUniqueOrThrow: jest.Mock;
     };
-    users: { findUnique: jest.Mock };
+    users: { findUnique: jest.Mock; findMany: jest.Mock };
     messages: { findUnique: jest.Mock; count: jest.Mock };
     $transaction: jest.Mock;
   };
@@ -43,10 +43,19 @@ describe('MessagingService', () => {
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn(),
       },
-      users: { findUnique: jest.fn() },
+      users: { findUnique: jest.fn(), findMany: jest.fn() },
       messages: { findUnique: jest.fn(), count: jest.fn() },
       $transaction: jest.fn(),
     };
+    // assertCanMessage now always looks up the other party's role (see its
+    // own doc comment — needed so the canteen_admin-not-messageable rule
+    // applies regardless of the sender's role, not just for a student
+    // sender). Defaulted here to a harmless role so every test below is
+    // exercising the getOrCreateConversation behavior under test, not this
+    // unrelated precondition.
+    prisma.users.findUnique.mockResolvedValue({
+      roles: { name: ROLES.FACULTY },
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -160,6 +169,41 @@ describe('MessagingService', () => {
         lastMessage: { id: 500, body: 'hello' },
         unreadCount: 3,
       });
+    });
+  });
+
+  describe.each([
+    ['canteen_admin', ROLES.CANTEEN_ADMIN],
+    ['canteen_cashier', ROLES.CANTEEN_CASHIER],
+  ])('%s is not messageable', (_label, excludedRole) => {
+    // Regression coverage: each shared operational account must be
+    // unreachable through messaging from ANY sender role, not just students
+    // — a separate rule from the student-to-student block, and must not
+    // silently rely on the sender being a student (assertCanMessage used to
+    // skip its DB check entirely for a non-student sender, which would have
+    // let this rule through unenforced for e.g. an HOD sender).
+    it(`blocks getOrCreateConversation when the target is ${excludedRole}, even for a non-student sender`, async () => {
+      prisma.users.findUnique.mockResolvedValue({
+        roles: { name: excludedRole },
+      });
+
+      await expect(
+        service.getOrCreateConversation(1, ROLES.HOD, 2),
+      ).rejects.toThrow('This account cannot be messaged.');
+
+      // Must be rejected before ever touching the conversation table.
+      expect(prisma.message_conversations.findUnique).not.toHaveBeenCalled();
+    });
+
+    it(`excludes ${excludedRole} from every caller's searchPeople results, not just a student caller`, async () => {
+      prisma.users.findMany.mockResolvedValue([]);
+
+      await service.searchPeople(1, ROLES.HOD, { q: 'anything' });
+
+      const call = prisma.users.findMany.mock.calls[0] as [
+        { where: { roles: { name: { notIn: string[] } } } },
+      ];
+      expect(call[0].where.roles.name.notIn).toContain(excludedRole);
     });
   });
 });

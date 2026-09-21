@@ -229,6 +229,10 @@ import { CoeBroadcastsModule } from './modules/notifications/coe-broadcasts/coe-
 import { NotificationsRestModule } from './modules/notifications/notifications-rest/notifications-rest.module';
 import { FeedbackModule } from './modules/feedback/feedback/feedback.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
+import { CanteenAdminModule } from './modules/canteen-admin/canteen-admin.module';
+import { CanteenCashierModule } from './modules/canteen-cashier/canteen-cashier.module';
+import { CanteenOrderingModule } from './modules/canteen-ordering/canteen-ordering.module';
+import { CanteenQueueModule } from './modules/canteen-queue/canteen-queue.module';
 import { AcademicCoordinatorFacultyModule } from './modules/academic-coordinator/faculty/academic-coordinator-faculty.module';
 import { AcademicCoordinatorAttendanceModule } from './modules/academic-coordinator/attendance/academic-coordinator-attendance.module';
 import { AcademicCoordinatorCourseProgressModule } from './modules/academic-coordinator/course-progress/academic-coordinator-course-progress.module';
@@ -499,6 +503,10 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     NotificationsRestModule,
     FeedbackModule,
     MessagingModule,
+    CanteenAdminModule,
+    CanteenCashierModule,
+    CanteenOrderingModule,
+    CanteenQueueModule,
     AcademicCoordinatorFacultyModule,
     AcademicCoordinatorAttendanceModule,
     AcademicCoordinatorCourseProgressModule,

@@ -1,4 +1,5 @@
 import { IsIn } from 'class-validator';
+import { OptionalRemarks } from 'src/common/dto/decision-reason.dto';
 
 /**
  * PATCH /me/service-requests/:id/review (Admin only).
@@ -9,4 +10,8 @@ import { IsIn } from 'class-validator';
 export class ReviewServiceRequestDto {
   @IsIn(['approved', 'rejected'])
   decision: 'approved' | 'rejected';
+
+  /** Real once decision_reason_columns.query.md's secretary_service_requests.remarks runs — accepted but silently dropped by the service's $executeRaw fallback until then. */
+  @OptionalRemarks()
+  remarks?: string;
 }

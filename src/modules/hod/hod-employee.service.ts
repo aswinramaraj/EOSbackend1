@@ -4,13 +4,11 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { FacultyAttendanceService } from '../faculty/faculty-attendance/faculty-attendance.service';
 import { FacultyLeavesService } from '../faculty/faculty-leaves/faculty-leaves.service';
 import { FacultyOdService } from '../faculty/faculty-od/faculty-od.service';
-import { HrQueriesService } from '../faculty/hr-queries/hr-queries.service';
 import { PayslipRequestsService } from '../faculty/payslip-requests/payslip-requests.service';
 import { AppraisalService } from '../faculty/appraisal/appraisal.service';
 import { LibrarySettingsService } from '../library/settings/settings.service';
 import { CreateFacultyLeafDto } from '../faculty/faculty-leaves/dto/create-faculty-leaf.dto';
 import { CreateFacultyOdDto } from '../faculty/faculty-od/dto/create-faculty-od.dto';
-import { CreateHrQueryDto } from '../faculty/hr-queries/dto/create-hr-query.dto';
 import { CreatePayslipRequestDto } from '../faculty/payslip-requests/dto/create-payslip-request.dto';
 import { CreateAppraisalDto } from '../faculty/appraisal/dto/create-appraisal.dto';
 
@@ -86,7 +84,6 @@ export class HodEmployeeService {
     private readonly facultyAttendance: FacultyAttendanceService,
     private readonly facultyLeaves: FacultyLeavesService,
     private readonly facultyOd: FacultyOdService,
-    private readonly hrQueries: HrQueriesService,
     private readonly payslipRequests: PayslipRequestsService,
     private readonly appraisal: AppraisalService,
     private readonly librarySettings: LibrarySettingsService,
@@ -437,14 +434,6 @@ export class HodEmployeeService {
 
   applyOd(user: JwtPayload, dto: CreateFacultyOdDto) {
     return this.facultyOd.create(dto, user);
-  }
-
-  getHrPayrollRequests(user: JwtPayload) {
-    return this.hrQueries.findMine(user.sub);
-  }
-
-  createHrPayrollRequest(user: JwtPayload, dto: CreateHrQueryDto) {
-    return this.hrQueries.create(dto, user.sub, undefined);
   }
 
   async getPayslipHistory(user: JwtPayload) {

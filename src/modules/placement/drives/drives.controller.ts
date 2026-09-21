@@ -183,6 +183,12 @@ export class DrivesController {
     return this.drivesService.getDriveReport();
   }
 
+  /** GET /drives/internships/report — Internships get their own dedicated list, mirroring 'report' but drive_type='internship' only. */
+  @Get('internships/report')
+  getInternshipDriveReport() {
+    return this.drivesService.getInternshipDriveReport();
+  }
+
   // Declared before 'student-report/:studentId' — otherwise "export" would
   // be swallowed as a (non-numeric, 400-ing) :studentId value.
   @Get('student-report/export')

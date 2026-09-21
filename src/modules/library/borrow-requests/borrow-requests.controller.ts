@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { BorrowRequestsService } from './borrow-requests.service';
 import { CreateBorrowRequestDto } from './dto/create-borrow-request.dto';
+import { RejectBorrowRequestDto } from './dto/reject-borrow-request.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -60,7 +61,8 @@ export class BorrowRequestsController {
   reject(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
+    @Body() body: RejectBorrowRequestDto,
   ) {
-    return this.borrowRequestsService.reject(id, user);
+    return this.borrowRequestsService.reject(id, user, body.remarks);
   }
 }

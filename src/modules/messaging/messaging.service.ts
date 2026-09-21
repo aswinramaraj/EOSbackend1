@@ -52,6 +52,17 @@ export function dmPairKey(userIdA: number, userIdB: number): string {
 }
 
 /**
+ * Shared operational accounts with no messaging use case at all — never
+ * reachable through search or a direct message, from any sender. Add a new
+ * role here (and to its own frontend nav.ts's `excludeMessages: true`) any
+ * time a similar single-shared-login role is introduced.
+ */
+const MESSAGING_EXCLUDED_ROLES: string[] = [
+  ROLES.CANTEEN_ADMIN,
+  ROLES.CANTEEN_CASHIER,
+];
+
+/**
  * Human-friendly labels for "office" accounts — a role with no linked
  * faculty/student profile row (principal, admin, coe, billing, ...), so
  * `users` has nothing but a raw email to identify them by. Without this,
@@ -323,6 +334,18 @@ export class MessagingService {
     senderRole: string,
     otherRoleName: string,
   ): void {
+    // Shared operational accounts (canteen_admin, canteen_cashier, ...)
+    // aren't reachable through messaging at all, from any sender — not just
+    // hidden from search (see searchPeople's WHERE clause), the same rule
+    // closes the gap of messaging a known user id directly. Checked before
+    // the student-only rule below since it applies regardless of the
+    // sender's own role.
+    if (MESSAGING_EXCLUDED_ROLES.includes(otherRoleName)) {
+      throw new ForbiddenException({
+        message: 'This account cannot be messaged.',
+        errorCode: 'ACCOUNT_NOT_MESSAGEABLE',
+      });
+    }
     if (senderRole !== ROLES.STUDENT) return;
     if (otherRoleName === ROLES.STUDENT) {
       throw new ForbiddenException({
@@ -342,14 +365,15 @@ export class MessagingService {
    * outright — STUDENT_TO_STUDENT_BLOCKED still fires for two students with
    * no request history at all; STUDENT_REQUEST_REQUIRED fires once a request
    * exists but isn't accepted yet (pending/rejected), so the client can point
-   * the user at the request flow specifically.
+   * the user at the request flow specifically. (The canteen_admin/
+   * canteen_cashier exclusion is a separate, sender-agnostic check —
+   * see assertRoleAllowsMessaging/MESSAGING_EXCLUDED_ROLES above.)
    */
   async assertCanMessage(
     callerUserId: number,
     senderRole: string,
     otherUserId: number,
   ): Promise<void> {
-    if (senderRole !== ROLES.STUDENT) return;
     const other = await this.prisma.users.findUnique({
       where: { id: otherUserId },
       select: { roles: { select: { name: true } } },
@@ -452,13 +476,17 @@ export class MessagingService {
       where: {
         id: { not: callerUserId },
         status: 'active',
-        // A student CAN find another student here now — search visibility
-        // and messaging permission are separate concerns since student-
-        // student chat requires an accepted message_requests row (see
-        // assertCanMessage/MessageRequestsService); finding someone to send
-        // a request to is exactly what this search is for. callerRole is
-        // kept as a parameter (unused here now) for that reason, and in case
-        // a future role-specific restriction is needed again.
+        // Shared operational accounts (canteen_admin, canteen_cashier, ...)
+        // never appear in ANYONE's search results — messaging is
+        // deliberately not part of their workflow at all (see each role's
+        // own nav.ts on the frontend, which also excludes the Messages nav
+        // item entirely for it). A student CAN find another student here
+        // though — search visibility and messaging permission are separate
+        // concerns since student-student chat requires an accepted
+        // message_requests row (see assertCanMessage/MessageRequestsService);
+        // finding someone to send a request to is exactly what this search
+        // is for. callerRole is still threaded through for that reason.
+        roles: { name: { notIn: MESSAGING_EXCLUDED_ROLES } },
         OR: [
           ...(facultyNameWhere ? [{ faculty: facultyNameWhere }] : []),
           ...(studentNameWhere

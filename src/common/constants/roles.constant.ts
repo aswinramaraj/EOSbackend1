@@ -38,6 +38,8 @@ export const ROLES = {
   STATIONARY: 'stationary',
   /** Stationery Store admin (web) — a separate role/login from STATIONARY's print-shop, by explicit design: they are not the same counter/staff. */
   STATIONERY: 'stationery',
+  CANTEEN_ADMIN: 'canteen_admin',
+  CANTEEN_CASHIER: 'canteen_cashier',
 } as const;
 
 export type RoleKey = (typeof ROLES)[keyof typeof ROLES];

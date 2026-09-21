@@ -8,7 +8,6 @@ import { ROLES } from 'src/common/constants/roles.constant';
 import { HodEmployeeService } from './hod-employee.service';
 import { CreateFacultyLeafDto } from '../faculty/faculty-leaves/dto/create-faculty-leaf.dto';
 import { CreateFacultyOdDto } from '../faculty/faculty-od/dto/create-faculty-od.dto';
-import { CreateHrQueryDto } from '../faculty/hr-queries/dto/create-hr-query.dto';
 import { CreatePayslipRequestDto } from '../faculty/payslip-requests/dto/create-payslip-request.dto';
 import { CreateAppraisalDto } from '../faculty/appraisal/dto/create-appraisal.dto';
 
@@ -42,12 +41,19 @@ export class HodEmployeeController {
     return this.hodEmployee.getTimetableWeek(user, date);
   }
 
+  // Stays HOD-scoped in URL only for historical reasons (same wart as
+  // hod-my-class's subject-records route) — widened below since both are
+  // either a pure global lookup or already resolve via the caller's own
+  // faculty row, so any Faculty/Secretary caller works safely as-is.
+
   @Get('leave/types')
+  @Roles(ROLES.HOD, ROLES.FACULTY, ROLES.SECRETARY)
   getLeaveTypes() {
     return this.hodEmployee.getLeaveTypes();
   }
 
   @Get('leave/balances')
+  @Roles(ROLES.HOD, ROLES.FACULTY)
   getLeaveBalances(
     @CurrentUser() user: JwtPayload,
     @Query('academic_year') academicYear?: string,
@@ -82,19 +88,6 @@ export class HodEmployeeController {
   @Post('od')
   applyOd(@CurrentUser() user: JwtPayload, @Body() dto: CreateFacultyOdDto) {
     return this.hodEmployee.applyOd(user, dto);
-  }
-
-  @Get('hr-payroll/requests')
-  getHrPayrollRequests(@CurrentUser() user: JwtPayload) {
-    return this.hodEmployee.getHrPayrollRequests(user);
-  }
-
-  @Post('hr-payroll/requests')
-  createHrPayrollRequest(
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: CreateHrQueryDto,
-  ) {
-    return this.hodEmployee.createHrPayrollRequest(user, dto);
   }
 
   @Get('payslip/history')

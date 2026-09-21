@@ -329,8 +329,8 @@ export class WalletService {
 
   /**
    * Debits a wallet for an in-app purchase at a campus outlet (e.g. the
-   * Stationery Store - see StationeryService.checkoutWithWallet, the only
-   * caller today). Not exposed as its own HTTP route - other modules call
+   * Stationery Store's checkoutWithWallet, or CanteenOrderingService's
+   * placeOrder). Not exposed as its own HTTP route - other modules call
    * this in-process via Nest DI (WalletModule exports WalletService),
    * same composition style as ParentsService reusing ProfileService.
    *
@@ -340,11 +340,21 @@ export class WalletService {
    * destination is an outlet, not another wallet), and the same
    * trigger-applies-the-balance model (this only ever inserts a `success`
    * wallet_transactions row; trg_apply_wallet_transaction does the actual
-   * arithmetic). PIN-gated like every other real debit in this module.
+   * arithmetic). PIN-gated like every other real debit in this module -
+   * every caller must collect a PIN from the user for this, the same way
+   * transfer() and the Stationery Store checkout already do; skipping this
+   * would let any authenticated request spend a user's wallet balance with
+   * no per-purchase authorization at all.
+   *
+   * `outletId` is required, not optional - a pre-existing DB constraint
+   * (`chk_wallet_transactions_source`) rejects any source='purchase' debit
+   * row with a null outlet_id. The caller resolves which `wallet_outlets`
+   * row represents it (e.g. the 'canteen' or 'stationary' one) - this
+   * generic wallet method doesn't hardcode any one caller's outlet.
    *
    * Returns the new transaction's id and the wallet's balance afterward -
-   * the caller (StationeryService) links the transaction id onto its own
-   * order row for a two-way audit trail.
+   * the caller links the transaction id onto its own order row for a
+   * two-way audit trail.
    */
   async debitForPurchase(
     userId: number,
@@ -388,13 +398,16 @@ export class WalletService {
 
   /**
    * Reverses a prior debitForPurchase (e.g. an order cancelled after
-   * payment - see StationeryService.updateOrderStatus) by crediting the
-   * same amount back. No PIN needed - a credit never needs authorization
-   * the way spending does. source='adjustment' (a credit reversal, not a
-   * fresh 'purchase') with `related_transaction_id` pointing at the
-   * original debit, so either row leads straight to the other.
+   * payment, or a purchase that couldn't go through after the wallet was
+   * already charged) by crediting the same amount back. No PIN needed - a
+   * credit never needs authorization the way spending does. source=
+   * 'adjustment' (a credit reversal, not a fresh 'purchase') with
+   * `related_transaction_id` pointing at the original debit, so either row
+   * leads straight to the other. Validates the original row really is a
+   * successful debit (not already refunded, not some other transaction
+   * type) rather than trusting the caller's id blindly.
    */
-  async refundPurchase(originalTransactionId: number, remarks: string): Promise<{ transactionId: number }> {
+  async refundPurchase(originalTransactionId: number, remarks: string): Promise<{ transactionId: number; balance: number }> {
     const original = await this.prisma.wallet_transactions.findUnique({
       where: { id: originalTransactionId },
     });
@@ -416,8 +429,9 @@ export class WalletService {
         remarks,
       },
     });
+    const updated = await this.prisma.wallets.findUniqueOrThrow({ where: { id: original.wallet_id } });
     this.logger.log(`Wallet purchase refund: ${original.amount} to wallet=${original.wallet_id} (txn=${creditTxn.id}, reverses txn=${original.id})`);
-    return { transactionId: creditTxn.id };
+    return { transactionId: creditTxn.id, balance: Number(updated.balance) };
   }
 
   /**

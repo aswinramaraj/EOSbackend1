@@ -138,7 +138,25 @@ export class PrincipalReportsService {
     ];
   }
 
+  /**
+   * `drive_type` is real once internship_drive_type.query.md runs — returns
+   * an empty set (no filtering) until then. "Placement percentage" below is
+   * a full-time-placement metric, so internship drives are excluded once
+   * this activates.
+   */
+  private async internshipDriveIds(): Promise<Set<number>> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM placement_drives WHERE drive_type = 'internship'
+      `;
+      return new Set(rows.map((r) => r.id));
+    } catch {
+      return new Set();
+    }
+  }
+
   private async computeMetrics(): Promise<ComputedMetrics> {
+    const internshipIds = await this.internshipDriveIds();
     const [
       studentsTotalActive,
       facultyTotalActive,
@@ -169,7 +187,11 @@ export class PrincipalReportsService {
         distinct: ['student_id'],
       }),
       this.prisma.student_drive_applications.count({
-        where: { status: 'placed' },
+        where: {
+          status: 'placed',
+          drive_id:
+            internshipIds.size > 0 ? { notIn: [...internshipIds] } : undefined,
+        },
       }),
       this.prisma.student_fee_demand_mapping.aggregate({
         _sum: { total_amount: true },
