@@ -20,6 +20,20 @@ const GRADE_LOOKUP = Prisma.sql`
 /** No stored "distinction" flag/threshold anywhere in the schema — 8.5 SGPA is the standard First Class with Distinction cutoff, used here as the clearest available honest convention rather than an arbitrary guess. */
 const DISTINCTION_SGPA_CUTOFF = 8.5;
 
+/**
+ * Real exams.start_date, optionally bounding the "current" figures to the
+ * Reports page's date-range filter — the "previous semester" comparison
+ * queries deliberately never take this clause (that baseline is a
+ * different calendar period by definition; narrowing "current" to a
+ * window shouldn't also narrow what it's being compared against).
+ * -infinity/infinity sentinels let one clause cover from-only, to-only,
+ * both, or neither without branching.
+ */
+function dateRangeClause(from?: string, to?: string) {
+  if (!from && !to) return Prisma.empty;
+  return Prisma.sql`AND e.start_date >= COALESCE(${from ?? null}::date, '-infinity'::date) AND e.start_date <= COALESCE(${to ?? null}::date, 'infinity'::date)`;
+}
+
 interface CgpaRow {
   avg_cgpa: string | null;
 }
@@ -58,7 +72,12 @@ export interface HodSubjectResult {
   lowest_section_label: string | null;
 }
 
-function gradeCgpaCte(departmentId: number, semester: number | undefined) {
+function gradeCgpaCte(
+  departmentId: number,
+  semester: number | undefined,
+  from?: string,
+  to?: string,
+) {
   return Prisma.sql`
     WITH student_cgpa AS (
       SELECT em.student_id,
@@ -73,6 +92,7 @@ function gradeCgpaCte(departmentId: number, semester: number | undefined) {
       WHERE e.status = 'results_published' AND em.is_absent = false AND em.marks_obtained IS NOT NULL
         AND cl.department_id = ${departmentId}
         ${semester !== undefined ? Prisma.sql`AND e.semester = ${semester}` : Prisma.empty}
+        ${dateRangeClause(from, to)}
       GROUP BY em.student_id
     )
     SELECT AVG(cgpa)::text AS avg_cgpa FROM student_cgpa
@@ -123,6 +143,8 @@ export class HodReportsService {
   private async passPercentFor(
     departmentId: number,
     semester: number,
+    from?: string,
+    to?: string,
   ): Promise<number | null> {
     const [row] = await this.prisma.$queryRaw<PassPctRow[]>(Prisma.sql`
       WITH attempts AS (
@@ -135,6 +157,7 @@ export class HodReportsService {
         WHERE e.status = 'results_published' AND e.semester = ${semester}
           AND cl.department_id = ${departmentId}
           AND em.is_absent = false AND em.marks_obtained IS NOT NULL
+          ${dateRangeClause(from, to)}
       )
       SELECT (COUNT(*) FILTER (WHERE is_pass)::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pass_pct
       FROM attempts
@@ -147,6 +170,8 @@ export class HodReportsService {
   private async arrearsCountFor(
     departmentId: number,
     semester: number,
+    from?: string,
+    to?: string,
   ): Promise<number> {
     const [row] = await this.prisma.$queryRaw<ArrearsRow[]>(Prisma.sql`
       WITH subject_attempts AS (
@@ -157,6 +182,7 @@ export class HodReportsService {
         JOIN classes cl ON cl.id = esm.class_id
         ${GRADE_LOOKUP}
         WHERE e.status = 'results_published' AND e.semester = ${semester} AND cl.department_id = ${departmentId}
+          ${dateRangeClause(from, to)}
         GROUP BY em.student_id, esm.subject_id
       )
       SELECT COUNT(DISTINCT student_id) FILTER (WHERE ever_passed IS NOT TRUE)::bigint AS students_with_arrears
@@ -168,6 +194,8 @@ export class HodReportsService {
   private async distinctionCountFor(
     departmentId: number,
     semester: number,
+    from?: string,
+    to?: string,
   ): Promise<number> {
     const [row] = await this.prisma.$queryRaw<DistinctionRow[]>(Prisma.sql`
       WITH student_sgpa AS (
@@ -182,6 +210,7 @@ export class HodReportsService {
         ${GRADE_LOOKUP}
         WHERE e.status = 'results_published' AND e.semester = ${semester} AND cl.department_id = ${departmentId}
           AND em.is_absent = false AND em.marks_obtained IS NOT NULL
+          ${dateRangeClause(from, to)}
         GROUP BY em.student_id
       )
       SELECT COUNT(*) FILTER (WHERE sgpa >= ${DISTINCTION_SGPA_CUTOFF})::bigint AS distinction_count
@@ -190,7 +219,7 @@ export class HodReportsService {
     return Number(row?.distinction_count ?? 0);
   }
 
-  async getSummary(user: JwtPayload) {
+  async getSummary(user: JwtPayload, from?: string, to?: string) {
     const departmentId = await this.resolveDepartmentId(user);
     try {
       const department = await this.prisma.departments.findUnique({
@@ -231,7 +260,7 @@ export class HodReportsService {
 
       const currentPassPct =
         currentSem !== undefined
-          ? await this.passPercentFor(departmentId, currentSem)
+          ? await this.passPercentFor(departmentId, currentSem, from, to)
           : null;
       const previousPassPct =
         previousSem !== undefined
@@ -239,7 +268,7 @@ export class HodReportsService {
           : null;
 
       const currentCgpaRow = await this.prisma.$queryRaw<CgpaRow[]>(
-        gradeCgpaCte(departmentId, currentSem),
+        gradeCgpaCte(departmentId, currentSem, from, to),
       );
       const previousCgpaRow =
         previousSem !== undefined
@@ -252,7 +281,7 @@ export class HodReportsService {
 
       const currentArrears =
         currentSem !== undefined
-          ? await this.arrearsCountFor(departmentId, currentSem)
+          ? await this.arrearsCountFor(departmentId, currentSem, from, to)
           : 0;
       const previousArrears =
         previousSem !== undefined
@@ -261,7 +290,7 @@ export class HodReportsService {
 
       const currentDistinction =
         currentSem !== undefined
-          ? await this.distinctionCountFor(departmentId, currentSem)
+          ? await this.distinctionCountFor(departmentId, currentSem, from, to)
           : 0;
       const previousDistinction =
         previousSem !== undefined
@@ -326,7 +355,12 @@ export class HodReportsService {
    * class's real "previous" term is the prior ODD semester, not N-1 (which
    * is always even and never has data).
    */
-  async getClassPassRates(user: JwtPayload, year: string | null) {
+  async getClassPassRates(
+    user: JwtPayload,
+    year: string | null,
+    from?: string,
+    to?: string,
+  ) {
     const departmentId = await this.resolveDepartmentId(user);
     try {
       const classRows = await this.prisma.classes.findMany({
@@ -371,6 +405,7 @@ export class HodReportsService {
             ${GRADE_LOOKUP}
             WHERE e.status = 'results_published' AND e.semester = ${currentSem} AND esm.class_id = ${cl.id}
               AND em.is_absent = false AND em.marks_obtained IS NOT NULL
+              ${dateRangeClause(from, to)}
           )
           SELECT (COUNT(*) FILTER (WHERE is_pass)::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pass_pct
           FROM attempts
@@ -461,7 +496,7 @@ export class HodReportsService {
    * frontend's `groups[]` shape expects every active year-group). Each
    * group's own "previous" is that semester number minus 1.
    */
-  async getSubjectResults(user: JwtPayload) {
+  async getSubjectResults(user: JwtPayload, from?: string, to?: string) {
     const departmentId = await this.resolveDepartmentId(user);
     try {
       const classSemesters = await this.prisma.classes.findMany({
@@ -482,7 +517,12 @@ export class HodReportsService {
 
       // Sequential per semester-group — same pooler-capacity reasoning as every other hod service.
       for (const currentSem of activeSemesters) {
-        const subjects = await this.buildSubjectRows(departmentId, currentSem);
+        const subjects = await this.buildSubjectRows(
+          departmentId,
+          currentSem,
+          from,
+          to,
+        );
         if (subjects.subjects.length === 0) continue;
         groups.push({
           semester: currentSem,
@@ -506,6 +546,8 @@ export class HodReportsService {
   private async buildSubjectRows(
     departmentId: number,
     currentSem: number,
+    from?: string,
+    to?: string,
   ): Promise<{ sections: string[]; subjects: HodSubjectResult[] }> {
     // -2, not -1: see getClassPassRates' doc comment — this system only
     // ever holds exam data for odd semesters.
@@ -524,6 +566,7 @@ export class HodReportsService {
           ${GRADE_LOOKUP}
           WHERE e.status = 'results_published' AND e.semester = ${currentSem} AND cl.department_id = ${departmentId}
             AND em.is_absent = false AND em.marks_obtained IS NOT NULL
+            ${dateRangeClause(from, to)}
         )
         SELECT subject_id, name, code, class_id, section,
           (COUNT(*) FILTER (WHERE is_pass)::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pass_pct

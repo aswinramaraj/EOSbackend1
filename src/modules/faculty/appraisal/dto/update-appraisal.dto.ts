@@ -9,6 +9,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { OptionalRemarks } from '../../../../common/dto/decision-reason.dto';
 
 /** One entry's score, supplied by HR Payroll when transitioning a request to 'hr_scored'. */
 export class AppraisalEntryScoreDto {
@@ -29,10 +30,10 @@ export class AppraisalEntryScoreDto {
  * caller's role and the request's current status — enforced in the service,
  * since neither of those is knowable from the DTO alone.
  *
- * There is no combined "status" + "hod_score"/"hr_remarks" shape in the
- * schema — only the real appraisal_status_enum transitions and, for HR's
- * 'hr_scored' transition, per-entry `score` values (capped by each
- * criterion's max_score).
+ * `remarks` is a real column (`appraisal_requests.hod_remarks`, already read
+ * back by getDetail()) for the HoD's own "send back" reason — previously
+ * accepted by the frontend and this DTO's own `status` transition but never
+ * actually persisted by applyHodReview(), silently discarding it.
  */
 export class UpdateAppraisalDto {
   @IsIn(['hod_reviewed', 'hr_scored', 'management_approved', 'rejected'])
@@ -44,4 +45,7 @@ export class UpdateAppraisalDto {
   @ValidateNested({ each: true })
   @Type(() => AppraisalEntryScoreDto)
   entries?: AppraisalEntryScoreDto[];
+
+  @OptionalRemarks()
+  remarks?: string;
 }

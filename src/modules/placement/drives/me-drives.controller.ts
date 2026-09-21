@@ -36,6 +36,13 @@ export class MeDrivesController {
     return this.drivesService.getUpcomingDrivesForFaculty();
   }
 
+  /** GET /me/upcoming-internship-drives — Internships get their own dedicated tile, mirroring 'upcoming-drives' but drive_type='internship' only. */
+  @Get('upcoming-internship-drives')
+  @Roles(ROLES.FACULTY, ROLES.HOD)
+  getUpcomingInternshipDrives() {
+    return this.drivesService.getUpcomingInternshipDrivesForFaculty();
+  }
+
   /** GET /me/upcoming-drives/:driveId/applications — real per-mentee
    * application status/round for this drive (student_drive_applications),
    * scoped to the caller's own mentee classes. */
@@ -61,6 +68,19 @@ export class MeDrivesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.drivesService.getStudentPlacementHistoryForMentor(
+      studentId,
+      user.sub,
+    );
+  }
+
+  /** GET /me/mentored-students/:studentId/internship-history — internship-only mirror of 'placement-history'. */
+  @Get('mentored-students/:studentId/internship-history')
+  @Roles(ROLES.FACULTY)
+  getStudentInternshipHistory(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.drivesService.getStudentInternshipHistoryForMentor(
       studentId,
       user.sub,
     );
@@ -97,5 +117,19 @@ export class MeDrivesController {
       studentId,
       user.sub,
     );
+  }
+
+  /**
+   * GET /me/department-students/:studentId/profile (HoD only — student's
+   * class must belong to the HoD's own department). Full profile — same
+   * shape as the Placement Cell's own student detail page.
+   */
+  @Get('department-students/:studentId/profile')
+  @Roles(ROLES.HOD)
+  getDepartmentStudentProfile(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.drivesService.getStudentProfileForHod(studentId, user.sub);
   }
 }

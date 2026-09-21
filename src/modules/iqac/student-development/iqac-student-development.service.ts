@@ -88,6 +88,23 @@ export class IqacStudentDevelopmentService {
     private readonly placements: PrincipalPlacementsService,
   ) {}
 
+  /**
+   * `drive_type` is real once internship_drive_type.query.md runs — returns
+   * an empty set (no filtering) until then. This IQAC metric is about
+   * full-time placement quality, so internship drives are excluded once
+   * this activates.
+   */
+  private async internshipDriveIds(): Promise<Set<number>> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM placement_drives WHERE drive_type = 'internship'
+      `;
+      return new Set(rows.map((r) => r.id));
+    } catch {
+      return new Set();
+    }
+  }
+
   /** Real target for one metric, this academic year — from iqac_metric_targets, same table IqacAcademicQualityService reads. */
   private async targetFor(metricKey: string): Promise<number | null> {
     const row = await this.prisma.iqac_metric_targets.findUnique({
@@ -115,13 +132,22 @@ export class IqacStudentDevelopmentService {
     const thisTerm = currentTermRange(startOfToday());
     const lastYearTerm = priorYearTermRange(thisTerm);
 
-    const [target, placedApps] = await Promise.all([
+    const [target, rawPlacedApps, internshipIds] = await Promise.all([
       this.targetFor('placements'),
       this.prisma.student_drive_applications.findMany({
         where: { status: 'placed' },
-        select: { placement_drives: { select: { scheduled_date: true } } },
+        select: {
+          placement_drives: { select: { id: true, scheduled_date: true } },
+        },
       }),
+      this.internshipDriveIds(),
     ]);
+    // Full-time only — internship completions excluded once drive_type
+    // exists (Internships is a separate IQAC/quality concern, not this
+    // metric); see internship_drive_type.query.md.
+    const placedApps = rawPlacedApps.filter(
+      (a) => !internshipIds.has(a.placement_drives.id),
+    );
 
     const thisYear = placedApps.filter((a) =>
       inRange(a.placement_drives.scheduled_date, thisTerm),
@@ -151,10 +177,18 @@ export class IqacStudentDevelopmentService {
     const rows = await this.placements.leadingRecruiters();
     if (batchId == null) return rows;
 
-    const scoped = await this.prisma.student_drive_applications.findMany({
-      where: { status: 'placed', students: { batch_id: batchId } },
-      select: { placement_drives: { select: { company_id: true } } },
-    });
+    const [rawScoped, internshipIds] = await Promise.all([
+      this.prisma.student_drive_applications.findMany({
+        where: { status: 'placed', students: { batch_id: batchId } },
+        select: {
+          placement_drives: { select: { id: true, company_id: true } },
+        },
+      }),
+      this.internshipDriveIds(),
+    ]);
+    const scoped = rawScoped.filter(
+      (r) => !internshipIds.has(r.placement_drives.id),
+    );
     const allowedCompanyIds = new Set(
       scoped.map((r) => r.placement_drives.company_id),
     );

@@ -245,6 +245,7 @@ export class FacultyLeavesService {
           from_date: fromDate,
           to_date: toDate,
           reason: dto.reason,
+          leave_type_id: dto.leave_type_id,
           hod_approval_status: 'approved',
         },
         select: FACULTY_LEAVE_SELECT,

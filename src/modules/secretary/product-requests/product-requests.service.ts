@@ -8,6 +8,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { CreateProductRequestDto } from './dto/create-product-request.dto';
@@ -80,7 +81,9 @@ function resolveName(user: RequestUserRow): string {
   }
   const staff = user.non_teaching_staff[0];
   if (staff) {
-    return staff.last_name ? `${staff.first_name} ${staff.last_name}` : staff.first_name;
+    return staff.last_name
+      ? `${staff.first_name} ${staff.last_name}`
+      : staff.first_name;
   }
   return user.email;
 }
@@ -140,7 +143,9 @@ export class ProductRequestsService {
       select: PRODUCT_REQUEST_SELECT,
     });
 
-    this.logger.log(`Product request created: id=${request.id} by user=${userId}`);
+    this.logger.log(
+      `Product request created: id=${request.id} by user=${userId}`,
+    );
     return toResponse(request);
   }
 
@@ -190,9 +195,9 @@ export class ProductRequestsService {
    * `items`, if supplied, replaces the entire line-item list.
    */
   async update(id: number, dto: UpdateProductRequestDto, userId: number) {
-    const existing = await this.prisma.secretary_product_requests.findUnique(
-      { where: { id } },
-    );
+    const existing = await this.prisma.secretary_product_requests.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new NotFoundException('Product request not found');
     }
@@ -242,12 +247,10 @@ export class ProductRequestsService {
    * allowed to have none while still being edited.
    */
   async submit(id: number, userId: number) {
-    const existing = await this.prisma.secretary_product_requests.findUnique(
-      {
-        where: { id },
-        include: { secretary_product_request_items: true },
-      },
-    );
+    const existing = await this.prisma.secretary_product_requests.findUnique({
+      where: { id },
+      include: { secretary_product_request_items: true },
+    });
     if (!existing) {
       throw new NotFoundException('Product request not found');
     }
@@ -260,9 +263,7 @@ export class ProductRequestsService {
       throw new ConflictException('Only a draft request can be submitted');
     }
     if (existing.secretary_product_request_items.length === 0) {
-      throw new ConflictException(
-        'Add at least one product before submitting',
-      );
+      throw new ConflictException('Add at least one product before submitting');
     }
 
     const request = await this.prisma.secretary_product_requests.update({
@@ -279,9 +280,9 @@ export class ProductRequestsService {
    * PATCH /me/product-requests/:id/review (Admin only, only while 'pending').
    */
   async review(id: number, dto: ReviewProductRequestDto, reviewerId: number) {
-    const existing = await this.prisma.secretary_product_requests.findUnique(
-      { where: { id } },
-    );
+    const existing = await this.prisma.secretary_product_requests.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new NotFoundException('Product request not found');
     }
@@ -302,6 +303,7 @@ export class ProductRequestsService {
       select: PRODUCT_REQUEST_SELECT,
     });
 
+    await this.trySetRemarks(id, dto.remarks);
     this.logger.log(
       `Product request ${id} reviewed: decision=${dto.decision} by user=${reviewerId}`,
     );
@@ -314,7 +316,10 @@ export class ProductRequestsService {
       user_id: existing.requested_by_user_id,
       title: `Product request ${dto.decision}`,
       message: `Your product request "${existing.title}" has been ${dto.decision}.`,
-      type: dto.decision === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+      type:
+        dto.decision === 'approved'
+          ? 'approval_request_approved'
+          : 'approval_request_rejected',
       related_entity_type: 'secretary_product_request',
       related_entity_id: existing.id,
     });
@@ -322,11 +327,29 @@ export class ProductRequestsService {
     return toResponse(request);
   }
 
+  /**
+   * `remarks` is real once decision_reason_columns.query.md's
+   * secretary_product_requests.remarks runs — silently no-ops on an
+   * undefined-column error until then.
+   */
+  private async trySetRemarks(id: number, remarks: string | undefined) {
+    if (!remarks) return;
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE secretary_product_requests SET remarks = ${remarks} WHERE id = ${id}`;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'remarks')) {
+        return;
+      }
+      throw err;
+    }
+  }
+
   /** DELETE /me/product-requests/:id (Secretary, own request, only while 'draft'). */
   async remove(id: number, userId: number) {
-    const existing = await this.prisma.secretary_product_requests.findUnique(
-      { where: { id } },
-    );
+    const existing = await this.prisma.secretary_product_requests.findUnique({
+      where: { id },
+    });
     if (!existing) {
       throw new NotFoundException('Product request not found');
     }

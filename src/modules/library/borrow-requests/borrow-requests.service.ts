@@ -7,6 +7,7 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { BorrowRecordsService } from '../borrow-records/borrow-records.service';
 import { BorrowerType } from '../borrow-records/dto/create-borrow-record.dto';
+import { isUndefinedColumnError } from '../../../common/utils/pg-error.util';
 import type { JwtPayload } from '../../../auth/interfaces/jwt-payload.interface';
 
 // book_borrow_requests (query.md, then widened for faculty/HoD) now exists
@@ -215,7 +216,7 @@ export class BorrowRequestsService {
   }
 
   /** PATCH /library/borrow-requests/:id/reject — Library/Admin only. */
-  async reject(id: number, currentUser: JwtPayload) {
+  async reject(id: number, currentUser: JwtPayload, remarks?: string) {
     const request = await this.findOrThrow(id);
     if (request.status !== 'pending') {
       throw new ConflictException('This request has already been reviewed.');
@@ -230,6 +231,25 @@ export class BorrowRequestsService {
       },
     });
 
+    await this.trySetRemarks(id, remarks);
     return { id, status: 'rejected' as const };
+  }
+
+  /**
+   * `remarks` is real once decision_reason_columns.query.md's
+   * book_borrow_requests.remarks runs — silently no-ops on an
+   * undefined-column error until then.
+   */
+  private async trySetRemarks(id: number, remarks: string | undefined) {
+    if (!remarks) return;
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE book_borrow_requests SET remarks = ${remarks} WHERE id = ${id}`;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'remarks')) {
+        return;
+      }
+      throw err;
+    }
   }
 }

@@ -28,6 +28,17 @@ import type { SearchPeopleQueryDto } from './dto/search-people-query.dto';
 export const STUDENT_TO_STUDENT_BLOCKED = 'STUDENT_TO_STUDENT_BLOCKED';
 
 /**
+ * Shared operational accounts with no messaging use case at all — never
+ * reachable through search or a direct message, from any sender. Add a new
+ * role here (and to its own frontend nav.ts's `excludeMessages: true`) any
+ * time a similar single-shared-login role is introduced.
+ */
+const MESSAGING_EXCLUDED_ROLES: string[] = [
+  ROLES.CANTEEN_ADMIN,
+  ROLES.CANTEEN_CASHIER,
+];
+
+/**
  * Human-friendly labels for "office" accounts — a role with no linked
  * faculty/student profile row (principal, admin, coe, billing, ...), so
  * `users` has nothing but a raw email to identify them by. Without this,
@@ -216,6 +227,18 @@ export class MessagingService {
     senderRole: string,
     otherRoleName: string,
   ): void {
+    // Shared operational accounts (canteen_admin, canteen_cashier, ...)
+    // aren't reachable through messaging at all, from any sender — not just
+    // hidden from search (see searchPeople's WHERE clause), the same rule
+    // closes the gap of messaging a known user id directly. Checked before
+    // the student-only rule below since it applies regardless of the
+    // sender's own role.
+    if (MESSAGING_EXCLUDED_ROLES.includes(otherRoleName)) {
+      throw new ForbiddenException({
+        message: 'This account cannot be messaged.',
+        errorCode: 'ACCOUNT_NOT_MESSAGEABLE',
+      });
+    }
     if (senderRole !== ROLES.STUDENT) return;
     if (otherRoleName === ROLES.STUDENT) {
       throw new ForbiddenException({
@@ -228,13 +251,14 @@ export class MessagingService {
   /**
    * Enforced on both the conversation-creation path and every single
    * message:send — never cached from creation time, so a role change after
-   * a conversation already exists is still caught on the next send.
+   * a conversation already exists is still caught on the next send. Always
+   * fetches the other party's role now (not just for a student sender) since
+   * the canteen_admin rule above applies to every sender, not only students.
    */
   async assertCanMessage(
     senderRole: string,
     otherUserId: number,
   ): Promise<void> {
-    if (senderRole !== ROLES.STUDENT) return;
     const other = await this.prisma.users.findUnique({
       where: { id: otherUserId },
       select: { roles: { select: { name: true } } },
@@ -268,12 +292,20 @@ export class MessagingService {
       where: {
         id: { not: callerUserId },
         status: 'active',
-        // The hard rule lives directly in this WHERE — a student never even
-        // appears in another student's result set, not filtered after the
-        // query runs.
-        ...(callerRole === ROLES.STUDENT && {
-          roles: { name: { not: ROLES.STUDENT } },
-        }),
+        // Shared operational accounts never appear in ANYONE's search
+        // results — messaging is deliberately not part of their workflow at
+        // all (see each role's own nav.ts on the frontend, which also
+        // excludes the Messages nav item entirely for it). A student
+        // additionally never sees another student — both rules live
+        // directly in this WHERE, not filtered after the query runs.
+        roles: {
+          name: {
+            notIn: [
+              ...MESSAGING_EXCLUDED_ROLES,
+              ...(callerRole === ROLES.STUDENT ? [ROLES.STUDENT] : []),
+            ],
+          },
+        },
         OR: [
           ...(facultyNameWhere ? [{ faculty: facultyNameWhere }] : []),
           ...(studentNameWhere

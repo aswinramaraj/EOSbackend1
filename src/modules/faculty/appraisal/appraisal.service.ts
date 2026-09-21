@@ -731,6 +731,7 @@ export class AppraisalService {
         status: dto.status,
         hod_reviewed_by: hodUserId,
         hod_reviewed_at: new Date(),
+        hod_remarks: dto.remarks,
       },
       select: APPRAISAL_SELECT,
     });

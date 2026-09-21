@@ -34,6 +34,8 @@ export const ROLES = {
   MEDICAL_CENTRE: 'medical_centre',
   SPORTS_ADMIN: 'sports_admin',
   EDC_COORDINATOR: 'edc_coordinator',
+  CANTEEN_ADMIN: 'canteen_admin',
+  CANTEEN_CASHIER: 'canteen_cashier',
 } as const;
 
 export type RoleKey = (typeof ROLES)[keyof typeof ROLES];

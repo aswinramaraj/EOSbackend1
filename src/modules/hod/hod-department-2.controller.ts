@@ -61,6 +61,26 @@ export class HodDepartment2Controller {
     return this.placements.getHistory(user);
   }
 
+  @Get('internships/drives')
+  @Roles(ROLES.HOD)
+  getInternshipDrives() {
+    return this.placements.getInternshipDrives();
+  }
+
+  @Get('internships/students')
+  @Roles(ROLES.HOD)
+  getInternshipStudents(
+    @CurrentUser() user: JwtPayload,
+    @Query('search') search?: string,
+    @Query('class_id') classId?: string,
+  ) {
+    return this.placements.getInternshipStudents(
+      user,
+      search,
+      classId ? Number(classId) : undefined,
+    );
+  }
+
   @Get('higher-education')
   @Roles(ROLES.HOD)
   getHigherEducation(

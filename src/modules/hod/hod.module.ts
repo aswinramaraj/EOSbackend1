@@ -6,7 +6,6 @@ import { AppraisalModule } from 'src/modules/faculty/appraisal/appraisal.module'
 import { FacultyLeavesModule } from 'src/modules/faculty/faculty-leaves/faculty-leaves.module';
 import { FacultyOdRequestsModule } from 'src/modules/faculty/faculty-od-requests/faculty-od-requests.module';
 import { FacultyOdModule } from 'src/modules/faculty/faculty-od/faculty-od.module';
-import { HrQueriesModule } from 'src/modules/faculty/hr-queries/hr-queries.module';
 import { NoDueModule } from 'src/modules/faculty/no-due/no-due.module';
 import { SubjectNoDueModule } from 'src/modules/faculty/subject-no-due/subject-no-due.module';
 import { PayslipRequestsModule } from 'src/modules/faculty/payslip-requests/payslip-requests.module';
@@ -59,7 +58,6 @@ import { HodStudentProfileService } from './hod-student-profile.service';
     FacultyLeavesModule,
     FacultyOdRequestsModule,
     FacultyOdModule,
-    HrQueriesModule,
     NoDueModule,
     SubjectNoDueModule,
     PayslipRequestsModule,

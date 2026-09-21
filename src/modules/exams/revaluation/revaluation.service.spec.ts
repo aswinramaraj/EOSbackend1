@@ -22,6 +22,7 @@ describe('RevaluationService', () => {
       delete: jest.Mock;
     };
     users: { findMany: jest.Mock };
+    $executeRaw: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -36,6 +37,7 @@ describe('RevaluationService', () => {
         delete: jest.fn(),
       },
       users: { findMany: jest.fn().mockResolvedValue([]) },
+      $executeRaw: jest.fn().mockResolvedValue(1),
     };
     notifications = { notify: jest.fn() };
 
@@ -111,7 +113,10 @@ describe('RevaluationService', () => {
         student_id: 5,
         exam_marks: { max_marks: 100 },
       });
-      prisma.revaluation_requests.update.mockResolvedValue({ id: 77, status: 'revised' });
+      prisma.revaluation_requests.update.mockResolvedValue({
+        id: 77,
+        status: 'revised',
+      });
       prisma.students.findUnique.mockResolvedValue({ user_id: 5001 });
 
       await service.update(77, { status: 'revised', revised_marks: 85 } as any);
@@ -133,13 +138,19 @@ describe('RevaluationService', () => {
         student_id: 5,
         exam_marks: { max_marks: 100 },
       });
-      prisma.revaluation_requests.update.mockResolvedValue({ id: 77, status: 'no_change' });
+      prisma.revaluation_requests.update.mockResolvedValue({
+        id: 77,
+        status: 'no_change',
+      });
       prisma.students.findUnique.mockResolvedValue({ user_id: 5001 });
 
       await service.update(77, { status: 'no_change' } as any);
 
       expect(notifications.notify).toHaveBeenCalledWith(
-        expect.objectContaining({ user_id: 5001, type: 'approval_request_approved' }),
+        expect.objectContaining({
+          user_id: 5001,
+          type: 'approval_request_approved',
+        }),
       );
     });
 
@@ -151,10 +162,61 @@ describe('RevaluationService', () => {
         exam_marks: { max_marks: 100 },
       });
 
-      await expect(service.update(77, { status: 'no_change' } as any)).rejects.toMatchObject({
+      await expect(
+        service.update(77, { status: 'no_change' } as any),
+      ).rejects.toMatchObject({
         response: { errorCode: 'REVALUATION_ALREADY_PROCESSED' },
       });
       expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it('persists decision_remarks on reject via raw SQL (schema-gap-tolerant — decision_remarks is distinct from the applicant-owned remarks column)', async () => {
+      prisma.revaluation_requests.findUnique.mockResolvedValue({
+        id: 77,
+        status: 'requested',
+        student_id: 5,
+        exam_marks: { max_marks: 100 },
+      });
+      prisma.revaluation_requests.update.mockResolvedValue({
+        id: 77,
+        status: 'rejected',
+      });
+      prisma.students.findUnique.mockResolvedValue({ user_id: 5001 });
+
+      await service.update(77, {
+        status: 'rejected',
+        decision_remarks: 'Insufficient grounds',
+      } as any);
+
+      expect(prisma.$executeRaw).toHaveBeenCalled();
+    });
+
+    it('silently no-ops when decision_remarks column does not exist yet (pre-migration)', async () => {
+      prisma.revaluation_requests.findUnique.mockResolvedValue({
+        id: 77,
+        status: 'requested',
+        student_id: 5,
+        exam_marks: { max_marks: 100 },
+      });
+      prisma.revaluation_requests.update.mockResolvedValue({
+        id: 77,
+        status: 'rejected',
+      });
+      prisma.students.findUnique.mockResolvedValue({ user_id: 5001 });
+      prisma.$executeRaw.mockRejectedValue({
+        code: 'P2010',
+        meta: {
+          code: '42703',
+          message: 'column "decision_remarks" does not exist',
+        },
+      });
+
+      await expect(
+        service.update(77, {
+          status: 'rejected',
+          decision_remarks: 'Insufficient grounds',
+        } as any),
+      ).resolves.toMatchObject({ id: 77, status: 'rejected' });
     });
 
     it('does not notify when status is left unset (only revised_marks provided has no valid path here, but guards against no-op status)', async () => {
@@ -166,7 +228,7 @@ describe('RevaluationService', () => {
       });
       prisma.revaluation_requests.update.mockResolvedValue({ id: 77 });
 
-      await service.update(77, {} as any);
+      await service.update(77, {});
 
       expect(notifications.notify).not.toHaveBeenCalled();
     });

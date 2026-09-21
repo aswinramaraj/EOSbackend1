@@ -61,9 +61,9 @@ export class StudentAssignmentStatusController {
     return this.studentAssignmentStatusService.findOne(id, user);
   }
 
-  /** PATCH /api/v1/student-assignment-status/:id — Faculty only (owner of the assignment). */
+  /** PATCH /api/v1/student-assignment-status/:id — Faculty or HoD (owner of the assignment, resolved via the caller's own faculty row either way). */
   @Patch(':id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateStudentAssignmentStatusDto,

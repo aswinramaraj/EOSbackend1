@@ -8,6 +8,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { NotificationsService } from '../../notifications/notifications/notifications.service';
 import { CreateServiceRequestDto } from './dto/create-service-request.dto';
@@ -75,7 +76,9 @@ function resolveName(user: RequestUserRow): string {
   }
   const staff = user.non_teaching_staff[0];
   if (staff) {
-    return staff.last_name ? `${staff.first_name} ${staff.last_name}` : staff.first_name;
+    return staff.last_name
+      ? `${staff.first_name} ${staff.last_name}`
+      : staff.first_name;
   }
   return user.email;
 }
@@ -133,7 +136,9 @@ export class ServiceRequestsService {
       select: SERVICE_REQUEST_SELECT,
     });
 
-    this.logger.log(`Service request created: id=${request.id} by user=${userId}`);
+    this.logger.log(
+      `Service request created: id=${request.id} by user=${userId}`,
+    );
     return toResponse(request);
   }
 
@@ -234,12 +239,10 @@ export class ServiceRequestsService {
    * neither while still being edited.
    */
   async submit(id: number, userId: number) {
-    const existing = await this.prisma.secretary_service_requests.findUnique(
-      {
-        where: { id },
-        include: { secretary_service_request_items: true },
-      },
-    );
+    const existing = await this.prisma.secretary_service_requests.findUnique({
+      where: { id },
+      include: { secretary_service_request_items: true },
+    });
     if (!existing) {
       throw new NotFoundException('Service request not found');
     }
@@ -252,9 +255,7 @@ export class ServiceRequestsService {
       throw new ConflictException('Only a draft request can be submitted');
     }
     if (existing.secretary_service_request_items.length === 0) {
-      throw new ConflictException(
-        'Add at least one service before submitting',
-      );
+      throw new ConflictException('Add at least one service before submitting');
     }
 
     const request = await this.prisma.secretary_service_requests.update({
@@ -294,6 +295,7 @@ export class ServiceRequestsService {
       select: SERVICE_REQUEST_SELECT,
     });
 
+    await this.trySetRemarks(id, dto.remarks);
     this.logger.log(
       `Service request ${id} reviewed: decision=${dto.decision} by user=${reviewerId}`,
     );
@@ -305,12 +307,33 @@ export class ServiceRequestsService {
       user_id: existing.requested_by_user_id,
       title: `Service request ${dto.decision}`,
       message: `Your service request "${existing.title}" has been ${dto.decision}.`,
-      type: dto.decision === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
+      type:
+        dto.decision === 'approved'
+          ? 'approval_request_approved'
+          : 'approval_request_rejected',
       related_entity_type: 'secretary_service_request',
       related_entity_id: existing.id,
     });
 
     return toResponse(request);
+  }
+
+  /**
+   * `remarks` is real once decision_reason_columns.query.md's
+   * secretary_service_requests.remarks runs — silently no-ops on an
+   * undefined-column error until then.
+   */
+  private async trySetRemarks(id: number, remarks: string | undefined) {
+    if (!remarks) return;
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE secretary_service_requests SET remarks = ${remarks} WHERE id = ${id}`;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'remarks')) {
+        return;
+      }
+      throw err;
+    }
   }
 
   /** DELETE /me/service-requests/:id (Secretary, own request, only while 'draft'). */

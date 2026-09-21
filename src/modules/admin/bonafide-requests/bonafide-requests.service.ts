@@ -9,6 +9,7 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import { ListBonafideRequestsDto } from './dto/list-bonafide-requests.dto';
 import { DecideBonafideRequestDto } from './dto/decide-bonafide-request.dto';
 
@@ -39,7 +40,9 @@ const LIST_SELECT = {
   },
 } as const;
 
-type ListRow = Prisma.bonafide_requestsGetPayload<{ select: typeof LIST_SELECT }>;
+type ListRow = Prisma.bonafide_requestsGetPayload<{
+  select: typeof LIST_SELECT;
+}>;
 
 function toListDto(row: ListRow) {
   return {
@@ -73,12 +76,16 @@ const DETAIL_SELECT = {
       ...LIST_SELECT.students.select,
       gender: true,
       date_of_birth: true,
-      student_family_details: { select: { father_name: true, mother_name: true } },
+      student_family_details: {
+        select: { father_name: true, mother_name: true },
+      },
     },
   },
 } as const;
 
-type DetailRow = Prisma.bonafide_requestsGetPayload<{ select: typeof DETAIL_SELECT }>;
+type DetailRow = Prisma.bonafide_requestsGetPayload<{
+  select: typeof DETAIL_SELECT;
+}>;
 
 function toDetailDto(row: DetailRow) {
   return {
@@ -182,7 +189,8 @@ export class BonafideRequestsService {
       });
     }
 
-    const nextStatus = dto.decision === 'approve' ? 'faculty_approved' : 'rejected';
+    const nextStatus =
+      dto.decision === 'approve' ? 'faculty_approved' : 'rejected';
 
     try {
       await this.prisma.bonafide_requests.update({
@@ -190,14 +198,43 @@ export class BonafideRequestsService {
         data: { status: nextStatus },
       });
     } catch (err) {
-      this.logger.error(`Failed to ${dto.decision} bonafide request ${id}`, err);
+      this.logger.error(
+        `Failed to ${dto.decision} bonafide request ${id}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
     }
 
+    await this.trySetRejectionReason(id, dto.rejection_reason);
     return this.findOne(id);
+  }
+
+  /**
+   * `rejection_reason` is real once decision_reason_columns.query.md's
+   * bonafide_requests.rejection_reason runs — silently no-ops on an
+   * undefined-column error until then, so the reason just isn't persisted
+   * rather than failing the whole decision.
+   */
+  private async trySetRejectionReason(
+    id: number,
+    rejectionReason: string | undefined,
+  ) {
+    if (!rejectionReason) return;
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE bonafide_requests SET rejection_reason = ${rejectionReason} WHERE id = ${id}`;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'rejection_reason')) {
+        this.logger.warn(
+          'bonafide_requests.rejection_reason missing — see decision_reason_columns.query.md; reason not persisted',
+        );
+        return;
+      }
+      throw err;
+    }
   }
 
   /**

@@ -451,6 +451,94 @@ export class WalletService {
   }
 
   /**
+   * Debits a wallet for a purchase made elsewhere in the app (e.g. canteen
+   * ordering) - unlike transfer(), the payee isn't another wallet, so this
+   * is a plain debit row with no counterparty. Reuses the exact same
+   * lock-check-insert pattern as transfer(): a `SELECT ... FOR UPDATE` on
+   * the wallet row for the insufficient-balance guard, then an insert whose
+   * balance mutation is applied by the pre-existing DB trigger once the row
+   * commits with status='success' - see transfer()'s doc comment for why
+   * this code never updates `balance` directly.
+   *
+   * `outletId` is required, not optional - a pre-existing DB constraint
+   * (`chk_wallet_transactions_source`, discovered live via a real failed
+   * debit while building canteen ordering) rejects any source='purchase'
+   * debit row with a null outlet_id. The caller resolves which
+   * `wallet_outlets` row represents it (e.g. the 'canteen' one) - this
+   * generic wallet method doesn't hardcode any one caller's outlet.
+   */
+  async debitForPurchase(
+    userId: number,
+    amount: number,
+    remarks: string,
+    outletId: number,
+  ): Promise<{ transactionId: number; balance: number }> {
+    const wallet = await this.findOrCreateWallet(userId);
+
+    const transactionId = await this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<
+        Array<{ id: number; balance: Prisma.Decimal }>
+      >(
+        Prisma.sql`SELECT id, balance FROM wallets WHERE id = ${wallet.id} FOR UPDATE`,
+      );
+      const row = locked[0];
+      if (!row || row.balance.lessThan(amount)) {
+        throw new BadRequestException({
+          message: 'Insufficient wallet balance',
+          errorCode: 'INSUFFICIENT_BALANCE',
+        });
+      }
+      const txn = await tx.wallet_transactions.create({
+        data: {
+          wallet_id: wallet.id,
+          txn_type: 'debit',
+          source: 'purchase',
+          amount,
+          status: 'success',
+          remarks,
+          outlet_id: outletId,
+        },
+      });
+      return txn.id;
+    });
+
+    const updated = await this.prisma.wallets.findUniqueOrThrow({
+      where: { id: wallet.id },
+    });
+    return { transactionId, balance: Number(updated.balance) };
+  }
+
+  /**
+   * Reverses a debitForPurchase() when the purchase it paid for couldn't
+   * actually go through (e.g. the order failed after the wallet was
+   * charged) - a fresh linked credit row rather than deleting/mutating the
+   * original debit, so the ledger stays a complete, honest history.
+   */
+  async refundPurchase(
+    walletTransactionId: number,
+    remarks: string,
+  ): Promise<{ transactionId: number; balance: number }> {
+    const debitTxn = await this.prisma.wallet_transactions.findUniqueOrThrow({
+      where: { id: walletTransactionId },
+    });
+    const creditTxn = await this.prisma.wallet_transactions.create({
+      data: {
+        wallet_id: debitTxn.wallet_id,
+        txn_type: 'credit',
+        source: 'adjustment',
+        amount: debitTxn.amount,
+        status: 'success',
+        related_transaction_id: debitTxn.id,
+        remarks,
+      },
+    });
+    const updated = await this.prisma.wallets.findUniqueOrThrow({
+      where: { id: debitTxn.wallet_id },
+    });
+    return { transactionId: creditTxn.id, balance: Number(updated.balance) };
+  }
+
+  /**
    * Shared PIN check for changePin/transfer - lockout-aware, resets the
    * failed-attempt counter on success, escalates to a timed lock after
    * MAX_PIN_ATTEMPTS wrong guesses in a row.

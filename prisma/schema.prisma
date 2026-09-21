@@ -492,6 +492,7 @@ model classes {
   lesson_plans                  lesson_plans[]
   lms_folder_classes            lms_folder_classes[]
   lms_notes                     lms_notes[]
+  online_classes                online_classes[]
   project_teams                 project_teams[]
   student_escalations           student_escalations[]
   students                      students[]
@@ -851,6 +852,7 @@ model faculty {
   medical_visits                                                                             medical_visits[]
   od_requests                                                                                od_requests[]
   od_teams                                                                                   od_teams[]
+  online_classes                                                                             online_classes[]
   payslip_requests                                                                           payslip_requests[]
   question_papers_question_papers_moderator_faculty_idTofaculty                              question_papers[]                  @relation("question_papers_moderator_faculty_idTofaculty")
   question_papers_question_papers_setter_faculty_idTofaculty                                 question_papers[]                  @relation("question_papers_setter_faculty_idTofaculty")
@@ -2125,6 +2127,7 @@ model student_leaves {
   also_on_hostel_leave                                   Boolean                   @default(false)
   routed_to_warden                                       Boolean                   @default(false)
   approved_by_warden_user_id                             Int?
+  attachment_url                                         String?                   @db.VarChar(500)
   faculty                                                faculty?                  @relation(fields: [approved_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                                                  users?                    @relation(fields: [approved_by_hod_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_student_leaves_approved_by_warden_user_idTousers users?                    @relation("student_leaves_approved_by_warden_user_idTousers", fields: [approved_by_warden_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -2307,6 +2310,7 @@ model students {
   student_sensitive_info                                            student_sensitive_info?
   student_sports_team_mapping                                       student_sports_team_mapping[]
   student_test_scores                                               student_test_scores[]
+  student_todo_completions                                          student_todo_completions[]
   student_transport_mapping                                         student_transport_mapping?
   batches                                                           batches                                 @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   classes                                                           classes?                                @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -2347,6 +2351,7 @@ model subjects {
   lesson_plans                  lesson_plans[]
   lms_folders                   lms_folders[]
   lms_notes                     lms_notes[]
+  online_classes                online_classes[]
   revaluation_requests          revaluation_requests[]
   departments                   departments?                    @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   timetable_slots               timetable_slots[]
@@ -2434,6 +2439,10 @@ model users {
   bus_service_logs                                                                  bus_service_logs[]
   calendar_events                                                                   calendar_events[]
   campus_outing_requests                                                            campus_outing_requests[]
+  canteen_bills                                                                     canteen_bills[]
+  canteen_expenses                                                                  canteen_expenses[]
+  canteen_orders                                                                    canteen_orders[]
+  canteen_todays_specials                                                           canteen_todays_specials[]
   class_mentors                                                                     class_mentors[]
   coe_notification_broadcasts                                                       coe_notification_broadcasts[]
   coe_profiles                                                                      coe_profiles?
@@ -2520,18 +2529,22 @@ model users {
   medical_staff                                                                     medical_staff[]
   message_conversations                                                             message_conversations[]
   message_participants                                                              message_participants[]
+  message_requests_message_requests_receiver_user_idTousers                         message_requests[]                      @relation("message_requests_receiver_user_idTousers")
+  message_requests_message_requests_sender_user_idTousers                           message_requests[]                      @relation("message_requests_sender_user_idTousers")
   messages_messages_deleted_by_user_idTousers                                       messages[]                              @relation("messages_deleted_by_user_idTousers")
   messages_messages_sender_user_idTousers                                           messages[]                              @relation("messages_sender_user_idTousers")
   nba_evidence_items                                                                nba_evidence_items[]
   non_teaching_staff                                                                non_teaching_staff[]
   notifications                                                                     notifications[]
   od_request_hod_approvals                                                          od_request_hod_approvals[]
+  online_class_participants                                                         online_class_participants[]
   outcome_attainments                                                               outcome_attainments[]
   parent_student_mapping                                                            parent_student_mapping[]
   payslip_requests                                                                  payslip_requests[]
   personal_calendar_entries                                                         personal_calendar_entries[]
   placement_drives                                                                  placement_drives[]
   placement_interviews                                                              placement_interviews[]
+  placement_todos                                                                   placement_todos[]
   purchase_indents_purchase_indents_hod_reviewed_byTousers                          purchase_indents[]                      @relation("purchase_indents_hod_reviewed_byTousers")
   purchase_indents                                                                  purchase_indents[]
   purchase_order_proposals_purchase_order_proposals_finance_reviewed_byTousers      purchase_order_proposals[]              @relation("purchase_order_proposals_finance_reviewed_byTousers")
@@ -2700,6 +2713,7 @@ model wallet_transactions {
   outlet_id                                                   Int?
   counterparty_wallet_id                                      Int?
   related_transaction_id                                      Int?
+  canteen_orders                                              canteen_orders[]
   users                                                       users?                 @relation(fields: [processed_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "wallet_transactions_collected_by_user_id_fkey")
   wallets_wallet_transactions_counterparty_wallet_idTowallets wallets?               @relation("wallet_transactions_counterparty_wallet_idTowallets", fields: [counterparty_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   wallet_outlets                                              wallet_outlets?        @relation(fields: [outlet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -5843,23 +5857,33 @@ model book_borrow_requests {
 }
 
 model stationary_requests {
-  id                  Int                            @id @default(autoincrement())
-  user_id             Int
-  file_name           String?                        @db.VarChar(255)
-  copies              Int
-  orientation         stationary_orientation_enum
-  color_mode          stationary_color_mode_enum
-  pages               stationary_pages_enum
-  amount              Decimal                        @db.Decimal(10, 2)
-  status              stationary_request_status_enum @default(pending_payment)
-  razorpay_order_id   String?                        @unique @db.VarChar(100)
-  razorpay_payment_id String?                        @db.VarChar(100)
-  razorpay_signature  String?                        @db.VarChar(255)
-  created_at          DateTime                       @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime                       @default(now()) @db.Timestamptz(6)
-  users               users                          @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                    Int                            @id @default(autoincrement())
+  user_id               Int?
+  file_name             String?                        @db.VarChar(255)
+  copies                Int
+  orientation           stationary_orientation_enum
+  color_mode            stationary_color_mode_enum
+  pages                 stationary_pages_enum
+  amount                Decimal                        @db.Decimal(10, 2)
+  status                stationary_request_status_enum @default(pending_payment)
+  razorpay_order_id     String?                        @unique @db.VarChar(100)
+  razorpay_payment_id   String?                        @db.VarChar(100)
+  razorpay_signature    String?                        @db.VarChar(255)
+  created_at            DateTime                       @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime                       @default(now()) @db.Timestamptz(6)
+  total_pages           Int?
+  binding               String?                        @db.VarChar(20)
+  paper_size            String?                        @db.VarChar(10)
+  sides                 String?                        @db.VarChar(20)
+  rejection_reason      String?                        @db.VarChar(300)
+  walkin_requester_name String?                        @db.VarChar(150)
+  walkin_department     String?                        @db.VarChar(150)
+  specification         String?                        @db.VarChar(150)
+  payment_mode          String?                        @db.VarChar(30)
+  users                 users?                         @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([user_id, created_at])
+  @@index([user_id], map: "idx_stationary_requests_user")
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -5894,8 +5918,10 @@ model message_conversations {
   last_message_at      DateTime?              @db.Timestamptz(6)
   created_at           DateTime               @default(now()) @db.Timestamptz(6)
   updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  image_url            String?                @db.VarChar(500)
   users                users                  @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   message_participants message_participants[]
+  message_requests     message_requests[]
   messages             messages[]
 
   @@index([last_message_at(sort: Desc)], map: "idx_message_conversations_last_message_at")
@@ -5910,6 +5936,8 @@ model message_participants {
   last_read_message_id  BigInt?
   last_read_at          DateTime?             @db.Timestamptz(6)
   is_muted              Boolean               @default(false)
+  is_pinned             Boolean               @default(false)
+  pinned_at             DateTime?             @db.Timestamptz(6)
   message_conversations message_conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                 users                 @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -5947,6 +5975,353 @@ model user_presence {
   last_seen_at DateTime? @db.Timestamptz(6)
   updated_at   DateTime  @default(now()) @db.Timestamptz(6)
   users        users     @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model message_requests {
+  id                                             BigInt                 @id @default(autoincrement())
+  request_type                                   String                 @db.VarChar(20)
+  sender_user_id                                 Int
+  receiver_user_id                               Int
+  conversation_id                                BigInt?
+  status                                         String                 @default("pending") @db.VarChar(20)
+  active_key                                     String?                @unique(map: "uniq_message_requests_active_key", where: raw("(active_key IS NOT NULL)")) @db.VarChar(60)
+  created_at                                     DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at                                     DateTime               @default(now()) @db.Timestamptz(6)
+  message_conversations                          message_conversations? @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_message_requests_receiver_user_idTousers users                  @relation("message_requests_receiver_user_idTousers", fields: [receiver_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_message_requests_sender_user_idTousers   users                  @relation("message_requests_sender_user_idTousers", fields: [sender_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([conversation_id], map: "idx_message_requests_conversation")
+  @@index([receiver_user_id, status], map: "idx_message_requests_receiver_status")
+  @@index([sender_user_id, status], map: "idx_message_requests_sender_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model online_class_participants {
+  id               Int            @id @default(autoincrement())
+  online_class_id  Int
+  user_id          Int
+  role             String         @db.VarChar(10)
+  joined_at        DateTime       @default(now()) @db.Timestamptz(6)
+  left_at          DateTime?      @db.Timestamptz(6)
+  duration_seconds Int?
+  online_classes   online_classes @relation(fields: [online_class_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users            users          @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([online_class_id], map: "idx_online_class_participants_class")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model online_classes {
+  id                        Int                         @id @default(autoincrement())
+  subject_id                Int
+  class_id                  Int
+  faculty_id                Int
+  class_date                DateTime                    @db.Date
+  period_number             Int?                        @db.SmallInt
+  status                    String                      @default("live") @db.VarChar(20)
+  livekit_room_name         String                      @unique @db.VarChar(100)
+  started_at                DateTime?                   @db.Timestamptz(6)
+  ended_at                  DateTime?                   @db.Timestamptz(6)
+  scheduled_at              DateTime?                   @db.Timestamptz(6)
+  title                     String?                     @db.VarChar(200)
+  online_class_participants online_class_participants[]
+  classes                   classes                     @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty                   faculty                     @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subjects                  subjects                    @relation(fields: [subject_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([subject_id, class_id, class_date])
+  @@index([class_id, class_date], map: "idx_online_classes_class_date")
+}
+
+model placement_todos {
+  id                       Int                        @id @default(autoincrement())
+  title                    String                     @db.VarChar(200)
+  description              String?                    @db.VarChar(2000)
+  deadline                 DateTime?                  @db.Timestamptz(6)
+  created_by_user_id       Int
+  is_active                Boolean                    @default(true)
+  created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  users                    users                      @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  student_todo_completions student_todo_completions[]
+}
+
+model stationary_stock_items {
+  id                  Int      @id @default(autoincrement())
+  item_name           String   @unique @db.VarChar(150)
+  unit                String   @db.VarChar(50)
+  quantity_left       Int      @default(0)
+  full_stock_quantity Int
+  low_stock_threshold Int      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @default(now())
+}
+
+model student_todo_completions {
+  id              Int             @id @default(autoincrement())
+  todo_id         Int
+  student_id      Int
+  completed_at    DateTime        @default(now()) @db.Timestamptz(6)
+  students        students        @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  placement_todos placement_todos @relation(fields: [todo_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([todo_id, student_id])
+  @@index([todo_id], map: "idx_student_todo_completions_todo")
+}
+
+model canteen_bills {
+  id                 Int             @id @default(autoincrement())
+  order_id           Int?
+  cashier_user_id    Int?
+  mode_of_payment    String          @db.VarChar(20)
+  bill_amount        Decimal         @db.Decimal(10, 2)
+  date_time          DateTime        @default(now()) @db.Timestamptz(6)
+  bill_type          String?         @db.VarChar(50)
+  transaction_status Boolean         @default(true)
+  voided_at          DateTime?       @db.Timestamptz(6)
+  users              users?          @relation(fields: [cashier_user_id], references: [id], onUpdate: NoAction)
+  canteen_orders     canteen_orders? @relation(fields: [order_id], references: [id], onUpdate: NoAction)
+
+  @@index([cashier_user_id], map: "idx_canteen_bills_cashier")
+  @@index([date_time], map: "idx_canteen_bills_date")
+}
+
+model canteen_dish_categories {
+  id                  Int                   @id @default(autoincrement())
+  name                String                @unique @db.VarChar(100)
+  created_at          DateTime              @default(now()) @db.Timestamptz(6)
+  canteen_dishes      canteen_dishes[]
+  canteen_gst_rates   canteen_gst_rates[]
+  canteen_order_items canteen_order_items[]
+}
+
+model canteen_dishes {
+  id                      Int                      @id @default(autoincrement())
+  name                    String                   @db.VarChar(150)
+  category_id             Int?
+  price                   Decimal                  @db.Decimal(10, 2)
+  stock_quantity          Int                      @default(0)
+  image_url               String?
+  is_veg                  Boolean                  @default(true)
+  is_available            Boolean                  @default(true)
+  parcel_available        Boolean                  @default(true)
+  created_at              DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime                 @default(now()) @db.Timestamptz(6)
+  canteen_dish_categories canteen_dish_categories? @relation(fields: [category_id], references: [id], onUpdate: NoAction)
+  canteen_order_items     canteen_order_items[]
+  canteen_recipes         canteen_recipes?
+
+  @@index([category_id], map: "idx_canteen_dishes_category")
+  @@index([id, stock_quantity, price], map: "idx_canteen_dishes_stock_lookup")
+}
+
+model canteen_expense_categories {
+  id                       Int                        @id @default(autoincrement())
+  name                     String                     @unique @db.VarChar(100)
+  canteen_expense_products canteen_expense_products[]
+  canteen_expenses         canteen_expenses[]
+}
+
+model canteen_expense_products {
+  id                         Int                          @id @default(autoincrement())
+  category_id                Int?
+  product_name               String                       @db.VarChar(150)
+  price_per_unit             Decimal                      @db.Decimal(10, 2)
+  canteen_expense_categories canteen_expense_categories?  @relation(fields: [category_id], references: [id], onUpdate: NoAction)
+  canteen_stock_batches      canteen_stock_batches[]
+  canteen_stock_transactions canteen_stock_transactions[]
+}
+
+model canteen_expenses {
+  id                         Int                         @id @default(autoincrement())
+  name                       String                      @db.VarChar(150)
+  category_id                Int?
+  vendor_name                String?                     @db.VarChar(150)
+  quantity                   Decimal                     @db.Decimal(10, 2)
+  date                       DateTime                    @default(now()) @db.Timestamptz(6)
+  total_amount               Decimal                     @db.Decimal(10, 2)
+  recorded_by_user_id        Int?
+  canteen_expense_categories canteen_expense_categories? @relation(fields: [category_id], references: [id], onUpdate: NoAction)
+  users                      users?                      @relation(fields: [recorded_by_user_id], references: [id], onUpdate: NoAction)
+
+  @@index([category_id, date], map: "idx_canteen_expenses_category_date")
+}
+
+model canteen_gst_rates {
+  id                      Int                      @id @default(autoincrement())
+  category_id             Int?
+  gst_percentage          Decimal                  @db.Decimal(5, 2)
+  canteen_dish_categories canteen_dish_categories? @relation(fields: [category_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model canteen_ingredients {
+  id                         Int                          @id @default(autoincrement())
+  name                       String                       @unique @db.VarChar(150)
+  stock_quantity             Decimal                      @default(0) @db.Decimal(10, 2)
+  price_per_unit             Decimal                      @db.Decimal(10, 2)
+  threshold                  Decimal                      @default(0) @db.Decimal(10, 2)
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  canteen_recipe_ingredients canteen_recipe_ingredients[]
+}
+
+model canteen_order_items {
+  id                      Int                      @id @default(autoincrement())
+  order_id                Int
+  dish_id                 Int?
+  category_id             Int?
+  quantity                Int
+  price                   Decimal                  @db.Decimal(10, 2)
+  is_parcel               Boolean                  @default(false)
+  canteen_dish_categories canteen_dish_categories? @relation(fields: [category_id], references: [id], onUpdate: NoAction)
+  canteen_dishes          canteen_dishes?          @relation(fields: [dish_id], references: [id], onUpdate: NoAction)
+  canteen_orders          canteen_orders           @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([order_id, dish_id], map: "idx_canteen_order_items_order_dish")
+}
+
+model canteen_orders {
+  id                    Int                   @id @default(autoincrement())
+  placed_by_user_id     Int?
+  status                String                @default("pending") @db.VarChar(20)
+  payment_method        String?               @db.VarChar(50)
+  total_amount          Decimal?              @db.Decimal(10, 2)
+  order_source          String                @default("cashier") @db.VarChar(20)
+  created_at            DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime              @default(now()) @db.Timestamptz(6)
+  is_emergency          Boolean               @default(false)
+  pickup_token          String?               @db.VarChar(12)
+  wallet_transaction_id Int?
+  token_date            DateTime?             @db.Date
+  canteen_bills         canteen_bills[]
+  canteen_order_items   canteen_order_items[]
+  users                 users?                @relation(fields: [placed_by_user_id], references: [id], onUpdate: NoAction)
+  wallet_transactions   wallet_transactions?  @relation(fields: [wallet_transaction_id], references: [id], onUpdate: NoAction)
+
+  @@index([order_source, created_at(sort: Desc)], map: "idx_canteen_orders_source_created")
+  @@index([status], map: "idx_canteen_orders_status")
+  @@index([pickup_token], map: "idx_canteen_orders_pickup_token")
+  @@index([order_source, status, created_at], map: "idx_canteen_orders_self_active")
+  @@unique([token_date, pickup_token], map: "uq_canteen_orders_token_per_day", where: raw("(order_source = 'self' AND status <> 'cancelled')"))
+}
+
+model canteen_recipe_ingredients {
+  id                  Int                 @id @default(autoincrement())
+  recipe_id           Int
+  ingredient_id       Int
+  quantity_needed     Decimal             @db.Decimal(10, 2)
+  unit                String              @db.VarChar(20)
+  canteen_ingredients canteen_ingredients @relation(fields: [ingredient_id], references: [id], onUpdate: NoAction)
+  canteen_recipes     canteen_recipes     @relation(fields: [recipe_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([recipe_id, ingredient_id])
+}
+
+model canteen_recipes {
+  id                         Int                          @id @default(autoincrement())
+  dish_id                    Int                          @unique
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  canteen_recipe_ingredients canteen_recipe_ingredients[]
+  canteen_dishes             canteen_dishes               @relation(fields: [dish_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model canteen_stock_batches {
+  id                         Int                          @id @default(autoincrement())
+  product_id                 Int
+  quantity                   Int
+  remaining_quantity         Int
+  unit_price                 Decimal                      @db.Decimal(10, 2)
+  date_added                 DateTime                     @default(now()) @db.Timestamptz(6)
+  supplier                   String?                      @db.VarChar(150)
+  batch_reference            String?                      @db.VarChar(100)
+  notes                      String?
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  canteen_expense_products   canteen_expense_products     @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  canteen_stock_transactions canteen_stock_transactions[]
+
+  @@index([product_id, date_added], map: "idx_canteen_stock_batches_product_date")
+}
+
+model canteen_stock_transactions {
+  id                       Int                      @id @default(autoincrement())
+  product_id               Int
+  transaction_type         String                   @db.VarChar(20)
+  quantity                 Int
+  unit_price               Decimal?                 @db.Decimal(10, 2)
+  total_cost               Decimal?                 @db.Decimal(10, 2)
+  batch_id                 Int?
+  reference_id             String?                  @db.VarChar(100)
+  reference_type           String?                  @db.VarChar(50)
+  transaction_date         DateTime                 @default(now()) @db.Timestamptz(6)
+  notes                    String?
+  created_at               DateTime                 @default(now()) @db.Timestamptz(6)
+  canteen_stock_batches    canteen_stock_batches?   @relation(fields: [batch_id], references: [id], onUpdate: NoAction)
+  canteen_expense_products canteen_expense_products @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([batch_id], map: "idx_canteen_stock_transactions_batch")
+  @@index([product_id], map: "idx_canteen_stock_transactions_product")
+  @@index([reference_id, reference_type], map: "idx_canteen_stock_transactions_reference")
+}
+
+model canteen_todays_specials {
+  id                 Int      @id @default(autoincrement())
+  meal_type          String   @db.VarChar(10)
+  image_url          String
+  display_order      Int      @default(0)
+  special_date       DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  is_active          Boolean  @default(true)
+  created_by_user_id Int?
+  users              users?   @relation(fields: [created_by_user_id], references: [id], onUpdate: NoAction)
+
+  @@unique([meal_type, display_order, special_date])
+  @@index([is_active], map: "idx_canteen_todays_specials_active")
+  @@index([special_date], map: "idx_canteen_todays_specials_date")
+  @@index([meal_type], map: "idx_canteen_todays_specials_meal")
+}
+
+model stationary_finishing_rates {
+  id         Int      @id @default(autoincrement())
+  item_name  String   @db.VarChar(100)
+  note       String?  @db.VarChar(150)
+  price      Decimal  @db.Decimal(10, 2)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now())
+}
+
+model stationary_machines {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(100)
+  model      String   @db.VarChar(150)
+  category   String   @default("printer") @db.VarChar(20)
+  status     String   @default("working") @db.VarChar(20)
+  note       String?  @db.VarChar(300)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now())
+}
+
+model stationary_print_rates {
+  id           Int      @id @default(autoincrement())
+  service      String   @db.VarChar(100)
+  paper_size   String   @db.VarChar(20)
+  bw_price     Decimal  @db.Decimal(10, 2)
+  bw_unit      String   @db.VarChar(20)
+  colour_price Decimal  @db.Decimal(10, 2)
+  colour_unit  String   @db.VarChar(20)
+  bulk_price   Decimal  @db.Decimal(10, 2)
+  bulk_unit    String   @db.VarChar(20)
+  sort_order   Int      @default(0)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @default(now())
+}
+
+model canteen_settings {
+  id             Int      @id @default(autoincrement())
+  gst_percentage Decimal  @default(0) @db.Decimal(5, 2)
+  parcel_charge  Decimal  @default(5) @db.Decimal(10, 2)
+  updated_at     DateTime @default(now()) @db.Timestamptz(6)
 }
 
 enum achievement_media_type_enum {
@@ -6219,6 +6594,7 @@ enum wallet_outlet_type_enum {
   recharge_counter
   stationary
   photocopier
+  canteen
 }
 
 enum wallet_txn_source_enum {
@@ -6840,6 +7216,10 @@ enum stationary_pages_enum {
 enum stationary_request_status_enum {
   pending_payment
   paid
+  processing
+  ready_for_pickup
+  completed
+  rejected
 }
 
 enum message_status_enum {

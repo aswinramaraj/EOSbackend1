@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import { FacultyLeavesService } from '../faculty/faculty-leaves/faculty-leaves.service';
 import { FacultyOdRequestsService } from '../faculty/faculty-od-requests/faculty-od-requests.service';
 
@@ -188,18 +189,84 @@ export class HodApprovalsService {
     };
   }
 
+  /**
+   * `remarks` is proposed but not yet applied on any of these three tables
+   * (see decision_reason_columns.query.md) — attempted best-effort so the
+   * reason starts persisting the moment that migration runs, without
+   * blocking the approve/reject action itself if it hasn't yet.
+   */
+  private async trySetStudentLeaveRemarks(
+    id: number,
+    remarks: string | undefined,
+  ) {
+    if (!remarks) return;
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE student_leaves SET remarks = ${remarks} WHERE id = ${id}`;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'remarks')) {
+        this.logger.warn(
+          'student_leaves.remarks missing — see decision_reason_columns.query.md; reason not persisted',
+        );
+        return;
+      }
+      throw err;
+    }
+  }
+
+  private async trySetFacultyLeaveRemarks(
+    id: number,
+    remarks: string | undefined,
+  ) {
+    if (!remarks) return;
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE faculty_leaves SET remarks = ${remarks} WHERE id = ${id}`;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'remarks')) {
+        this.logger.warn(
+          'faculty_leaves.remarks missing — see decision_reason_columns.query.md; reason not persisted',
+        );
+        return;
+      }
+      throw err;
+    }
+  }
+
+  private async trySetStudentOdRemarks(
+    id: number,
+    remarks: string | undefined,
+  ) {
+    if (!remarks) return;
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE od_request_hod_approvals SET remarks = ${remarks} WHERE id = ${id}`;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'remarks')) {
+        this.logger.warn(
+          'od_request_hod_approvals.remarks missing — see decision_reason_columns.query.md; reason not persisted',
+        );
+        return;
+      }
+      throw err;
+    }
+  }
+
   async decideLeaveRequest(
     user: JwtPayload,
     kind: 'student' | 'faculty',
     id: number,
     decision: 'approved' | 'rejected',
+    remarks?: string,
   ) {
     if (kind === 'faculty') {
-      return this.facultyLeaves.update(
+      const result = await this.facultyLeaves.update(
         id,
         { hod_approval_status: decision },
         user,
       );
+      await this.trySetFacultyLeaveRemarks(id, remarks);
+      return result;
     }
     const department = await this.resolveDepartment(user);
     const existing = await this.prisma.student_leaves.findUnique({
@@ -229,6 +296,7 @@ export class HodApprovalsService {
         approved_by_hod_user_id: user.sub,
       },
     });
+    await this.trySetStudentLeaveRemarks(id, remarks);
     return { id: updated.id, status: updated.status };
   }
 
@@ -326,11 +394,17 @@ export class HodApprovalsService {
     kind: 'student' | 'faculty',
     id: number,
     decision: 'approved' | 'rejected',
+    remarks?: string,
   ) {
     if (kind === 'faculty') {
+      // faculty_od_requests already has a real admin_remarks column — no
+      // schema gap here, unlike the student-OD/leave paths below.
       return this.facultyOdRequests.update(
         id,
-        { hod_approval_status: decision },
+        {
+          hod_approval_status: decision,
+          ...(remarks ? { admin_remarks: remarks } : {}),
+        },
         user,
       );
     }
@@ -359,6 +433,7 @@ export class HodApprovalsService {
         reviewed_at: new Date(),
       },
     });
+    await this.trySetStudentOdRemarks(id, remarks);
     return { id: updated.id, status: updated.status };
   }
 }
