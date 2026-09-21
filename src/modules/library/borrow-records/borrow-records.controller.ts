@@ -130,14 +130,16 @@ export class BorrowRecordsController {
     return this.borrowRecordsService.createReplacementIndent(id, user);
   }
 
-  // GET /me/library/borrow-records — per test/to_create/borrowed.md:
-  // student-only, self-scoped read of the caller's own borrow history.
-  // Previously served by a separate MeBorrowedController; merged in here so
-  // this one controller owns everything the borrow-records module exposes.
-  // Renamed from the /me/library/borrowed path to use consistent
-  // "borrow-records" wording with the rest of this resource.
+  // GET /me/library/borrow-records — self-scoped read of the caller's own
+  // borrow history. Originally student-only (per test/to_create/borrowed.md);
+  // widened to every role reachable via the mobile app's Campus tab (which
+  // shares this one screen across Student/Employee/HoD/HR Payroll/Principal
+  // - see EOS-mobileapp's AmenityHomeScreen.tsx) - the service resolves
+  // student_id/faculty_id/staff_user_id dynamically based on whichever real
+  // row the caller actually has (see findMyBorrowRecords below), same
+  // resolve-by-row-not-by-role pattern already used for Leave/OD self-service.
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('student')
+  @Roles('student', 'faculty', 'hod', 'library', 'finance', 'academic_coordinator', 'hr_payroll', 'principal', 'secretary')
   @Get('me/library/borrow-records')
   findMyBorrowRecords(
     @Query() query: GetMyBorrowRecordsDto,

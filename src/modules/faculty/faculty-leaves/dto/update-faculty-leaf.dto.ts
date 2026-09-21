@@ -22,4 +22,12 @@ export class UpdateFacultyLeafDto {
   @IsOptional()
   @IsIn(['approved', 'rejected'])
   hr_approval_status?: 'approved' | 'rejected';
+
+  /** Correspondent only - decides a Principal-authored request. */
+  @IsOptional()
+  @IsIn(['approved', 'rejected'])
+  correspondent_approval_status?: 'approved' | 'rejected';
+
+  @IsOptional()
+  correspondent_remarks?: string;
 }

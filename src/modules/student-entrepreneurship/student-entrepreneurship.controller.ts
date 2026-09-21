@@ -5,6 +5,7 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { InstitutionDirectoryQueryDto } from 'src/common/dto/institution-directory-query.dto';
 import { StudentEntrepreneurshipService } from './student-entrepreneurship.service';
 import { SearchStudentsQueryDto } from './dto/search-students-query.dto';
 import { CreateStudentEntrepreneurshipDto } from './dto/create-student-entrepreneurship.dto';
@@ -12,17 +13,22 @@ import { UpdateStudentEntrepreneurshipDto } from './dto/update-student-entrepren
 
 @Controller('student-entrepreneurship')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
 export class StudentEntrepreneurshipController {
   constructor(private readonly service: StudentEntrepreneurshipService) {}
 
-  /** GET /student-entrepreneurship — Principal only, every department at once. */
+  /**
+   * GET /student-entrepreneurship — Principal/Correspondent (this screen is
+   * shared verbatim by both - see CorrespondentDashboard.tsx), every
+   * department at once by default; optionally filtered by Batch/Department/
+   * Class with Section + name-or-roll-no search (see InstitutionDirectoryQueryDto).
+   */
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query() query: InstitutionDirectoryQueryDto) {
+    return this.service.findAll(query);
   }
 
-  /** GET /student-entrepreneurship/department/:departmentId — Principal only, any department. */
+  /** GET /student-entrepreneurship/department/:departmentId — Principal/Correspondent, any department. */
   @Get('department/:departmentId')
   findAllByDepartment(@Param('departmentId', ParseIntPipe) departmentId: number) {
     return this.service.findAllByDepartment(departmentId);

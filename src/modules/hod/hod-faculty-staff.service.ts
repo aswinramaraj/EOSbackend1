@@ -8,6 +8,13 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { FacultyAttendanceService } from '../faculty/faculty-attendance/faculty-attendance.service';
 
+const TEACHING_DESIGNATION_RANK: Record<string, number> = {
+  'Professor & Head': 0,
+  Professor: 1,
+  'Associate Professor': 2,
+  'Assistant Professor': 3,
+};
+
 /**
  * Same Odd/Even semester convention duplicated in every hod service file
  * (see HodService's own copy for the canonical comment on why it's
@@ -103,14 +110,27 @@ export class HodFacultyStaffService {
           select: { category: true },
           distinct: ['category'],
         });
-      const designations = [
-        ...new Set([
-          ...facultyDesignationRows.map((d) => d.designation),
-          ...nonTeachingCategoryRows.map((c) => c.category),
-        ]),
+      // Teaching designations sorted by academic seniority (matches
+      // src/modules/admin/lib/faculty-wizard-config.ts's DESIGNATION_OPTIONS
+      // order on the frontend), not alphabetically — "Professor" would
+      // otherwise sort after "Associate Professor". Non-teaching categories
+      // have no such hierarchy, so they stay alphabetical and are appended
+      // after every teaching designation.
+      const teachingDesignations = [
+        ...new Set(facultyDesignationRows.map((d) => d.designation)),
       ]
-        .filter((d): d is string => Boolean(d))
+        .filter((d): d is NonNullable<typeof d> => Boolean(d))
+        .sort(
+          (a, b) =>
+            (TEACHING_DESIGNATION_RANK[a] ?? 99) -
+            (TEACHING_DESIGNATION_RANK[b] ?? 99),
+        );
+      const nonTeachingCategories: string[] = [
+        ...new Set(nonTeachingCategoryRows.map((c) => c.category)),
+      ]
+        .filter((d): d is NonNullable<typeof d> => Boolean(d))
         .sort();
+      const designations = [...teachingDesignations, ...nonTeachingCategories];
 
       const leaveRequestsPending = await this.prisma.faculty_leaves.count({
         where: {
@@ -323,6 +343,19 @@ export class HodFacultyStaffService {
           });
         }
       }
+
+      // Same seniority ordering as the designation filter above — faculty by
+      // rank (Professor & Head down to Assistant Professor), then
+      // non-teaching staff alphabetically by category, each group name-sorted
+      // within itself rather than left in arbitrary id order.
+      rows.sort((a, b) => {
+        const rankA = TEACHING_DESIGNATION_RANK[a.designation] ?? 99;
+        const rankB = TEACHING_DESIGNATION_RANK[b.designation] ?? 99;
+        if (rankA !== rankB) return rankA - rankB;
+        if (a.designation !== b.designation)
+          return a.designation.localeCompare(b.designation);
+        return a.name.localeCompare(b.name);
+      });
 
       return { department: { code: department.code }, rows };
     } catch (err) {

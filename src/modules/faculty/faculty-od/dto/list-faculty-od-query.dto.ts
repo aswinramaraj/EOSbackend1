@@ -25,6 +25,11 @@ export class ListFacultyOdQueryDto extends PaginationDto {
   @IsIn(['pending', 'approved', 'rejected'])
   hr_approval_status?: 'pending' | 'approved' | 'rejected';
 
+  /** Correspondent's OD Approval queue filter - e.g. ?correspondent_approval_status=pending. */
+  @IsOptional()
+  @IsIn(['pending', 'approved', 'rejected'])
+  correspondent_approval_status?: 'pending' | 'approved' | 'rejected';
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

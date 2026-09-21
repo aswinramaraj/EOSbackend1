@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 
 const ATTENDANCE_THRESHOLD_PCT = 75;
 
@@ -32,6 +33,14 @@ export class StudentExamRecordService {
 
   /** GET /student-exam-record — real, filterable roster (department/semester/search) backing the listing page. */
   async list(query: { department_id?: number; semester?: number; search?: string }) {
+    // Each word must independently match the student's first/last name
+    // (order-independent — "Malar Sekar" and "Sekar Malar" both match
+    // first_name="Malar", last_name="Sekar"); id/roll/register fields are
+    // single tokens, matched against the whole raw search string.
+    const nameWhere = buildMultiWordNameWhere(query.search, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
     const students = await this.prisma.students.findMany({
       where: {
         status: 'active',
@@ -43,8 +52,7 @@ export class StudentExamRecordService {
                 { register_no: { contains: query.search, mode: 'insensitive' } },
                 { student_id_no: { contains: query.search, mode: 'insensitive' } },
                 { roll_no: { contains: query.search, mode: 'insensitive' } },
-                { soa_applications: { first_name: { contains: query.search, mode: 'insensitive' } } },
-                { soa_applications: { last_name: { contains: query.search, mode: 'insensitive' } } },
+                ...(nameWhere ? [{ soa_applications: nameWhere }] : []),
               ],
             }
           : {}),

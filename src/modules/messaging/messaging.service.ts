@@ -12,7 +12,9 @@ import { NotificationsService } from 'src/modules/notifications/notifications/no
 import { StorageService } from 'src/common/storage/storage.service';
 import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { notification_type_enum } from '../../../generated/prisma/enums';
+import { Prisma } from '../../../generated/prisma/client';
 import {
   MESSAGING_PUSHER,
   type MessagingPusher,
@@ -49,7 +51,53 @@ export function dmPairKey(userIdA: number, userIdB: number): string {
   return `dm:${[userIdA, userIdB].sort((a, b) => a - b).join(':')}`;
 }
 
+/**
+ * Human-friendly labels for "office" accounts — a role with no linked
+ * faculty/student profile row (principal, admin, coe, billing, ...), so
+ * `users` has nothing but a raw email to identify them by. Without this,
+ * personDisplayName's only option was the literal email, and
+ * personRoleLabel's only option was the raw snake_case role slug directly
+ * underneath it — e.g. "principal@sece.ac.in" over "principal", the same
+ * word twice. Any role not listed here (a legacy/unseeded one) still gets a
+ * reasonable label from the Title Case fallback below, never a raw slug.
+ */
+const OFFICE_ROLE_LABEL: Record<string, string> = {
+  admin: 'Admin',
+  principal: 'Principal',
+  coe: 'Controller of Examinations',
+  placement: 'Placement Cell',
+  library: 'Library',
+  billing: 'Billing',
+  hr_payroll: 'HR & Payroll',
+  finance: 'Finance',
+  iqac: 'IQAC',
+  secretary: 'Secretary',
+  gate_warden: 'Gate Warden',
+  warden: 'Hostel Warden',
+  media_room: 'Media Room',
+  academic_coordinator: 'Academic Coordinator',
+  alumni: 'Alumni',
+  non_teaching_staff: 'Non-Teaching Staff',
+  transport: 'Transport',
+  higheredu: 'Higher Education',
+  medical_centre: 'Medical Centre',
+  sports_admin: 'Sports Admin',
+  edc_coordinator: 'EDC Coordinator',
+  parent: 'Parent',
+};
+
+function humanizeRoleName(roleName: string): string {
+  return (
+    OFFICE_ROLE_LABEL[roleName] ??
+    roleName
+      .split('_')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ')
+  );
+}
+
 export function personDisplayName(row: {
+  roles: { name: string };
   faculty?: { first_name: string; last_name: string } | null;
   students?: {
     soa_applications?: { first_name: string; last_name: string | null } | null;
@@ -60,17 +108,41 @@ export function personDisplayName(row: {
     return `${row.faculty.first_name} ${row.faculty.last_name}`.trim();
   const app = row.students?.soa_applications;
   if (app) return `${app.first_name} ${app.last_name ?? ''}`.trim();
-  return row.email;
+  // No personal profile exists for this role (principal, admin, billing,
+  // ...) — the role itself IS their identity, so it's the name, not a
+  // subtitle repeating what the (unreadable) email already implied.
+  return humanizeRoleName(row.roles.name);
+}
+
+const ROMAN_YEAR = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+
+/**
+ * Semesters 1-2 -> "I", 3-4 -> "II", 5-6 -> "III", etc. Mirrors
+ * EOS-web-frontend's src/lib/utils/academic.ts#yearLabelForSemester — kept
+ * as its own copy since the two apps don't share code, but must stay in
+ * sync with it.
+ */
+function yearLabelForSemester(
+  semester: number | null | undefined,
+): string | null {
+  if (semester == null) return null;
+  const yearIndex = Math.ceil(semester / 2) - 1;
+  return ROMAN_YEAR[yearIndex] ?? String(yearIndex + 1);
 }
 
 function personRoleLabel(row: {
   roles: { name: string };
+  email: string;
   faculty?: {
     designation: string;
     departments: { name: string; code: string };
   } | null;
   students?: {
-    classes: { section: string; departments: { code: string } } | null;
+    classes: {
+      section: string;
+      current_semester: number | null;
+      departments: { code: string };
+    } | null;
   } | null;
 }): string {
   if (row.faculty)
@@ -81,12 +153,24 @@ function personRoleLabel(row: {
     const cls = row.students.classes;
     return [
       'Student',
-      cls ? `${cls.departments.code} · Sec ${cls.section}` : null,
+      cls
+        ? [
+            yearLabelForSemester(cls.current_semester)
+              ? `${yearLabelForSemester(cls.current_semester)} Year`
+              : null,
+            cls.departments.code,
+            `Sec ${cls.section}`,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : null,
     ]
       .filter(Boolean)
       .join(' · ');
   }
-  return row.roles.name;
+  // The name line above already carries the humanized role — the email is
+  // the useful second line here, not a repeat of the same word.
+  return row.email;
 }
 
 /** Normalizes the two differently-named source columns (students.photo_url,
@@ -120,6 +204,11 @@ export const PERSON_SELECT = {
       classes: {
         select: {
           section: true,
+          // Needed by personRoleLabel's yearLabelForSemester lookup — was
+          // missing here (silently degrading a student's role label to
+          // omit "III Year" etc.) until this merge's PERSON_SELECT/inline-
+          // select consolidation.
+          current_semester: true,
           departments: { select: { code: true } },
         },
       },
@@ -143,7 +232,11 @@ export function toMessagePerson(row: {
   } | null;
   students: {
     photo_url: string | null;
-    classes: { section: string; departments: { code: string } } | null;
+    classes: {
+      section: string;
+      current_semester: number | null;
+      departments: { code: string };
+    } | null;
     soa_applications: { first_name: string; last_name: string | null } | null;
   } | null;
 }) {
@@ -154,6 +247,61 @@ export function toMessagePerson(row: {
     photoUrl: personPhotoUrl(row),
   };
 }
+
+/**
+ * Shared shape for "give me a conversation plus enough of both participants'
+ * profiles to render a ConversationSummary" — used by every read path that
+ * needs one (getOrCreateConversation's existing-conversation fast path, its
+ * race-recovery fallback, and toConversationSummary's by-id lookup) so none
+ * of them have to fetch the row once just to know it exists and then fetch
+ * it again in full a second time.
+ */
+const CONVERSATION_PARTICIPANTS_INCLUDE = {
+  message_participants: {
+    include: {
+      users: {
+        select: {
+          id: true,
+          email: true,
+          roles: { select: { name: true } },
+          faculty: {
+            select: {
+              first_name: true,
+              last_name: true,
+              designation: true,
+              // toMessagePerson/personPhotoUrl need this — was missing
+              // here (this include predates the group-messaging photo
+              // plumbing), which would have silently broken photoUrl for
+              // every summary built through this path.
+              profile_url: true,
+              departments: { select: { name: true, code: true } },
+            },
+          },
+          students: {
+            select: {
+              // Same as above, for the student side of photoUrl.
+              photo_url: true,
+              classes: {
+                select: {
+                  section: true,
+                  current_semester: true,
+                  departments: { select: { code: true } },
+                },
+              },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.message_conversationsInclude;
+
+type ConversationWithParticipants = Prisma.message_conversationsGetPayload<{
+  include: typeof CONVERSATION_PARTICIPANTS_INCLUDE;
+}>;
 
 @Injectable()
 export class MessagingService {
@@ -287,6 +435,19 @@ export class MessagingService {
     const q = query.q?.trim();
     if (!q || q.length < 1) return [];
 
+    // Each word must independently match first/last name (order-independent
+    // — "Malar Sekar" and "Sekar Malar" both match first_name="Malar",
+    // last_name="Sekar"); email is a single token, matched against the
+    // whole raw query.
+    const facultyNameWhere = buildMultiWordNameWhere(q, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
+    const studentNameWhere = buildMultiWordNameWhere(q, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
+
     const rows = await this.prisma.users.findMany({
       where: {
         id: { not: callerUserId },
@@ -299,24 +460,10 @@ export class MessagingService {
         // kept as a parameter (unused here now) for that reason, and in case
         // a future role-specific restriction is needed again.
         OR: [
-          {
-            faculty: {
-              OR: [
-                { first_name: { contains: q, mode: 'insensitive' } },
-                { last_name: { contains: q, mode: 'insensitive' } },
-              ],
-            },
-          },
-          {
-            students: {
-              soa_applications: {
-                OR: [
-                  { first_name: { contains: q, mode: 'insensitive' } },
-                  { last_name: { contains: q, mode: 'insensitive' } },
-                ],
-              },
-            },
-          },
+          ...(facultyNameWhere ? [{ faculty: facultyNameWhere }] : []),
+          ...(studentNameWhere
+            ? [{ students: { soa_applications: studentNameWhere } }]
+            : []),
           // Same "find a student by their name" search box also needs to
           // match on roll/register number, not just name - these are how a
           // faculty/HoD/etc. most often actually identifies a student.
@@ -1165,33 +1312,85 @@ export class MessagingService {
       },
     });
     if (!conversation) return null;
+    return this.summarizeConversation(conversation, callerUserId);
+  }
 
+  /**
+   * Pure post-processing on an already-fetched row — split out of
+   * toConversationSummary() so getOrCreateConversation's existing-conversation
+   * path can reuse a row it already fetched with CONVERSATION_PARTICIPANTS_INCLUDE
+   * instead of querying for the exact same conversation a second time.
+   */
+  private async summarizeConversation(
+    conversation: ConversationWithParticipants,
+    callerUserId: number,
+  ) {
     const me = conversation.message_participants.find(
       (p) => p.user_id === callerUserId,
     );
 
-    const lastMessage = conversation.last_message_id
-      ? await this.prisma.messages.findUnique({
-          where: { id: conversation.last_message_id },
-          select: {
-            id: true,
-            body: true,
-            sender_user_id: true,
-            created_at: true,
-            is_deleted_for_everyone: true,
-          },
-        })
-      : null;
+    // A conversation with no last_message_id yet has zero messages, full
+    // stop — no query needed to know its unread count is 0 or that it has
+    // no last message to fetch. This is the exact, common shape of a
+    // conversation opened straight from search results (created but never
+    // sent into yet), so skipping both round trips here is what makes that
+    // path fast instead of paying for a count() that could only ever be 0.
+    // Mirrors the is_group branch below it since a brand-new group (visible
+    // immediately on creation, unlike a DM) can just as easily have no
+    // messages yet.
+    if (!conversation.last_message_id) {
+      if (conversation.is_group) {
+        return {
+          id: Number(conversation.id),
+          isGroup: true as const,
+          title: conversation.title,
+          imageUrl: conversation.image_url,
+          memberCount: conversation.message_participants.length,
+          otherUser: null,
+          lastMessage: null,
+          lastMessageAt: null,
+          unreadCount: 0,
+          isPinned: me?.is_pinned ?? false,
+        };
+      }
+      const otherParticipant = conversation.message_participants.find(
+        (p) => p.user_id !== callerUserId,
+      );
+      if (!otherParticipant) return null;
+      return {
+        id: Number(conversation.id),
+        isGroup: false as const,
+        title: null,
+        imageUrl: null,
+        otherUser: toMessagePerson(otherParticipant.users),
+        lastMessage: null,
+        lastMessageAt: null,
+        unreadCount: 0,
+        isPinned: me?.is_pinned ?? false,
+      };
+    }
 
-    const unread = await this.prisma.messages.count({
-      where: {
-        conversation_id: conversation.id,
-        sender_user_id: { not: callerUserId },
-        ...(me?.last_read_message_id
-          ? { id: { gt: me.last_read_message_id } }
-          : {}),
-      },
-    });
+    const [lastMessage, unread] = await Promise.all([
+      this.prisma.messages.findUnique({
+        where: { id: conversation.last_message_id },
+        select: {
+          id: true,
+          body: true,
+          sender_user_id: true,
+          created_at: true,
+          is_deleted_for_everyone: true,
+        },
+      }),
+      this.prisma.messages.count({
+        where: {
+          conversation_id: conversation.id,
+          sender_user_id: { not: callerUserId },
+          ...(me?.last_read_message_id
+            ? { id: { gt: me.last_read_message_id } }
+            : {}),
+        },
+      }),
+    ]);
 
     const lastMessagePayload = lastMessage
       ? {
@@ -1421,6 +1620,10 @@ export class MessagingService {
       where: { id: senderUserId },
       select: {
         email: true,
+        // personDisplayName's office-role fallback (added by this merge's
+        // humanizeRoleName) needs this — was missing here since it predates
+        // that fallback ever existing.
+        roles: { select: { name: true } },
         faculty: { select: { first_name: true, last_name: true } },
         students: {
           select: {

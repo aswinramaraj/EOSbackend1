@@ -5,6 +5,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import helmet from 'helmet';
+import compression from 'compression';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -29,6 +30,13 @@ async function bootstrap() {
   // by helmet's default CSP — the other headers (X-Content-Type-Options,
   // X-Frame-Options, HSTS, etc.) still apply.
   app.use(helmet({ contentSecurityPolicy: false }));
+
+  // ── Compression ──────────────────────────────────────────────────────────────
+  // No compression existed anywhere in the request path before this (confirmed
+  // absent during the 2026-09 performance review — docs/production/PERFORMANCE_MASTER_PLAN_CHECKLIST.md
+  // §17). Default threshold (1kb) so small JSON responses aren't compressed
+  // for no benefit; gzip is negotiated automatically via Accept-Encoding.
+  app.use(compression());
 
   // ── Body size ────────────────────────────────────────────────────────────────
   // Express/body-parser's default JSON limit is 100kb - fine for every

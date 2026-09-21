@@ -10,6 +10,7 @@
 export const ROLES = {
   ADMIN: 'admin',
   PRINCIPAL: 'principal',
+  CORRESPONDENT: 'correspondent',
   HOD: 'hod',
   FACULTY: 'faculty',
   STUDENT: 'student',
@@ -35,6 +36,8 @@ export const ROLES = {
   SPORTS_ADMIN: 'sports_admin',
   EDC_COORDINATOR: 'edc_coordinator',
   STATIONARY: 'stationary',
+  /** Stationery Store admin (web) — a separate role/login from STATIONARY's print-shop, by explicit design: they are not the same counter/staff. */
+  STATIONERY: 'stationery',
 } as const;
 
 export type RoleKey = (typeof ROLES)[keyof typeof ROLES];

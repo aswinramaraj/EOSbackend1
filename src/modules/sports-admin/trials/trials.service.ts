@@ -8,6 +8,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
 import { sports_trial_status_enum } from 'generated/prisma/client';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import {
   INTERNAL_ERROR,
   resolveStudentName,
@@ -159,22 +160,21 @@ export class TrialsService {
     if (dto.discipline_id) where.discipline_id = dto.discipline_id;
     if (dto.status) where.status = dto.status;
     if (dto.q) {
+      // Each word must independently match the student's first/last name
+      // (order-independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); round_label/panel/
+      // student_id_no are single tokens, matched against the whole raw q.
+      const nameWhere = buildMultiWordNameWhere(dto.q, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       where.OR = [
         { round_label: { contains: dto.q, mode: 'insensitive' } },
         { panel: { contains: dto.q, mode: 'insensitive' } },
         {
           students: { student_id_no: { contains: dto.q, mode: 'insensitive' } },
         },
-        {
-          students: {
-            soa_applications: {
-              OR: [
-                { first_name: { contains: dto.q, mode: 'insensitive' } },
-                { last_name: { contains: dto.q, mode: 'insensitive' } },
-              ],
-            },
-          },
-        },
+        ...(nameWhere ? [{ students: { soa_applications: nameWhere } }] : []),
       ];
     }
 

@@ -4,11 +4,12 @@ import { MeProfileModule } from 'src/modules/admissions/students/me-profile/me-p
 import { TimetableModule } from 'src/modules/faculty/timetable/timetable.module';
 import { DrivesModule } from 'src/modules/placement/drives/drives.module';
 import { FeePaymentModule } from 'src/modules/fees-billing/fee-payments/fee-payment.module';
+import { ProfileModule } from 'src/modules/profile/profile.module';
 import { ParentsController } from './parents.controller';
 import { ParentsService } from './parents.service';
 
 @Module({
-  imports: [PrismaModule, MeProfileModule, TimetableModule, DrivesModule, FeePaymentModule],
+  imports: [PrismaModule, MeProfileModule, TimetableModule, DrivesModule, FeePaymentModule, ProfileModule],
   controllers: [ParentsController],
   providers: [ParentsService],
 })

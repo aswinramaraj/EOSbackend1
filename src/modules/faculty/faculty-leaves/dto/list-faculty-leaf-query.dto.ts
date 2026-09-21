@@ -22,6 +22,11 @@ export class ListFacultyLeafQueryDto extends PaginationDto {
   @IsIn(['pending', 'approved', 'rejected'])
   hr_approval_status?: 'pending' | 'approved' | 'rejected';
 
+  /** Correspondent's Leave Approval queue filter - e.g. ?correspondent_approval_status=pending. */
+  @IsOptional()
+  @IsIn(['pending', 'approved', 'rejected'])
+  correspondent_approval_status?: 'pending' | 'approved' | 'rejected';
+
   /**
    * A HoD is also, personally, a faculty member who can raise their own
    * leave requests through the same self-service screen every other

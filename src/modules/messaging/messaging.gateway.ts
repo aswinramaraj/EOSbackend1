@@ -55,6 +55,22 @@ export class MessagingGateway
       ) as unknown as JwtPayload;
       client.data.user = payload;
 
+      // Registered synchronously, in the same tick as client.data.user above
+      // — deliberately BEFORE the awaits below, not after them. addSocket()
+      // is a plain in-memory Map write (no I/O), so nothing can yield the
+      // event loop between "this socket is authenticated" and "this socket
+      // is tracked as online." Doing it after the awaits instead left a real
+      // race: a socket that connects and immediately disconnects (a common
+      // shape on flaky mobile networks) fires handleDisconnect while still
+      // mid-await here — removeSocket() finds nothing yet to remove (a
+      // no-op), then this handler resumes and adds an entry for a socket
+      // that's already gone, which handleDisconnect will now never fire for
+      // again. That user then reads as permanently "online" to
+      // MessagingService.sendMessage, which uses this to decide
+      // delivered-vs-sent status and whether to fire an offline
+      // notification — silently suppressing their offline push forever.
+      this.presence.addSocket(payload.sub, client.id);
+
       await client.join(`user:${payload.sub}`);
 
       const conversations = await this.prisma.message_participants.findMany({
@@ -66,11 +82,6 @@ export class MessagingGateway
           Promise.resolve(client.join(`conversation:${c.conversation_id}`)),
         ),
       );
-
-      // Still tracked (not just discarded) — MessagingService.sendMessage
-      // reads this to decide delivered-vs-sent status and whether to fire an
-      // offline notification. Online/offline is no longer surfaced to users.
-      this.presence.addSocket(payload.sub, client.id);
     } catch (err) {
       this.logger.warn(
         `WS auth failed: ${err instanceof Error ? err.message : 'unknown error'}`,

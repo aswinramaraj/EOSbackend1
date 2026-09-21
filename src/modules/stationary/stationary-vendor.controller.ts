@@ -43,8 +43,15 @@ export class StationaryVendorController {
     return this.stationaryService.listAllRequests(status);
   }
 
-  /** GET /api/v1/stationary-requests/stats — Dashboard page's stat cards. */
+  /**
+   * GET /api/v1/stationary-requests/stats — Dashboard page's stat cards.
+   * Also Principal/Correspondent - read-only method-level override (not the
+   * class-level guard, which stays STATIONARY/ADMIN-only for every write
+   * operation in this controller) for the "Copy Center" overview tile on
+   * their own Services tab (see EOS-mobileapp's CorrespondentDashboard.tsx).
+   */
   @Get('stats')
+  @Roles(ROLES.STATIONARY, ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
   getStats() {
     return this.stationaryService.getDashboardStats();
   }
@@ -157,14 +164,25 @@ export class StationaryVendorController {
 
   // ── Reports ─────────────────────────────────────────────────────────
 
-  /** GET /api/v1/stationary-requests/reports/usage-by-department?from=&to= — defaults to month-to-date. */
+  /**
+   * GET /api/v1/stationary-requests/reports/usage-by-department?from=&to= —
+   * defaults to month-to-date. Also Principal/Correspondent - see
+   * getStats()'s own comment above for why this is a read-only
+   * method-level override.
+   */
   @Get('reports/usage-by-department')
+  @Roles(ROLES.STATIONARY, ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
   getUsageByDepartment(@Query('from') from?: string, @Query('to') to?: string) {
     return this.stationaryService.getUsageByDepartment(from, to);
   }
 
-  /** GET /api/v1/stationary-requests/reports/revenue?from=&to= — defaults to month-to-date. */
+  /**
+   * GET /api/v1/stationary-requests/reports/revenue?from=&to= — defaults to
+   * month-to-date. Also Principal/Correspondent - see getStats()'s own
+   * comment above.
+   */
   @Get('reports/revenue')
+  @Roles(ROLES.STATIONARY, ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
   getRevenueReport(@Query('from') from?: string, @Query('to') to?: string) {
     return this.stationaryService.getRevenueReport(from, to);
   }

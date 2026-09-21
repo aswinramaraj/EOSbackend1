@@ -48,10 +48,24 @@ export class ProfileController {
     ROLES.HR_PAYROLL,
     ROLES.PARENT,
     ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
     ROLES.SECRETARY,
   )
   getMyProfile(@CurrentUser() user: JwtPayload) {
     return this.profileService.getMyProfile(user);
+  }
+
+  /**
+   * GET /api/v1/me/my-profile/account-responsibilities — mobile app's
+   * Switch Account feature. Returns which of HOD/ADVISOR/SUBJECT_HANDLER
+   * the caller actually holds, derived from real data (see
+   * ProfileService.getAccountResponsibilities); always [] for every role
+   * other than HOD/Faculty (still safe/cheap to allow Faculty to call this).
+   */
+  @Get('account-responsibilities')
+  @Roles(ROLES.HOD, ROLES.FACULTY)
+  getAccountResponsibilities(@CurrentUser() user: JwtPayload) {
+    return this.profileService.getAccountResponsibilities(user);
   }
 
   /** POST /api/v1/me/my-profile/resume */

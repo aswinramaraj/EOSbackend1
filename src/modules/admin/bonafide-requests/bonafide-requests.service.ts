@@ -8,6 +8,7 @@ import {
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { ListBonafideRequestsDto } from './dto/list-bonafide-requests.dto';
 import { DecideBonafideRequestDto } from './dto/decide-bonafide-request.dto';
 
@@ -113,22 +114,21 @@ export class BonafideRequestsService {
     }
 
     if (query.q) {
+      // Each word must independently match the student's first/last name
+      // (order-independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); id/roll/register/admission
+      // fields are single tokens, matched against the whole raw q.
+      const nameWhere = buildMultiWordNameWhere(query.q, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       where.students = {
         OR: [
           { student_id_no: { contains: query.q, mode: 'insensitive' } },
           { register_no: { contains: query.q, mode: 'insensitive' } },
           { roll_no: { contains: query.q, mode: 'insensitive' } },
           { admission_no: { contains: query.q, mode: 'insensitive' } },
-          {
-            soa_applications: {
-              first_name: { contains: query.q, mode: 'insensitive' },
-            },
-          },
-          {
-            soa_applications: {
-              last_name: { contains: query.q, mode: 'insensitive' },
-            },
-          },
+          ...(nameWhere ? [{ soa_applications: nameWhere }] : []),
         ],
       };
     }

@@ -10,7 +10,7 @@ import { PrincipalFacultyService } from './principal-faculty.service';
 
 @Controller('principal-faculty')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL, ROLES.SECRETARY)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT, ROLES.SECRETARY)
 export class PrincipalFacultyController {
   constructor(private readonly service: PrincipalFacultyService) {}
 
@@ -20,10 +20,14 @@ export class PrincipalFacultyController {
     return this.service.getOverview(user);
   }
 
-  /** GET /principal-faculty/coordination?department_id= — real load/duties/mentees/status per faculty, for the Faculty Coordination screen. */
+  /** GET /principal-faculty/coordination?department_id=&search= — real load/duties/mentees/status per faculty, for the Faculty Coordination screen. `search` matches name (case-insensitive substring). */
   @Get('coordination')
-  getCoordination(@CurrentUser() user: JwtPayload, @Query('department_id') departmentId?: string) {
-    return this.service.getCoordination(user, departmentId ? Number(departmentId) : undefined);
+  getCoordination(
+    @CurrentUser() user: JwtPayload,
+    @Query('department_id') departmentId?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.service.getCoordination(user, departmentId ? Number(departmentId) : undefined, search);
   }
 
   /** GET /principal-faculty/:id/profile — full Faculty Profile detail screen. */

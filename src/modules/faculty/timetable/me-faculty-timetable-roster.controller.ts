@@ -50,6 +50,7 @@ export class MeFacultyTimetableRosterController {
   @Roles(
     ROLES.ADMIN,
     ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
     ROLES.HOD,
     ROLES.COE,
     ROLES.PLACEMENT,

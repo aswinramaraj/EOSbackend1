@@ -27,6 +27,12 @@ export class ParentsController {
     return this.parentsService.listChildren(user.sub);
   }
 
+  /** GET /api/v1/me/children/:studentId/profile — Parent only, own child. */
+  @Get('children/:studentId/profile')
+  getChildProfile(@Param('studentId', ParseIntPipe) studentId: number, @CurrentUser() user: JwtPayload) {
+    return this.parentsService.getChildProfile(user.sub, studentId);
+  }
+
   /** GET /api/v1/me/children/:studentId/attendance?from=&to=&subject_id= — Parent only, own child. */
   @Get('children/:studentId/attendance')
   getChildAttendance(

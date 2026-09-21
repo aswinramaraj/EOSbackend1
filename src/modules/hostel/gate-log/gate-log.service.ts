@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { formatStudentName } from '../common/student-name.util';
 import { CreateGateLogDto } from './dto/create-gate-log.dto';
 import { SearchGateLogDto } from './dto/search-gate-log.dto';
@@ -293,39 +294,27 @@ export class GateLogService {
   /**
    * Case-insensitive match across every identifier a warden might type. The
    * display name lives on the admission record rather than on `students`, so
-   * names are matched through that relation; a two-word query is also tried as
-   * first-name plus last-name so "arun prakash" finds the same person that
-   * "arun" does.
+   * names are matched through that relation; each word of a multi-word query
+   * must independently match first or last name (order-independent — "Arun
+   * Prakash" and "Prakash Arun" both find the same person as "Arun" alone).
    */
   private studentTextFilter(q: string): Prisma.studentsWhereInput {
     const contains = { contains: q, mode: 'insensitive' as const };
+    const nameWhere = buildMultiWordNameWhere(q, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
     const or: Prisma.studentsWhereInput[] = [
       { roll_no: contains },
       { register_no: contains },
       { student_id_no: contains },
-      {
-        soa_applications: {
-          OR: [{ first_name: contains }, { last_name: contains }],
-        },
-      },
+      ...(nameWhere ? [{ soa_applications: nameWhere }] : []),
       {
         student_hostel_mapping: {
           hostel_rooms: { room_number: contains },
         },
       },
     ];
-
-    const parts = q.split(/\s+/).filter(Boolean);
-    if (parts.length === 2) {
-      or.push({
-        soa_applications: {
-          AND: [
-            { first_name: { contains: parts[0], mode: 'insensitive' } },
-            { last_name: { contains: parts[1], mode: 'insensitive' } },
-          ],
-        },
-      });
-    }
 
     return { OR: or };
   }
@@ -504,20 +493,14 @@ export class GateLogService {
     const q = term.trim();
     if (q.length < 2) return [];
 
-    const contains = { contains: q, mode: 'insensitive' as const };
-
     try {
       const students = await this.prisma.students.findMany({
+        // Reuses studentTextFilter's own multi-word-aware name matching
+        // instead of re-duplicating (and re-drifting from) the same
+        // roll/register/student-id/name/room logic a second time here.
         where: {
           status: 'active',
-          OR: [
-            { roll_no: contains },
-            { register_no: contains },
-            { student_id_no: contains },
-            { soa_applications: { first_name: contains } },
-            { soa_applications: { last_name: contains } },
-            { student_hostel_mapping: { hostel_rooms: { room_number: contains } } },
-          ],
+          ...this.studentTextFilter(q),
         },
         take: 25,
         orderBy: { roll_no: 'asc' },

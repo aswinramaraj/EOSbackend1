@@ -1,12 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Patch,
-  Post,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Patch, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -14,36 +6,19 @@ import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { HodMyClassService } from './hod-my-class.service';
-import { MarkHodMyClassAttendanceDto } from './dto/mark-hod-my-class-attendance.dto';
 import { MarkHodAssignmentStatusDto } from './dto/mark-hod-assignment-status.dto';
 
+// Attendance for a HOD's own handled class is deliberately NOT here —
+// it now reuses the exact same faculty flow (MeClassesAttendanceController,
+// POST/GET /me/classes/:class_id/attendance*) as any other faculty member,
+// since resolveFacultyByUserId there is already role-agnostic. This module
+// used to carry its own parallel getAttendanceOverview/markAttendance
+// (no draft/publish distinction — attendance went live immediately on
+// save), which is exactly the inconsistency that got fixed.
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('hod/my-class')
 export class HodMyClassController {
   constructor(private readonly hodMyClass: HodMyClassService) {}
-
-  @Get('attendance')
-  @Roles(ROLES.HOD)
-  getAttendance(
-    @CurrentUser() user: JwtPayload,
-    @Query('class_id') classId?: string,
-    @Query('subject_id') subjectId?: string,
-  ) {
-    return this.hodMyClass.getAttendanceOverview(
-      user,
-      classId != null ? Number(classId) : undefined,
-      subjectId != null ? Number(subjectId) : undefined,
-    );
-  }
-
-  @Post('attendance/mark')
-  @Roles(ROLES.HOD)
-  markAttendance(
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: MarkHodMyClassAttendanceDto,
-  ) {
-    return this.hodMyClass.markAttendance(user, dto);
-  }
 
   @Get('current-semester')
   @Roles(ROLES.HOD)

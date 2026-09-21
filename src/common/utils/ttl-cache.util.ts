@@ -23,3 +23,27 @@ export class TtlCache<T> {
     return fresh;
   }
 }
+
+/**
+ * Same idea as TtlCache, but per-key — for aggregates scoped to a trusted,
+ * server-derived value (e.g. a department_id resolved from the caller's own
+ * faculty row, never a client-supplied query param) where a single shared
+ * TtlCache would leak one department's cached figures to another's request.
+ * Key cardinality here is naturally small (departments x a few semesters),
+ * so no eviction/size cap — same "minimal, no new dependency" philosophy.
+ */
+export class KeyedTtlCache<T> {
+  private readonly entries = new Map<string, { value: T; expiresAt: number }>();
+
+  constructor(private readonly ttlMs: number) {}
+
+  async get(key: string, compute: () => Promise<T>): Promise<T> {
+    const entry = this.entries.get(key);
+    if (entry && Date.now() < entry.expiresAt) {
+      return entry.value;
+    }
+    const fresh = await compute();
+    this.entries.set(key, { value: fresh, expiresAt: Date.now() + this.ttlMs });
+    return fresh;
+  }
+}

@@ -109,7 +109,10 @@ function resolveMarkerName(marker: AttendanceMarkerRow): string {
 
 /** publishState is fetched separately via raw SQL (see rawGetPublishState)
  * since is_published/published_at aren't declared in schema.prisma. */
-function toResponse(record: AttendanceRow, publishState?: { is_published: boolean; published_at: Date | null }) {
+function toResponse(
+  record: AttendanceRow,
+  publishState?: { is_published: boolean; published_at: Date | null },
+) {
   return {
     id: record.id,
     date: record.attendance_date,
@@ -176,22 +179,35 @@ export class AttendanceService {
 
   private async rawGetPublishStateByIds(
     ids: number[],
-  ): Promise<Map<number, { is_published: boolean; published_at: Date | null }>> {
+  ): Promise<
+    Map<number, { is_published: boolean; published_at: Date | null }>
+  > {
     if (ids.length === 0) return new Map();
     const rows = await this.prisma.$queryRaw<
       { id: number; is_published: boolean; published_at: Date | null }[]
     >`SELECT id, is_published, published_at FROM attendance_records WHERE id = ANY(${ids})`;
-    return new Map(rows.map((r) => [r.id, { is_published: r.is_published, published_at: r.published_at }]));
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        { is_published: r.is_published, published_at: r.published_at },
+      ]),
+    );
   }
 
-  private async rawSetIsPublished(ids: number[], value: boolean, publishedAt: Date | null) {
+  private async rawSetIsPublished(
+    ids: number[],
+    value: boolean,
+    publishedAt: Date | null,
+  ) {
     if (ids.length === 0) return;
-    await this.prisma.$executeRaw`UPDATE attendance_records SET is_published = ${value}, published_at = ${publishedAt} WHERE id = ANY(${ids})`;
+    await this.prisma
+      .$executeRaw`UPDATE attendance_records SET is_published = ${value}, published_at = ${publishedAt} WHERE id = ANY(${ids})`;
   }
 
   private async rawSetIsPublishedFalse(ids: number[]) {
     if (ids.length === 0) return;
-    await this.prisma.$executeRaw`UPDATE attendance_records SET is_published = false, published_at = NULL WHERE id = ANY(${ids})`;
+    await this.prisma
+      .$executeRaw`UPDATE attendance_records SET is_published = false, published_at = NULL WHERE id = ANY(${ids})`;
   }
 
   /**
@@ -299,22 +315,21 @@ export class AttendanceService {
           );
         }
 
-        return Promise.all(
-          dto.records.map((r) =>
-            tx.attendance_records.create({
-              data: {
-                student_id: r.student_id,
-                class_id: dto.class_id,
-                subject_id: dto.subject_id,
-                attendance_date: attendanceDate,
-                status: r.status,
-                marked_by_faculty_id: faculty?.id ?? null,
-                marked_by_user_id: userId,
-              },
-              select: { id: true, student_id: true, status: true },
-            }),
-          ),
-        );
+        // One INSERT ... RETURNING for the whole class instead of N
+        // sequential creates (docs/production/PERFORMANCE_AUDIT.md §2 row 7
+        // — every attendance-marking action, every class/period/day).
+        return tx.attendance_records.createManyAndReturn({
+          data: dto.records.map((r) => ({
+            student_id: r.student_id,
+            class_id: dto.class_id,
+            subject_id: dto.subject_id,
+            attendance_date: attendanceDate,
+            status: r.status,
+            marked_by_faculty_id: faculty?.id ?? null,
+            marked_by_user_id: userId,
+          })),
+          select: { id: true, student_id: true, status: true },
+        });
       });
     } catch (err: unknown) {
       if (err instanceof ConflictException) {
@@ -457,7 +472,11 @@ export class AttendanceService {
       },
       select: { id: true },
     });
-    const publishState = await this.rawGetPublishState(classId, dto.subject_id, attendanceDate);
+    const publishState = await this.rawGetPublishState(
+      classId,
+      dto.subject_id,
+      attendanceDate,
+    );
     // Once published, attendance is final — matches Subject Records marks
     // locking after publish. Before publish it's a draft: re-marking the
     // same class/subject/date just replaces the draft rows so Save can be
@@ -482,22 +501,20 @@ export class AttendanceService {
             },
           });
         }
-        const rows = await Promise.all(
-          dto.records.map((r) =>
-            tx.attendance_records.create({
-              data: {
-                student_id: r.student_id,
-                class_id: classId,
-                subject_id: dto.subject_id,
-                attendance_date: attendanceDate,
-                status: r.status,
-                marked_by_faculty_id: faculty.id,
-                marked_by_user_id: userId,
-              },
-              select: { id: true },
-            }),
-          ),
-        );
+        // One INSERT ... RETURNING for the whole class instead of N
+        // sequential creates (same fix as create() above).
+        const rows = await tx.attendance_records.createManyAndReturn({
+          data: dto.records.map((r) => ({
+            student_id: r.student_id,
+            class_id: classId,
+            subject_id: dto.subject_id,
+            attendance_date: attendanceDate,
+            status: r.status,
+            marked_by_faculty_id: faculty.id,
+            marked_by_user_id: userId,
+          })),
+          select: { id: true },
+        });
         // is_published is a real DB column not declared in schema.prisma
         // (not to be touched) — set it via raw SQL in the same transaction
         // as the inserts above. NOTE: photo_url does not actually exist on
@@ -549,11 +566,13 @@ export class AttendanceService {
     const faculty = await this.resolveFacultyByUserId(userId);
     const attendanceDate = new Date(attendanceDateIso);
 
-    const mapping = await this.prisma.faculty_subject_class_mapping.findFirst(
-      {
-        where: { faculty_id: faculty.id, subject_id: subjectId, class_id: classId },
+    const mapping = await this.prisma.faculty_subject_class_mapping.findFirst({
+      where: {
+        faculty_id: faculty.id,
+        subject_id: subjectId,
+        class_id: classId,
       },
-    );
+    });
     if (!mapping) {
       throw new ForbiddenException({
         message: 'You are not assigned to teach this subject for this class',
@@ -562,11 +581,19 @@ export class AttendanceService {
     }
 
     const allRows = await this.prisma.attendance_records.findMany({
-      where: { class_id: classId, subject_id: subjectId, attendance_date: attendanceDate },
+      where: {
+        class_id: classId,
+        subject_id: subjectId,
+        attendance_date: attendanceDate,
+      },
       select: { id: true },
     });
-    const publishState = await this.rawGetPublishStateByIds(allRows.map((r) => r.id));
-    const draftIds = allRows.map((r) => r.id).filter((id) => !publishState.get(id)?.is_published);
+    const publishState = await this.rawGetPublishStateByIds(
+      allRows.map((r) => r.id),
+    );
+    const draftIds = allRows
+      .map((r) => r.id)
+      .filter((id) => !publishState.get(id)?.is_published);
     if (draftIds.length === 0) {
       throw new NotFoundException({
         message:
@@ -605,11 +632,13 @@ export class AttendanceService {
     userId: number,
   ) {
     const faculty = await this.resolveFacultyByUserId(userId);
-    const mapping = await this.prisma.faculty_subject_class_mapping.findFirst(
-      {
-        where: { faculty_id: faculty.id, subject_id: subjectId, class_id: classId },
+    const mapping = await this.prisma.faculty_subject_class_mapping.findFirst({
+      where: {
+        faculty_id: faculty.id,
+        subject_id: subjectId,
+        class_id: classId,
       },
-    );
+    });
     if (!mapping) {
       throw new ForbiddenException({
         message: 'You are not assigned to teach this subject for this class',
@@ -619,17 +648,29 @@ export class AttendanceService {
 
     const attendanceDate = new Date(dateIso);
     const rows = await this.prisma.attendance_records.findMany({
-      where: { class_id: classId, subject_id: subjectId, attendance_date: attendanceDate },
+      where: {
+        class_id: classId,
+        subject_id: subjectId,
+        attendance_date: attendanceDate,
+      },
       select: { student_id: true, status: true },
     });
-    const publishState = await this.rawGetPublishState(classId, subjectId, attendanceDate);
+    const publishState = await this.rawGetPublishState(
+      classId,
+      subjectId,
+      attendanceDate,
+    );
 
     return {
       class_id: classId,
       subject_id: subjectId,
       attendance_date: dateIso,
-      is_published: publishState.length > 0 && publishState.every((r) => r.is_published),
-      records: rows.map((r) => ({ student_id: r.student_id, status: r.status })),
+      is_published:
+        publishState.length > 0 && publishState.every((r) => r.is_published),
+      records: rows.map((r) => ({
+        student_id: r.student_id,
+        status: r.status,
+      })),
     };
   }
 
@@ -657,12 +698,19 @@ export class AttendanceService {
     // Scoped by student_id (now resolved by applyRoleScoping above) so this
     // is an indexed per-student/per-children lookup instead of a full scan
     // of every published attendance record institution-wide.
-    if (currentUser.role === ROLES.STUDENT || currentUser.role === ROLES.PARENT) {
+    if (
+      currentUser.role === ROLES.STUDENT ||
+      currentUser.role === ROLES.PARENT
+    ) {
       const studentIdFilter = where.student_id;
       const publishedIds =
         typeof studentIdFilter === 'number'
-          ? await this.prisma.$queryRaw<{ id: number }[]>`SELECT id FROM attendance_records WHERE is_published = true AND student_id = ${studentIdFilter}`
-          : await this.prisma.$queryRaw<{ id: number }[]>`SELECT id FROM attendance_records WHERE is_published = true AND student_id = ANY(${(studentIdFilter as { in: number[] }).in})`;
+          ? await this.prisma.$queryRaw<
+              { id: number }[]
+            >`SELECT id FROM attendance_records WHERE is_published = true AND student_id = ${studentIdFilter}`
+          : await this.prisma.$queryRaw<
+              { id: number }[]
+            >`SELECT id FROM attendance_records WHERE is_published = true AND student_id = ANY(${(studentIdFilter as { in: number[] }).in})`;
       where.id = { in: publishedIds.map((r) => r.id) };
     }
 
@@ -677,8 +725,14 @@ export class AttendanceService {
       this.prisma.attendance_records.count({ where }),
     ]);
 
-    const publishState = await this.rawGetPublishStateByIds(rows.map((r) => r.id));
-    return paginate(rows.map((r) => toResponse(r, publishState.get(r.id))), total, query);
+    const publishState = await this.rawGetPublishStateByIds(
+      rows.map((r) => r.id),
+    );
+    return paginate(
+      rows.map((r) => toResponse(r, publishState.get(r.id))),
+      total,
+      query,
+    );
   }
 
   /** GET /attendance/:id (Admin/HoD/Faculty/Student/Parent) — role-scoped. */
@@ -694,10 +748,13 @@ export class AttendanceService {
 
     await this.assertCanViewStudent(record.students.id, currentUser);
 
-    const [publishState] = await this.rawGetPublishStateByIds([id]).then((m) => [m.get(id)]);
+    const [publishState] = await this.rawGetPublishStateByIds([id]).then(
+      (m) => [m.get(id)],
+    );
 
     if (
-      (currentUser.role === ROLES.STUDENT || currentUser.role === ROLES.PARENT) &&
+      (currentUser.role === ROLES.STUDENT ||
+        currentUser.role === ROLES.PARENT) &&
       !publishState?.is_published
     ) {
       throw new NotFoundException('Attendance record not found');

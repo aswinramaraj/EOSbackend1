@@ -28,17 +28,23 @@ import { ListAssignmentQueryDto } from './dto/list-assignment-query.dto';
 export class AssignmentsController {
   constructor(private readonly assignmentsService: AssignmentsService) {}
 
-  /** POST /api/v1/assignments — Faculty only. */
+  /**
+   * POST /api/v1/assignments — Faculty/HoD (own records). HOD included so
+   * an HoD mapped to teach a subject (Switch Account's "Subject Handling
+   * Faculty" mode) gets the same real create/manage flow as any other
+   * faculty - resolved via faculty.user_id same as every other role here,
+   * same precedent as ExamMarksController.
+   */
   @Post('assignments')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateAssignmentDto, @CurrentUser() user: JwtPayload) {
     return this.assignmentsService.create(dto, user.sub);
   }
 
-  /** GET /api/v1/assignments — Faculty only (own records). */
+  /** GET /api/v1/assignments — Faculty/HoD (own records). */
   @Get('assignments')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   findAll(
     @Query() query: ListAssignmentQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -63,13 +69,13 @@ export class AssignmentsController {
   }
 
   /**
-   * GET /api/v1/assignments/:id/students — Faculty only (own record).
+   * GET /api/v1/assignments/:id/students — Faculty/HoD (own record).
    * Every student in the assignment's class, each with their current
    * is_submitted state (false/null status_id if nobody has marked them
    * yet, not omitted).
    */
   @Get('assignments/:id/students')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   getAssignmentStudents(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -77,9 +83,9 @@ export class AssignmentsController {
     return this.assignmentsService.getAssignmentStudents(id, user.sub);
   }
 
-  /** GET /api/v1/assignments/:id — Faculty only (own record). */
+  /** GET /api/v1/assignments/:id — Faculty/HoD (own record). */
   @Get('assignments/:id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -87,9 +93,9 @@ export class AssignmentsController {
     return this.assignmentsService.findOne(id, user.sub);
   }
 
-  /** PATCH /api/v1/assignments/:id — Faculty only (own record). */
+  /** PATCH /api/v1/assignments/:id — Faculty/HoD (own record). */
   @Patch('assignments/:id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAssignmentDto,
@@ -98,9 +104,9 @@ export class AssignmentsController {
     return this.assignmentsService.update(id, dto, user.sub);
   }
 
-  /** DELETE /api/v1/assignments/:id — Faculty only (own record). */
+  /** DELETE /api/v1/assignments/:id — Faculty/HoD (own record). */
   @Delete('assignments/:id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

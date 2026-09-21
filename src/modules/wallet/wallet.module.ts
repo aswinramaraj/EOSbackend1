@@ -8,5 +8,8 @@ import { WalletController } from './wallet.controller';
   imports: [PrismaModule, NotificationsModule],
   controllers: [WalletController],
   providers: [WalletService],
+  // StationeryModule reuses debitForPurchase for "pay with wallet" - see
+  // that method's own doc comment.
+  exports: [WalletService],
 })
 export class WalletModule {}

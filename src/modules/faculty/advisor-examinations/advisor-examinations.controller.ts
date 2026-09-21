@@ -45,6 +45,16 @@ export class AdvisorExaminationsController {
     return this.examinations.getGrid(user, classId, examTypeId, semester);
   }
 
+  @Get('kpis')
+  getKpis(
+    @CurrentUser() user: JwtPayload,
+    @Query('class_id', ParseIntPipe) classId: number,
+    @Query('exam_type_id', ParseIntPipe) examTypeId: number,
+    @Query('semester', ParseIntPipe) semester: number,
+  ) {
+    return this.examinations.getKpis(user, classId, examTypeId, semester);
+  }
+
   @Get('grid/export')
   async exportGrid(
     @CurrentUser() user: JwtPayload,

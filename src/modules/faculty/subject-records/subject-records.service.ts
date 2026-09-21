@@ -165,6 +165,38 @@ export class SubjectRecordsService {
       mapping.classes.id,
     );
 
+    return this.computeMappingDetail(mapping);
+  }
+
+  /**
+   * GET /me/mentee-classes/:class_id/subject-records — called by
+   * ClassMentorsService.findAllForClassMentor, AFTER that method's own
+   * class_mentors mentor check. Deliberately skips assertMappedToTeach:
+   * a class mentor is very often not personally assigned to teach any
+   * subject in the class they mentor (that's the whole gap this closes),
+   * so every exam_subject_mapping row for the class is returned — every
+   * subject, every exam — not filtered to ones the caller teaches. Each
+   * row is shaped exactly like findOne's return value, via the same
+   * computeMappingDetail helper, so the mobile frontend can reuse its
+   * existing single-mapping card rendering, just looped over the array.
+   */
+  async findAllForClass(classId: number) {
+    const mappings = await this.prisma.exam_subject_mapping.findMany({
+      where: { class_id: classId },
+      orderBy: { id: 'desc' },
+      select: MAPPING_SELECT,
+    });
+
+    return Promise.all(mappings.map((m) => this.computeMappingDetail(m)));
+  }
+
+  /**
+   * Shared grade-distribution/toppers computation behind both findOne
+   * (personally-teaching faculty) and findAllForClass (class mentor,
+   * every subject) — kept in one place so the Anna University grading
+   * bands above are never duplicated.
+   */
+  private async computeMappingDetail(mapping: MappingRow) {
     const roster = await this.prisma.students.findMany({
       where: { class_id: mapping.classes.id },
       select: { id: true },
@@ -172,7 +204,7 @@ export class SubjectRecordsService {
 
     const marks = await this.prisma.exam_marks.findMany({
       where: {
-        exam_subject_mapping_id: examSubjectMappingId,
+        exam_subject_mapping_id: mapping.id,
         marks_obtained: { not: null },
       },
       select: {

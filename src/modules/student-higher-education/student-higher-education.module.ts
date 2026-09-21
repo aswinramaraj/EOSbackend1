@@ -15,5 +15,6 @@ import { StudentHigherEducationService } from './student-higher-education.servic
     MeHigherEducationController,
   ],
   providers: [StudentHigherEducationService],
+  exports: [StudentHigherEducationService],
 })
 export class StudentHigherEducationModule {}

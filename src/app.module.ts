@@ -56,6 +56,7 @@ import { EdcFundingModule } from './modules/edc-funding/edc-funding.module';
 import { PrincipalLibraryModule } from './modules/principal-library/principal-library.module';
 import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
+import { PrincipalFeedbackModule } from './modules/principal-feedback/principal-feedback.module';
 import { SportsAdminModule } from './modules/sports-admin/sports-admin.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { MediaRoomModule } from './modules/media-room/media-room.module';
@@ -197,6 +198,7 @@ import { SettingsModule } from './modules/secretary-portal/settings/settings.mod
 import { WalletModule } from './modules/wallet/wallet.module';
 
 import { StationaryModule } from './modules/stationary/stationary.module';
+import { StationeryModule } from './modules/stationery/stationery.module';
 import { StudentTodosModule } from './modules/student-todos/student-todos.module';
 import { OnlineClassModule } from './modules/online-class/online-class.module';
 
@@ -318,6 +320,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     PrincipalLibraryModule,
     PrincipalMedicalModule,
     PrincipalSportsModule,
+    PrincipalFeedbackModule,
     SportsAdminModule,
     FinanceModule,
     MediaRoomModule,
@@ -465,6 +468,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
 
     WalletModule,
     StationaryModule,
+    StationeryModule,
     StudentTodosModule,
     OnlineClassModule,
 

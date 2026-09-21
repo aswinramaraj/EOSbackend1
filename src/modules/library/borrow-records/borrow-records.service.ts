@@ -390,22 +390,34 @@ export class BorrowRecordsService {
     return faculty?.id ?? null;
   }
 
-  // GET /me/library/borrow-records — a student's own borrow history in a flatter
-  // shape than formatRecord()'s (no nested student/faculty block, since the
-  // caller *is* the student; no is_overdue/fine_amount, not part of this
-  // endpoint's documented contract). A caller with no linked student profile
-  // gets an empty list via the same -1 sentinel id used elsewhere, not an
-  // error, matching findAll()'s ownership-scoping behavior.
+  // GET /me/library/borrow-records — the caller's own borrow history in a
+  // flatter shape than formatRecord()'s (no nested student/faculty block,
+  // since the caller *is* the borrower; no is_overdue/fine_amount, not part
+  // of this endpoint's documented contract). Originally student-only;
+  // widened to every role reachable via the mobile app's shared Campus tab
+  // (see borrow-records.controller.ts's own comment) - scoped by whichever
+  // real row the caller actually has: a student's own student_id, a real
+  // faculty/HoD's own faculty_id, or - for every other role with no
+  // faculty/student row (library/finance/academic_coordinator/HR Payroll/
+  // Principal/Secretary/...) - staff_user_id keyed directly on their user
+  // id, same resolve-by-row-not-by-role pattern already used for Leave/OD
+  // self-service (see FacultyLeavesService.create's own identical comment).
   async findMyBorrowRecords(
     dto: GetMyBorrowRecordsDto,
     currentUser: JwtPayload,
   ) {
-    const ownStudentId =
-      (await this.resolveOwnStudentId(currentUser.sub)) ?? -1;
+    const ownStudentId = await this.resolveOwnStudentId(currentUser.sub);
+    const ownFacultyId =
+      ownStudentId === null
+        ? await this.resolveOwnFacultyId(currentUser.sub)
+        : null;
 
-    const where: Prisma.book_borrow_recordsWhereInput = {
-      student_id: ownStudentId,
-    };
+    const where: Prisma.book_borrow_recordsWhereInput =
+      ownStudentId !== null
+        ? { student_id: ownStudentId }
+        : ownFacultyId !== null
+          ? { faculty_id: ownFacultyId }
+          : { staff_user_id: currentUser.sub };
 
     // 'overdue' isn't a value ever persisted in the status column (see the
     // same mapping in findAll() above) — map it to the derived predicate.

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import { buildMultiWordNameSql } from 'src/common/utils/name-search.util';
 import { requireUpdateSet } from './higher-education-sql.util';
 import type {
   AddApplicationStudentDto,
@@ -129,19 +130,19 @@ export class HigherEducationStudentListsService {
   /**
    * GET /me/higher-education-student-search?q=
    *
-   * Case-insensitive across name, roll number, register number and student id,
-   * so the coordinator can type whichever identifier they have. A two-word
-   * query is also matched as first name + last name.
+   * Case-insensitive across name, roll number, register number and student
+   * id, so the coordinator can type whichever identifier they have. Each
+   * word of a multi-word query must independently match first or last name
+   * (order-independent — "Malar Sekar" and "Sekar Malar" both match
+   * first_name="Malar", last_name="Sekar").
    */
   async searchStudents(q: string) {
     const like = `%${q}%`;
-    const parts = q.split(/\s+/).filter(Boolean);
-    const firstLast =
-      parts.length === 2
-        ? Prisma.sql`
-            OR (sa.first_name ILIKE ${`%${parts[0]}%`}
-                AND sa.last_name ILIKE ${`%${parts[1]}%`})`
-        : Prisma.empty;
+    const nameSql = buildMultiWordNameSql(
+      q,
+      Prisma.raw('sa.first_name'),
+      Prisma.raw('sa.last_name'),
+    );
 
     try {
       const rows = await this.prisma.$queryRaw<StudentRow[]>(Prisma.sql`
@@ -158,9 +159,7 @@ export class HigherEducationStudentListsService {
         WHERE s.roll_no ILIKE ${like}
            OR s.register_no ILIKE ${like}
            OR s.student_id_no ILIKE ${like}
-           OR sa.first_name ILIKE ${like}
-           OR sa.last_name ILIKE ${like}
-           ${firstLast}
+           ${nameSql === Prisma.empty ? Prisma.empty : Prisma.sql`OR ${nameSql}`}
         ORDER BY sa.first_name NULLS LAST, s.id
         LIMIT 25
       `);

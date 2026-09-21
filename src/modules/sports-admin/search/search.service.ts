@@ -4,6 +4,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { INTERNAL_ERROR, resolveStudentName } from '../common/sports-common';
 
 export interface SearchResult {
@@ -32,6 +33,19 @@ export class SportsSearchService {
     const term = q.trim();
     if (term.length < 2) return [];
 
+    // Each word must independently match first/last name (order-
+    // independent — "Malar Sekar" and "Sekar Malar" both match
+    // first_name="Malar", last_name="Sekar"); id/roll/register are single
+    // tokens, matched against the whole raw term.
+    const athleteNameWhere = buildMultiWordNameWhere(term, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
+    const coachNameWhere = buildMultiWordNameWhere(term, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
+
     try {
       const [athletes, teams, coaches, disciplines, facilities, fixtures] =
         await Promise.all([
@@ -42,14 +56,9 @@ export class SportsSearchService {
                   { student_id_no: { contains: term, mode: 'insensitive' } },
                   { roll_no: { contains: term, mode: 'insensitive' } },
                   { register_no: { contains: term, mode: 'insensitive' } },
-                  {
-                    soa_applications: {
-                      OR: [
-                        { first_name: { contains: term, mode: 'insensitive' } },
-                        { last_name: { contains: term, mode: 'insensitive' } },
-                      ],
-                    },
-                  },
+                  ...(athleteNameWhere
+                    ? [{ soa_applications: athleteNameWhere }]
+                    : []),
                 ],
               },
             },
@@ -79,12 +88,7 @@ export class SportsSearchService {
           }),
           this.prisma.sports_coach_profiles.findMany({
             where: {
-              faculty: {
-                OR: [
-                  { first_name: { contains: term, mode: 'insensitive' } },
-                  { last_name: { contains: term, mode: 'insensitive' } },
-                ],
-              },
+              ...(coachNameWhere ? { faculty: coachNameWhere } : {}),
             },
             take: RESULT_LIMIT_PER_SECTION,
             select: {

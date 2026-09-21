@@ -163,6 +163,17 @@ export class AdvisorExaminationsService {
     return this.examResultsGrid.buildGrid(classId, examTypeId, semester);
   }
 
+  /** GET /me/advisor-examinations/kpis — pass %, fail %, average CGPA and topper for the same class + exam type + semester selection as getGrid(). */
+  async getKpis(
+    user: JwtPayload,
+    classId: number,
+    examTypeId: number,
+    semester: number,
+  ) {
+    await this.assertMentorsClass(user, classId);
+    return this.examResultsGrid.buildKpis(classId, examTypeId, semester);
+  }
+
   async getGridExportTable(
     user: JwtPayload,
     classId: number,

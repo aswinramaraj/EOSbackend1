@@ -28,4 +28,7 @@ export const STORAGE_BUCKETS = {
    * before this feature's upload endpoint is exercised for real if
    * StorageService.upload() doesn't auto-create it. */
   GROUP_PHOTOS: 'group_photos',
+  /** Stationery Store product photos (web admin) — not yet confirmed to
+   * exist in the Supabase project, same caveat as VENUE_PHOTOS above. */
+  STATIONERY_PRODUCT_IMAGES: 'stationery_product_images',
 } as const;

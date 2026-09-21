@@ -12,6 +12,7 @@ import { DrivesService } from 'src/modules/placement/drives/drives.service';
 import { FeePaymentService } from 'src/modules/fees-billing/fee-payments/fee-payment.service';
 import { CreateFeePaymentOrderDto } from 'src/modules/fees-billing/fee-payments/dto/create-fee-payment-order.dto';
 import { VerifyFeePaymentDto } from 'src/modules/fees-billing/fee-payments/dto/verify-fee-payment.dto';
+import { ProfileService } from 'src/modules/profile/profile.service';
 
 interface ChildRow {
   students: {
@@ -71,6 +72,7 @@ export class ParentsService {
     private readonly timetableService: TimetableService,
     private readonly drivesService: DrivesService,
     private readonly feePaymentService: FeePaymentService,
+    private readonly profileService: ProfileService,
   ) {}
 
   /** GET /me/children (Parent only). One row per linked child, however many there are. */
@@ -193,6 +195,16 @@ export class ParentsService {
   ) {
     await this.assertOwnChild(parentUserId, studentId);
     return this.feePaymentService.verifyGatewayPayment(parentUserId, dto);
+  }
+
+  /**
+   * GET /me/children/:studentId/profile (Parent only) - the child's full
+   * profile, same Personal/Contact/Family/resume shape the student sees on
+   * their own Profile & Resume page (see ProfileService.getStudentProfile).
+   */
+  async getChildProfile(parentUserId: number, studentId: number) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.profileService.getStudentProfileByStudentId(studentId);
   }
 
   /** GET /me/children/:studentId/timetable (Parent only). */

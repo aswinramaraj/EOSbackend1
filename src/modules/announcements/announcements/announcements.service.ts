@@ -761,6 +761,9 @@ export class AnnouncementsService {
     if (
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
+      // Correspondent has the same institution-wide standing as Principal
+      // throughout this service (see resolveUserContext/buildRoleVisibilityQuery).
+      context.role === ROLES.CORRESPONDENT ||
       context.role === ROLES.SECRETARY ||
       context.role === ROLES.BILLING ||
       // IQAC posts institution-wide at the same oversight tier as Admin/
@@ -1464,6 +1467,17 @@ export class AnnouncementsService {
       case ROLES.PRINCIPAL:
         return { role: ROLES.PRINCIPAL, userId: user.sub, roleId: user.roleId };
 
+      // Same institution-wide standing as Principal throughout this service
+      // (see buildRoleVisibilityQuery's UNRESTRICTED case, and the
+      // Correspondent Switch Account feature's own requirement that
+      // Correspondent has every Principal capability plus Leave Approval).
+      case ROLES.CORRESPONDENT:
+        return {
+          role: ROLES.CORRESPONDENT,
+          userId: user.sub,
+          roleId: user.roleId,
+        };
+
       case ROLES.EDC_COORDINATOR:
         return {
           role: ROLES.EDC_COORDINATOR,
@@ -1657,6 +1671,10 @@ export class AnnouncementsService {
       // Admin, sees everything (subject to the draft rule in
       // buildVisibilityQuery above).
       case ROLES.PRINCIPAL:
+      // Correspondent has every Principal capability plus Leave Approval
+      // (see the Switch Account / Correspondent role feature) — same
+      // broadcast tier here too.
+      case ROLES.CORRESPONDENT:
         return UNRESTRICTED;
 
       // Department-scoped, mirroring HOD's own clause exactly (own posts +
@@ -1668,6 +1686,7 @@ export class AnnouncementsService {
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
             { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { users: { roles: { name: ROLES.CORRESPONDENT } } },
             { target_audience: 'teachers', department_id: null },
             roleTargeted,
           ],
@@ -1709,6 +1728,7 @@ export class AnnouncementsService {
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
             { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { users: { roles: { name: ROLES.CORRESPONDENT } } },
             // Admin's org-wide faculty broadcasts (department_id: null) —
             // an HOD is also faculty and should see those.
             { target_audience: 'teachers', department_id: null },
@@ -1724,6 +1744,7 @@ export class AnnouncementsService {
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
             { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { users: { roles: { name: ROLES.CORRESPONDENT } } },
             {
               AND: [
                 { users: { roles: { name: ROLES.HOD } } },
@@ -1807,6 +1828,7 @@ export class AnnouncementsService {
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
             { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { users: { roles: { name: ROLES.CORRESPONDENT } } },
             roleTargeted,
           ],
         };
@@ -1822,6 +1844,7 @@ export class AnnouncementsService {
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
             { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { users: { roles: { name: ROLES.CORRESPONDENT } } },
           ],
         };
 
@@ -1904,6 +1927,7 @@ export class AnnouncementsService {
     if (
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
+      context.role === ROLES.CORRESPONDENT ||
       context.role === ROLES.PLACEMENT ||
       context.role === ROLES.HIGHER_EDUCATION ||
       context.role === ROLES.MEDICAL_CENTRE ||
@@ -1931,6 +1955,7 @@ export class AnnouncementsService {
     if (
       context.role !== ROLES.ADMIN &&
       context.role !== ROLES.PRINCIPAL &&
+      context.role !== ROLES.CORRESPONDENT &&
       // Billing's real "All HoDs" audience option (fee-due escalation
       // notices to department heads) needs role targeting too.
       context.role !== ROLES.BILLING &&

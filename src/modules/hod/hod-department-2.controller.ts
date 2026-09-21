@@ -68,12 +68,14 @@ export class HodDepartment2Controller {
     @Query('search') search?: string,
     @Query('batch_id') batchId?: string,
     @Query('programme') programme?: string,
+    @Query('class_id') classId?: string,
   ) {
     return this.higherEducation.getOverview(
       user,
       search,
       batchId ? Number(batchId) : undefined,
       programme,
+      classId ? Number(classId) : undefined,
     );
   }
 
@@ -93,12 +95,14 @@ export class HodDepartment2Controller {
     @Query('search') search?: string,
     @Query('batch_id') batchId?: string,
     @Query('department_id') departmentId?: string,
+    @Query('class_id') classId?: string,
   ) {
     return this.edc.getOverview(
       user,
       search,
       batchId ? Number(batchId) : undefined,
       departmentId ? Number(departmentId) : undefined,
+      classId ? Number(classId) : undefined,
     );
   }
 

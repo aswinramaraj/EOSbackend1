@@ -50,7 +50,7 @@ export class AnnouncementsController {
    *  401 UNAUTHORIZED, 403 FORBIDDEN, 500 INTERNAL_ERROR
    */
   @Get('lookup/roles')
-  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.BILLING, ROLES.IQAC, ROLES.HR_PAYROLL)
+  @Roles(ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CORRESPONDENT, ROLES.BILLING, ROLES.IQAC, ROLES.HR_PAYROLL)
   lookupRoles() {
     return this.announcementsService.lookupRoles();
   }
@@ -66,6 +66,7 @@ export class AnnouncementsController {
   @Roles(
     ROLES.ADMIN,
     ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
     ROLES.SECRETARY,
     ROLES.BILLING,
     ROLES.FINANCE,
@@ -90,6 +91,7 @@ export class AnnouncementsController {
   @Roles(
     ROLES.ADMIN,
     ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
     ROLES.HOD,
     ROLES.SECRETARY,
     ROLES.BILLING,
@@ -169,6 +171,7 @@ export class AnnouncementsController {
   @Roles(
     ROLES.ADMIN,
     ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
     ROLES.HOD,
     ROLES.FACULTY,
     ROLES.PLACEMENT,
@@ -213,6 +216,7 @@ export class AnnouncementsController {
   @Roles(
     ROLES.ADMIN,
     ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
     ROLES.HOD,
     ROLES.FACULTY,
     ROLES.PLACEMENT,
@@ -262,6 +266,7 @@ export class AnnouncementsController {
   @Roles(
     ROLES.ADMIN,
     ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
     ROLES.HOD,
     ROLES.FACULTY,
     ROLES.PLACEMENT,
@@ -334,6 +339,7 @@ export class AnnouncementsController {
   @Roles(
     ROLES.ADMIN,
     ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
     ROLES.HOD,
     ROLES.FACULTY,
     ROLES.PLACEMENT,
@@ -378,6 +384,7 @@ export class AnnouncementsController {
   @Roles(
     ROLES.ADMIN,
     ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
     ROLES.HOD,
     ROLES.FACULTY,
     ROLES.PLACEMENT,
@@ -423,6 +430,7 @@ export class AnnouncementsController {
   @Roles(
     ROLES.ADMIN,
     ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
     ROLES.HOD,
     ROLES.FACULTY,
     ROLES.PLACEMENT,

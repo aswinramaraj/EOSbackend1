@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
 /** Same GRADE_LOOKUP formula as HodService/PrincipalExamsService, reused verbatim. */
@@ -56,6 +57,7 @@ export class HodHigherEducationService {
     search?: string,
     batchId?: number,
     programme?: string,
+    classId?: number,
   ) {
     const departmentId = await this.resolveDepartmentId(user);
     try {
@@ -70,6 +72,14 @@ export class HodHigherEducationService {
         });
       }
 
+      // Each word must independently match the student's first/last name
+      // (order-independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); student_id_no is a single
+      // token, matched against the whole raw search string.
+      const nameWhere = buildMultiWordNameWhere(search, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       const applicants = await this.prisma.student_higher_education.findMany({
         where: {
           students: {
@@ -77,6 +87,12 @@ export class HodHigherEducationService {
             classes: {
               department_id: departmentId,
               ...(batchId ? { batch_id: batchId } : {}),
+              // Class/section-level narrowing (the mobile HoD screen's
+              // "Class" dropdown) - id must belong to this department, same
+              // as batchId above; not cross-checked separately since the
+              // department_id condition above already scopes the whole
+              // `classes` relation filter.
+              ...(classId ? { id: classId } : {}),
             },
             ...(search
               ? {
@@ -87,22 +103,7 @@ export class HodHigherEducationService {
                         mode: 'insensitive' as const,
                       },
                     },
-                    {
-                      soa_applications: {
-                        first_name: {
-                          contains: search,
-                          mode: 'insensitive' as const,
-                        },
-                      },
-                    },
-                    {
-                      soa_applications: {
-                        last_name: {
-                          contains: search,
-                          mode: 'insensitive' as const,
-                        },
-                      },
-                    },
+                    ...(nameWhere ? [{ soa_applications: nameWhere }] : []),
                   ],
                 }
               : {}),

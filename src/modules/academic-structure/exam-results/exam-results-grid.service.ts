@@ -211,6 +211,141 @@ export class ExamResultsGridService {
     }
   }
 
+  /**
+   * Pass %, fail %, average CGPA and class topper for one class + exam type
+   * + semester — same GRADE_LOOKUP-via-grade_bands pattern HodReportsService
+   * uses for its department-wide report cards, just scoped down to this one
+   * exam's own mappings (already resolved above in buildGrid) instead of a
+   * whole department+semester. Pass/fail is attempt-based (one subject paper
+   * = one attempt), matching that same existing convention; absentees are
+   * excluded from the denominator, not counted as fails, again matching it.
+   */
+  async buildKpis(classId: number, examTypeId: number, semester: number) {
+    try {
+      const exam = await this.prisma.exams.findFirst({
+        where: {
+          exam_type_id: examTypeId,
+          semester,
+          exam_subject_mapping: { some: { class_id: classId } },
+        },
+        orderBy: { created_at: 'desc' },
+        select: { id: true },
+      });
+      if (!exam) {
+        return {
+          pass_percent: null,
+          fail_percent: null,
+          average_cgpa: null,
+          topper: null,
+        };
+      }
+
+      const attempts = await this.prisma.$queryRaw<
+        {
+          student_id: number;
+          is_pass: boolean | null;
+          grade_point: string | null;
+          credits: number;
+        }[]
+      >`
+        SELECT em.student_id, gb.is_pass, gb.grade_point::text AS grade_point, COALESCE(sub.credits, 1) AS credits
+        FROM exam_marks em
+        JOIN exam_subject_mapping esm ON esm.id = em.exam_subject_mapping_id
+        JOIN subjects sub ON sub.id = esm.subject_id
+        LEFT JOIN LATERAL (
+          SELECT is_pass, grade_point FROM grade_bands gb2
+          WHERE gb2.min_percentage <= (em.marks_obtained / NULLIF(em.max_marks, 0) * 100)
+          ORDER BY gb2.min_percentage DESC LIMIT 1
+        ) gb ON true
+        WHERE esm.exam_id = ${exam.id} AND esm.class_id = ${classId}
+          AND em.is_absent = false AND em.marks_obtained IS NOT NULL
+      `;
+
+      const totalAttempts = attempts.length;
+      const passedAttempts = attempts.filter((a) => a.is_pass === true).length;
+      const passPercent =
+        totalAttempts > 0
+          ? Math.round((passedAttempts / totalAttempts) * 1000) / 10
+          : null;
+      const failPercent =
+        passPercent != null ? Math.round((100 - passPercent) * 10) / 10 : null;
+
+      const gpSumByStudent = new Map<number, number>();
+      const creditSumByStudent = new Map<number, number>();
+      for (const a of attempts) {
+        if (a.grade_point == null) continue;
+        const gp = Number(a.grade_point);
+        const credits = Number(a.credits);
+        gpSumByStudent.set(
+          a.student_id,
+          (gpSumByStudent.get(a.student_id) ?? 0) + gp * credits,
+        );
+        creditSumByStudent.set(
+          a.student_id,
+          (creditSumByStudent.get(a.student_id) ?? 0) + credits,
+        );
+      }
+      const cgpaByStudent = new Map<number, number>();
+      for (const [studentId, gpSum] of gpSumByStudent) {
+        const creditSum = creditSumByStudent.get(studentId) ?? 0;
+        if (creditSum > 0) cgpaByStudent.set(studentId, gpSum / creditSum);
+      }
+      const cgpaValues = [...cgpaByStudent.values()];
+      const averageCgpa =
+        cgpaValues.length > 0
+          ? Math.round(
+              (cgpaValues.reduce((a, b) => a + b, 0) / cgpaValues.length) * 100,
+            ) / 100
+          : null;
+
+      let topperStudentId: number | null = null;
+      let topperCgpa = -Infinity;
+      for (const [studentId, cgpa] of cgpaByStudent) {
+        if (cgpa > topperCgpa) {
+          topperCgpa = cgpa;
+          topperStudentId = studentId;
+        }
+      }
+
+      let topper: {
+        student_id: number;
+        name: string | null;
+        register_no: string;
+        cgpa: number;
+      } | null = null;
+      if (topperStudentId != null) {
+        const student = await this.prisma.students.findUnique({
+          where: { id: topperStudentId },
+          select: {
+            register_no: true,
+            soa_applications: { select: { first_name: true, last_name: true } },
+          },
+        });
+        topper = {
+          student_id: topperStudentId,
+          name: student?.soa_applications
+            ? `${student.soa_applications.first_name} ${student.soa_applications.last_name ?? ''}`.trim()
+            : null,
+          register_no: student?.register_no ?? '—',
+          cgpa: Math.round(topperCgpa * 100) / 100,
+        };
+      }
+
+      return {
+        pass_percent: passPercent,
+        fail_percent: failPercent,
+        average_cgpa: averageCgpa,
+        topper,
+      };
+    } catch (err) {
+      this.logger.error('DB error computing exam results KPIs', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
   /** Same grid as buildGrid(), reshaped into the shared ReportTable the export utility expects. */
   async buildGridExportTable(
     classId: number,

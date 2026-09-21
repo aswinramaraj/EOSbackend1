@@ -32,6 +32,58 @@ function today(): Date {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
+// Shared `students` select for the Principal's institution-wide Placements
+// search (searchUpcomingForPrincipal/searchHistoryForPrincipal below) - adds
+// class_id/department/batch/course on top of the plain department-scoped
+// view's toStudentSummary shape, so the filter row (Batch/Department/Class
+// with Section) has real labels to show, not just ids.
+const PRINCIPAL_STUDENT_SUMMARY_SELECT = {
+  id: true,
+  student_id_no: true,
+  class_id: true,
+  soa_applications: { select: { first_name: true, last_name: true } },
+  users: { select: { email: true } },
+  classes: {
+    select: {
+      section: true,
+      departments: { select: { code: true, name: true } },
+      batches: { select: { name: true } },
+      courses: { select: { code: true } },
+    },
+  },
+} as const;
+
+interface PrincipalStudentSummarySource {
+  id: number;
+  student_id_no: string;
+  class_id: number | null;
+  soa_applications: { first_name: string; last_name: string | null } | null;
+  users: { email: string };
+  classes: {
+    section: string;
+    departments: { code: string; name: string } | null;
+    batches: { name: string } | null;
+    courses: { code: string } | null;
+  } | null;
+}
+
+// Full-name-or-roll-no search applied in application code, not a Prisma
+// `OR` on split first_name/last_name columns - a two-word query like
+// "Madhavan C" needs to match the CONCATENATED full name, same reasoning as
+// PrincipalFacultyService.getCoordination's own search. Rows are already
+// narrowed by whichever of batch/department/class the caller picked before
+// this runs, so filtering the (small) remaining set in memory is cheap.
+function filterByStudentSearch<T extends { student: { name: string; student_id_no: string } }>(
+  rows: T[],
+  search?: string,
+): T[] {
+  const term = search?.trim().toLowerCase();
+  if (!term) return rows;
+  return rows.filter(
+    (r) => r.student.name.toLowerCase().includes(term) || r.student.student_id_no.toLowerCase().includes(term),
+  );
+}
+
 interface DriveExtras {
   mode: string | null;
   backlogs_allowed: string | null;
@@ -727,6 +779,16 @@ export class DrivesService {
    * scoped to one class (the same drill-down the page's own filter uses),
    * so the exported file matches whatever's on screen.
    */
+  // Institution-wide, no-filter exports render fully synchronously and
+  // fully buffered in memory (see report-export.util.ts) — with neither
+  // batch_id nor class supplied this returned every student in one request,
+  // the single highest-priority finding in docs/production/PERFORMANCE_AUDIT.md
+  // §4. Fail fast with a clear message instead of silently rendering an
+  // arbitrarily large report on the one shared Node process. (Threshold is a
+  // placeholder pending real confirmation with Placement Cell on typical
+  // export sizes — raise it if a genuine, larger legitimate use case exists.)
+  private static readonly MAX_STUDENT_REPORT_EXPORT_ROWS = 2000;
+
   async buildStudentReportTable(
     batchId: number | undefined,
     classLabel?: string,
@@ -735,6 +797,13 @@ export class DrivesService {
     const rows = classLabel
       ? allRows.filter((r) => r.class_label === classLabel)
       : allRows;
+
+    if (rows.length > DrivesService.MAX_STUDENT_REPORT_EXPORT_ROWS) {
+      throw new BadRequestException({
+        message: `This export would include ${rows.length} students, above the ${DrivesService.MAX_STUDENT_REPORT_EXPORT_ROWS}-row limit. Narrow the report with a batch or class filter and try again.`,
+        errorCode: 'EXPORT_TOO_LARGE',
+      });
+    }
 
     const batch = batchId
       ? await this.prisma.batches.findUnique({
@@ -2067,6 +2136,134 @@ export class DrivesService {
     });
   }
 
+  /**
+   * GET /drives/institution/upcoming (Principal only) — same shape as
+   * getUpcomingForDepartment above, but every filter (search/batch/
+   * department/class) is optional and combinable, institution-wide - the
+   * Principal's own Placements page filter row (Batch/Department/Class with
+   * Section + name-or-roll-no search), not gated behind picking a
+   * department first the way the old single-department-picker UI was.
+   * `search` is applied in application code (not a Prisma `OR` on split
+   * first_name/last_name columns) so a two-word query like "Madhavan C"
+   * matches the CONCATENATED full name, same reasoning as
+   * PrincipalFacultyService.getCoordination's own search - the
+   * batch/department/class filters already narrow the candidate set via
+   * Prisma first, so this is cheap.
+   */
+  async searchUpcomingForPrincipal(filters: {
+    search?: string;
+    batch_id?: number;
+    department_id?: number;
+    class_id?: number;
+  }) {
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: {
+        status: { notIn: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        students: {
+          ...(filters.class_id !== undefined && { class_id: filters.class_id }),
+          ...((filters.batch_id !== undefined || filters.department_id !== undefined) && {
+            classes: {
+              ...(filters.department_id !== undefined && { department_id: filters.department_id }),
+              ...(filters.batch_id !== undefined && { batch_id: filters.batch_id }),
+            },
+          }),
+        },
+      },
+      include: {
+        placement_drives: { include: { companies: true } },
+        students: { select: PRINCIPAL_STUDENT_SUMMARY_SELECT },
+      },
+      orderBy: { placement_drives: { scheduled_date: 'asc' } },
+    });
+
+    const mapped = applications.map((app) => ({
+      ...this.toUpcomingDrive(app),
+      student: this.toStudentSummaryFull(app.students),
+    }));
+    return filterByStudentSearch(mapped, filters.search);
+  }
+
+  /**
+   * GET /drives/institution/history (Principal only) — same relationship to
+   * getHistoryForDepartment as searchUpcomingForPrincipal has to
+   * getUpcomingForDepartment above.
+   */
+  async searchHistoryForPrincipal(filters: {
+    search?: string;
+    batch_id?: number;
+    department_id?: number;
+    class_id?: number;
+  }) {
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: {
+        status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        students: {
+          ...(filters.class_id !== undefined && { class_id: filters.class_id }),
+          ...((filters.batch_id !== undefined || filters.department_id !== undefined) && {
+            classes: {
+              ...(filters.department_id !== undefined && { department_id: filters.department_id }),
+              ...(filters.batch_id !== undefined && { batch_id: filters.batch_id }),
+            },
+          }),
+        },
+      },
+      include: {
+        placement_drives: { include: { companies: true } },
+        students: { select: PRINCIPAL_STUDENT_SUMMARY_SELECT },
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+
+    const mapped = applications.map((app) => {
+      const drive = app.placement_drives;
+      return {
+        drive_id: drive.id,
+        company_name: this.resolveCompanyName(drive),
+        scheduled_date: drive.scheduled_date,
+        drive_status: drive.status,
+        application_status: app.status,
+        last_cleared_round: app.last_cleared_round,
+        student: this.toStudentSummaryFull(app.students),
+      };
+    });
+    return filterByStudentSearch(mapped, filters.search);
+  }
+
+  /**
+   * GET /drives/institution/classes (Principal only) — the Class+Section
+   * dropdown for the filter row above, narrowed by whichever of
+   * batch_id/department_id is already picked (both optional, same two-step
+   * relationship CiaMarksScreen/SubjectRecordsScreen use on the mobile side).
+   */
+  async getClassesForPrincipal(filters: { batch_id?: number; department_id?: number }) {
+    return this.prisma.classes.findMany({
+      where: {
+        ...(filters.batch_id !== undefined && { batch_id: filters.batch_id }),
+        ...(filters.department_id !== undefined && { department_id: filters.department_id }),
+      },
+      select: {
+        id: true,
+        section: true,
+        current_semester: true,
+        batches: { select: { name: true } },
+        courses: { select: { code: true } },
+        departments: { select: { code: true, name: true } },
+      },
+      orderBy: [{ batch_id: 'desc' }, { section: 'asc' }],
+    });
+  }
+
+  private toStudentSummaryFull(student: PrincipalStudentSummarySource) {
+    return {
+      ...this.toStudentSummary(student),
+      class_id: student.class_id,
+      department_code: student.classes?.departments?.code ?? null,
+      department_name: student.classes?.departments?.name ?? null,
+      batch_name: student.classes?.batches?.name ?? null,
+      course_code: student.classes?.courses?.code ?? null,
+    };
+  }
+
   private async assertDepartmentExists(departmentId: number) {
     const department = await this.prisma.departments.findUnique({
       where: { id: departmentId },
@@ -2215,6 +2412,115 @@ export class DrivesService {
     }
 
     return this.buildHistoryForStudentId(studentId);
+  }
+
+  /**
+   * GET /me/department-drive-history (HoD only) — same concluded-application
+   * query as getHistoryForDepartment (the Principal's version above), scoped
+   * to the HoD's own department via their own faculty row (same resolution/
+   * classId-narrowing as getDepartmentStudents) instead of an arbitrary
+   * departmentId param, and grouped by drive instead of returned as flat
+   * per-application rows: the Placements History tab's drive-centric view
+   * for a HoD wants "pick a drive, see which department students
+   * applied/attended it", not one row per application. `classId` optionally
+   * narrows this to one class (must belong to the HoD's own department,
+   * same check as getDepartmentStudents) - the mobile client also uses each
+   * applicant's own batch_name/section (both included below) to offer a
+   * Batch filter client-side without a second round trip.
+   */
+  async getDriveHistoryForHod(userId: number, classId?: number) {
+    const hod = await this.resolveFacultyByUserId(userId);
+
+    let classIds: number[];
+    if (classId !== undefined) {
+      const cls = await this.prisma.classes.findUnique({
+        where: { id: classId },
+        select: { department_id: true },
+      });
+      if (!cls || cls.department_id !== hod.department_id) {
+        throw new ForbiddenException('This class is not in your department');
+      }
+      classIds = [classId];
+    } else {
+      const departmentClasses = await this.prisma.classes.findMany({
+        where: { department_id: hod.department_id },
+        select: { id: true },
+      });
+      classIds = departmentClasses.map((c) => c.id);
+    }
+    if (classIds.length === 0) return [];
+
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: {
+        status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        students: { class_id: { in: classIds } },
+      },
+      include: {
+        placement_drives: { include: { companies: true } },
+        students: {
+          select: {
+            id: true,
+            student_id_no: true,
+            soa_applications: { select: { first_name: true, last_name: true } },
+            users: { select: { email: true } },
+            classes: {
+              select: {
+                id: true,
+                section: true,
+                batches: { select: { name: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { placement_drives: { scheduled_date: 'desc' } },
+    });
+
+    type DriveHistoryGroup = {
+      drive_id: number;
+      company_name: string;
+      scheduled_date: Date;
+      drive_status: string;
+      applicants: Array<{
+        id: number;
+        student_id_no: string;
+        name: string;
+        class_id: number | null;
+        section: string | null;
+        batch_name: string | null;
+        application_status: string;
+        last_cleared_round: number | null;
+      }>;
+    };
+
+    const drivesById = new Map<number, DriveHistoryGroup>();
+    for (const app of applications) {
+      const drive = app.placement_drives;
+      let group = drivesById.get(drive.id);
+      if (!group) {
+        group = {
+          drive_id: drive.id,
+          company_name: this.resolveCompanyName(drive),
+          scheduled_date: drive.scheduled_date,
+          drive_status: drive.status,
+          applicants: [],
+        };
+        drivesById.set(drive.id, group);
+      }
+      const student = app.students;
+      group.applicants.push({
+        id: student.id,
+        student_id_no: student.student_id_no,
+        name: this.resolveStudentDisplayName(student),
+        class_id: student.classes?.id ?? null,
+        section: student.classes?.section ?? null,
+        batch_name: student.classes?.batches.name ?? null,
+        application_status: app.status,
+        last_cleared_round: app.last_cleared_round,
+      });
+    }
+
+    return Array.from(drivesById.values());
   }
 
   /** No generic "display name" column on `students` - same fallback chain used across every other faculty-facing module in this codebase. */

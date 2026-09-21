@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
-import type { HodAttendanceStatus } from './dto/hod-attendance-status.enum';
 
 function resolveStudentName(s: {
   soa_applications: { first_name: string; last_name: string | null } | null;
@@ -39,10 +38,12 @@ function gradeForPercentage(pct: number): string {
  * GET/POST /hod/my-class/* — "My Class" is for a HOD who also personally
  * teaches (faculty_subject_class_mapping), same concept as a regular
  * faculty member's own teaching load, exposed under the HOD's own portal.
- * Every field reads a real table; every multi-query method runs
- * sequentially (Supabase's session-mode pool caps at 15 connections — see
- * hod.service.ts's own comments for why Promise.all across raw/multiple DB
- * calls is unsafe here).
+ * Every field reads a real table. The actual runtime constraint is the
+ * app's own PrismaService.POOL_SIZE (20, transaction-mode pooler) — not a
+ * 15-connection session-mode limit some older comments in this codebase
+ * mistakenly cited (see docs/production/DATABASE_AUDIT.md §3). Batched,
+ * independent Promise.all calls (as used below and in the sibling
+ * TimetableService method this mirrors) are safe under that constraint.
  */
 @Injectable()
 export class HodMyClassService {
@@ -120,186 +121,6 @@ export class HodMyClassService {
   }
 
   // ------------------------------------------------------------------
-  // GET /hod/my-class/attendance?class_id=&subject_id=
-  // ------------------------------------------------------------------
-  async getAttendanceOverview(
-    user: JwtPayload,
-    classId?: number,
-    subjectId?: number,
-  ) {
-    const faculty = await this.resolveFaculty(user);
-    try {
-      const { mappings } = await this.getHandledClasses(faculty.id);
-      const handledClasses = mappings.map((m) => ({
-        class_id: m.class_id,
-        subject_id: m.subject_id,
-        section: m.section,
-        subject_name: m.subject_name,
-        subject_code: m.subject_code,
-      }));
-
-      const selected =
-        (classId != null && subjectId != null
-          ? handledClasses.find(
-              (m) => m.class_id === classId && m.subject_id === subjectId,
-            )
-          : handledClasses[0]) ?? null;
-
-      if (!selected) {
-        return {
-          handled_classes: handledClasses,
-          selected_class: null,
-          date: null,
-          periods: [],
-          already_saved: false,
-          students: [],
-        };
-      }
-
-      const today = new Date(new Date().toISOString().slice(0, 10));
-      const dayOfWeek = new Date().getDay();
-
-      const periodRows = await this.prisma.timetable_slots.findMany({
-        where: {
-          faculty_id: faculty.id,
-          class_id: selected.class_id,
-          subject_id: selected.subject_id,
-          day_of_week: dayOfWeek,
-        },
-        orderBy: { period_number: 'asc' },
-        select: { period_number: true, start_time: true, end_time: true },
-      });
-      const periods = periodRows.map((p) => ({
-        period_number: p.period_number,
-        start_time: p.start_time.toISOString().slice(11, 16),
-        end_time: p.end_time.toISOString().slice(11, 16),
-      }));
-
-      const existing = await this.prisma.attendance_records.findMany({
-        where: {
-          class_id: selected.class_id,
-          subject_id: selected.subject_id,
-          attendance_date: today,
-        },
-        select: { student_id: true, status: true },
-      });
-      const statusByStudent = new Map(
-        existing.map((r) => [r.student_id, r.status]),
-      );
-
-      const roster = await this.prisma.students.findMany({
-        where: { class_id: selected.class_id, status: 'active' },
-        orderBy: { roll_no: 'asc' },
-        select: {
-          id: true,
-          student_id_no: true,
-          soa_applications: { select: { first_name: true, last_name: true } },
-          users: { select: { email: true } },
-        },
-      });
-
-      return {
-        handled_classes: handledClasses,
-        selected_class: selected,
-        date: today.toISOString().slice(0, 10),
-        periods,
-        already_saved: existing.length > 0,
-        students: roster.map((s) => ({
-          student_id: s.id,
-          student_id_no: s.student_id_no,
-          name: resolveStudentName(s),
-          status: statusByStudent.get(s.id) ?? null,
-        })),
-      };
-    } catch (err) {
-      if (err instanceof NotFoundException) throw err;
-      this.logger.error('DB error computing HoD my-class attendance', err);
-      throw new InternalServerErrorException({
-        message: 'Something went wrong. Please try again.',
-        errorCode: 'INTERNAL_ERROR',
-      });
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // POST /hod/my-class/attendance/mark
-  // ------------------------------------------------------------------
-  async markAttendance(
-    user: JwtPayload,
-    dto: {
-      class_id: number;
-      subject_id: number;
-      records: { student_id: number; status: HodAttendanceStatus }[];
-    },
-  ) {
-    const faculty = await this.resolveFaculty(user);
-    try {
-      const mapping = await this.prisma.faculty_subject_class_mapping.findFirst(
-        {
-          where: {
-            faculty_id: faculty.id,
-            subject_id: dto.subject_id,
-            class_id: dto.class_id,
-          },
-        },
-      );
-      if (!mapping) {
-        throw new NotFoundException({
-          message: 'You are not assigned to teach this subject for this class.',
-          errorCode: 'NOT_MAPPED_TO_TEACH',
-        });
-      }
-
-      const today = new Date(new Date().toISOString().slice(0, 10));
-      let saved = 0;
-      // Sequential upserts — same pool-safety discipline as every other
-      // hod service; this action-endpoint is not on a hot read path.
-      for (const record of dto.records) {
-        await this.prisma.attendance_records.upsert({
-          where: {
-            student_id_class_id_subject_id_attendance_date: {
-              student_id: record.student_id,
-              class_id: dto.class_id,
-              subject_id: dto.subject_id,
-              attendance_date: today,
-            },
-          },
-          create: {
-            student_id: record.student_id,
-            class_id: dto.class_id,
-            subject_id: dto.subject_id,
-            attendance_date: today,
-            status: record.status,
-            marked_by_faculty_id: faculty.id,
-            marked_by_user_id: user.sub,
-          },
-          update: {
-            status: record.status,
-            marked_by_faculty_id: faculty.id,
-            marked_by_user_id: user.sub,
-            updated_at: new Date(),
-          },
-        });
-        saved += 1;
-      }
-
-      return {
-        class_id: dto.class_id,
-        subject_id: dto.subject_id,
-        date: today.toISOString().slice(0, 10),
-        saved,
-      };
-    } catch (err) {
-      if (err instanceof NotFoundException) throw err;
-      this.logger.error('DB error marking HoD my-class attendance', err);
-      throw new InternalServerErrorException({
-        message: 'Something went wrong. Please try again.',
-        errorCode: 'INTERNAL_ERROR',
-      });
-    }
-  }
-
-  // ------------------------------------------------------------------
   // GET /hod/my-class/current-semester
   // Same real per-mapping counts as TimetableService.getCurrentSemesterForFaculty
   // (hours/week from timetable_slots, tasks from assignments, materials from
@@ -328,47 +149,44 @@ export class HodMyClassService {
       const initials =
         `${faculty.first_name[0] ?? ''}${faculty.last_name[0] ?? ''}`.toUpperCase();
 
-      // Sequential per mapping — same pool-safety discipline as every other
-      // hod service (the shared TimetableService method this mirrors uses
-      // Promise.all internally, a pre-existing risk out of scope to fix here).
-      const subjects: {
-        class_id: number;
-        subject_id: number;
-        subject_name: string;
-        subject_code: string;
-        section: string;
-        semester: number | null;
-        initials: string;
-        hours_per_week: number;
-        materials_count: number;
-        tasks_count: number;
-        percent_covered: null;
-      }[] = [];
-      for (const m of mappings) {
-        const hoursPerWeek = await this.prisma.timetable_slots.count({
-          where: {
-            faculty_id: faculty.id,
-            subject_id: m.subject_id,
-            class_id: m.class_id,
-            academic_year: academicYear,
-          },
-        });
-        const tasksCount = await this.prisma.assignments.count({
-          where: {
-            faculty_id: faculty.id,
-            subject_id: m.subject_id,
-            class_id: m.class_id,
-            academic_year: academicYear,
-          },
-        });
-        const materialsCount = await this.prisma.lms_notes.count({
-          where: {
-            faculty_id: faculty.id,
-            subject_id: m.subject_id,
-            class_id: m.class_id,
-          },
-        });
-        subjects.push({
+      // Batched via groupBy (3 round trips total) instead of 3 sequential
+      // .count() calls per mapping — was a confirmed N+1 (see
+      // docs/production/PERFORMANCE_AUDIT.md). Same fix, same Promise.all
+      // batching already used by TimetableService.getCurrentSemesterForFaculty
+      // (the method this one mirrors) for these exact 3 independent groupBys.
+      const [hoursRows, taskRows, materialRows] = await Promise.all([
+        this.prisma.timetable_slots.groupBy({
+          by: ['class_id', 'subject_id'],
+          where: { faculty_id: faculty.id, academic_year: academicYear },
+          _count: { _all: true },
+        }),
+        this.prisma.assignments.groupBy({
+          by: ['class_id', 'subject_id'],
+          where: { faculty_id: faculty.id, academic_year: academicYear },
+          _count: { _all: true },
+        }),
+        this.prisma.lms_notes.groupBy({
+          by: ['class_id', 'subject_id'],
+          where: { faculty_id: faculty.id },
+          _count: { _all: true },
+        }),
+      ]);
+
+      const key = (classId: number, subjectId: number) =>
+        `${classId}-${subjectId}`;
+      const hoursByKey = new Map(
+        hoursRows.map((r) => [key(r.class_id, r.subject_id), r._count._all]),
+      );
+      const tasksByKey = new Map(
+        taskRows.map((r) => [key(r.class_id, r.subject_id), r._count._all]),
+      );
+      const materialsByKey = new Map(
+        materialRows.map((r) => [key(r.class_id, r.subject_id), r._count._all]),
+      );
+
+      const subjects = mappings.map((m) => {
+        const k = key(m.class_id, m.subject_id);
+        return {
           class_id: m.class_id,
           subject_id: m.subject_id,
           subject_name: m.subject_name,
@@ -376,12 +194,12 @@ export class HodMyClassService {
           section: m.section,
           semester: m.semester,
           initials,
-          hours_per_week: hoursPerWeek,
-          materials_count: materialsCount,
-          tasks_count: tasksCount,
+          hours_per_week: hoursByKey.get(k) ?? 0,
+          materials_count: materialsByKey.get(k) ?? 0,
+          tasks_count: tasksByKey.get(k) ?? 0,
           percent_covered: null,
-        });
-      }
+        };
+      });
 
       return { academic_year: academicYear, subjects };
     } catch (err) {

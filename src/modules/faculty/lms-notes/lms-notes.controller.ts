@@ -28,31 +28,37 @@ import { ListLmsNoteQueryDto } from './dto/list-lms-note-query.dto';
 export class LmsNotesController {
   constructor(private readonly lmsNotesService: LmsNotesService) {}
 
-  /** POST /api/v1/lms-notes — Faculty only. */
+  /**
+   * POST /api/v1/lms-notes — Faculty/HoD. HOD included so an HoD mapped to
+   * teach a subject (Switch Account's "Subject Handling Faculty" mode) can
+   * upload notes the same as any other faculty - resolved via
+   * faculty.user_id, still gated by assertFacultyMapped, same precedent as
+   * ExamMarksController.
+   */
   @Post('lms-notes')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateLmsNoteDto, @CurrentUser() user: JwtPayload) {
     return this.lmsNotesService.create(dto, user.sub);
   }
 
-  /** GET /api/v1/lms-notes — Faculty/Student. Paginated, filterable. */
+  /** GET /api/v1/lms-notes — Faculty/HoD/Student. Paginated, filterable. */
   @Get('lms-notes')
-  @Roles(ROLES.FACULTY, ROLES.STUDENT)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.STUDENT)
   findAll(@Query() query: ListLmsNoteQueryDto) {
     return this.lmsNotesService.findAll(query);
   }
 
-  /** GET /api/v1/lms-notes/:id — Faculty/Student. */
+  /** GET /api/v1/lms-notes/:id — Faculty/HoD/Student. */
   @Get('lms-notes/:id')
-  @Roles(ROLES.FACULTY, ROLES.STUDENT)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.STUDENT)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.lmsNotesService.findOne(id);
   }
 
-  /** PATCH /api/v1/lms-notes/:id — Faculty only, and only the faculty who owns it. */
+  /** PATCH /api/v1/lms-notes/:id — Faculty/HoD, and only the faculty who owns it. */
   @Patch('lms-notes/:id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateLmsNoteDto,
@@ -61,9 +67,9 @@ export class LmsNotesController {
     return this.lmsNotesService.update(id, dto, user.sub);
   }
 
-  /** DELETE /api/v1/lms-notes/:id — Faculty only, and only the faculty who owns it. */
+  /** DELETE /api/v1/lms-notes/:id — Faculty/HoD, and only the faculty who owns it. */
   @Delete('lms-notes/:id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

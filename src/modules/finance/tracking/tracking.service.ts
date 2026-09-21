@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from 'generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import { FinanceAuditService } from '../finance-audit.service';
 import type { RequestContext } from '../fund/fund.service';
 import {
@@ -450,14 +451,21 @@ export class FinanceTrackingService {
   /** GET /finance/tracking/faculty-search?q= — the allotment picker. */
   async searchFaculty(q?: string) {
     const term = (q ?? '').trim();
+    // Each word must independently match first/last name (order-
+    // independent — "Malar Sekar" and "Sekar Malar" both match
+    // first_name="Malar", last_name="Sekar"); staff_code/email are single
+    // tokens, matched against the whole raw term.
+    const nameWhere = buildMultiWordNameWhere(term, (word) => [
+      { first_name: { contains: word, mode: 'insensitive' as const } },
+      { last_name: { contains: word, mode: 'insensitive' as const } },
+    ]);
     const rows = await this.prisma.faculty.findMany({
       where: {
         status: 'active',
         ...(term
           ? {
               OR: [
-                { first_name: { contains: term, mode: 'insensitive' as const } },
-                { last_name: { contains: term, mode: 'insensitive' as const } },
+                ...(nameWhere ? [nameWhere] : []),
                 { staff_code: { contains: term, mode: 'insensitive' as const } },
                 { users: { email: { contains: term, mode: 'insensitive' as const } } },
               ],

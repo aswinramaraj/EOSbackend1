@@ -13,6 +13,7 @@ import { StorageService } from 'src/common/storage/storage.service';
 import { SmsService } from 'src/common/sms/sms.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
+import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
 import {
   address_type_enum,
   dayscholar_mode_enum,
@@ -899,9 +900,16 @@ export class SoaApplicationsService {
       where.status = query.status;
     }
     if (query.q) {
+      // Each word must independently match first/last name (order-
+      // independent — "Malar Sekar" and "Sekar Malar" both match
+      // first_name="Malar", last_name="Sekar"); email/contact fields are
+      // single tokens, matched against the whole raw q.
+      const nameWhere = buildMultiWordNameWhere(query.q, (word) => [
+        { first_name: { contains: word, mode: 'insensitive' as const } },
+        { last_name: { contains: word, mode: 'insensitive' as const } },
+      ]);
       where.OR = [
-        { first_name: { contains: query.q, mode: 'insensitive' } },
-        { last_name: { contains: query.q, mode: 'insensitive' } },
+        ...(nameWhere ? [nameWhere] : []),
         { student_email: { contains: query.q, mode: 'insensitive' } },
         { student_contact: { contains: query.q } },
         { parent_contact: { contains: query.q } },

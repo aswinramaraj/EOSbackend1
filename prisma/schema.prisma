@@ -797,6 +797,7 @@ model faculty {
   resume_url                                                                                 String?                            @db.VarChar(500)
   designation_id                                                                             Int?
   staff_code                                                                                 String?                            @unique @db.VarChar(30)
+  dayscholar_mode                                                                            dayscholar_mode_enum?
   appraisal_requests                                                                         appraisal_requests[]
   assignments                                                                                assignments[]
   attendance_records                                                                         attendance_records[]
@@ -910,12 +911,17 @@ model faculty_leaves {
   alternate_arrangement                                    String?               @db.VarChar(255)
   is_station_leave                                         Boolean               @default(false)
   staff_user_id                                            Int?
+  correspondent_approval_status                            approval_status_enum?
+  correspondent_decided_by_user_id                         Int?
+  correspondent_decided_at                                 DateTime?             @db.Timestamptz(6)
+  correspondent_remarks                                    String?               @db.VarChar(255)
   faculty                                                  faculty?              @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_faculty_leaves_hod_decided_by_user_idTousers       users?                @relation("faculty_leaves_hod_decided_by_user_idTousers", fields: [hod_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_hod_decider_fkey")
   users_faculty_leaves_hr_decided_by_user_idTousers        users?                @relation("faculty_leaves_hr_decided_by_user_idTousers", fields: [hr_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_hr_decider_fkey")
   leave_types                                              leave_types?          @relation(fields: [leave_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "faculty_leaves_leave_type_fkey")
   users_faculty_leaves_principal_decided_by_user_idTousers users?                @relation("faculty_leaves_principal_decided_by_user_idTousers", fields: [principal_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_faculty_leaves_staff_user_idTousers                users?                @relation("faculty_leaves_staff_user_idTousers", fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_faculty_leaves_correspondent_decided_by_user_idTousers users?            @relation("faculty_leaves_correspondent_decided_by_user_idTousers", fields: [correspondent_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model faculty_sensitive_info {
@@ -2472,8 +2478,10 @@ model users {
   faculty_leaves_faculty_leaves_hr_decided_by_user_idTousers                        faculty_leaves[]                        @relation("faculty_leaves_hr_decided_by_user_idTousers")
   faculty_leaves_faculty_leaves_principal_decided_by_user_idTousers                 faculty_leaves[]                        @relation("faculty_leaves_principal_decided_by_user_idTousers")
   faculty_leaves_faculty_leaves_staff_user_idTousers                                faculty_leaves[]                        @relation("faculty_leaves_staff_user_idTousers")
+  faculty_leaves_faculty_leaves_correspondent_decided_by_user_idTousers             faculty_leaves[]                        @relation("faculty_leaves_correspondent_decided_by_user_idTousers")
   faculty_od_requests                                                               faculty_od_requests[]
   faculty_od_requests_faculty_od_requests_staff_user_idTousers                      faculty_od_requests[]                   @relation("faculty_od_requests_staff_user_idTousers")
+  faculty_od_requests_faculty_od_requests_correspondent_decided_by_user_idTousers    faculty_od_requests[]                   @relation("faculty_od_requests_correspondent_decided_by_user_idTousers")
   faculty_subject_class_mapping                                                     faculty_subject_class_mapping[]
   fee_payment_gateway_orders                                                        fee_payment_gateway_orders[]
   fee_payments                                                                      fee_payments[]
@@ -2572,6 +2580,8 @@ model users {
   sports_session_attendance                                                         sports_session_attendance[]
   startup_ideas                                                                     startup_ideas[]
   stationary_requests                                                               stationary_requests[]
+  stationery_products                                                               stationery_products[]
+  stationery_orders                                                                 stationery_orders[]
   student_drive_applications                                                        student_drive_applications[]
   student_escalations                                                               student_escalations[]
   student_id_card_issuances                                                         student_id_card_issuances[]
@@ -2709,6 +2719,7 @@ model wallet_transactions {
   wallet_transactions                                         wallet_transactions?   @relation("wallet_transactionsTowallet_transactions", fields: [related_transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   other_wallet_transactions                                   wallet_transactions[]  @relation("wallet_transactionsTowallet_transactions")
   student_wallets                                             wallets                @relation(fields: [wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  stationery_orders                                           stationery_orders[]
 
   @@index([outlet_id, created_at], map: "idx_wallet_txn_outlet")
   @@index([wallet_id, created_at], map: "idx_wallet_txn_wallet")
@@ -2804,9 +2815,14 @@ model faculty_od_requests {
   periods_affected                               String?                     @db.VarChar(30)
   class_adjustment                               String?                     @db.VarChar(255)
   staff_user_id                                  Int?
+  correspondent_approval_status                  approval_status_enum?
+  correspondent_decided_by_user_id               Int?
+  correspondent_decided_at                       DateTime?                   @db.Timestamptz(6)
+  correspondent_remarks                          String?                     @db.VarChar(255)
   faculty                                        faculty?                    @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                                          users?                      @relation(fields: [principal_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_faculty_od_requests_staff_user_idTousers users?                      @relation("faculty_od_requests_staff_user_idTousers", fields: [staff_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_faculty_od_requests_correspondent_decided_by_user_idTousers users?   @relation("faculty_od_requests_correspondent_decided_by_user_idTousers", fields: [correspondent_decided_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([faculty_id], map: "idx_faculty_od_requests_faculty_id")
 }
@@ -5918,6 +5934,99 @@ model stationary_stock_items {
   low_stock_threshold Int      @default(0)
   created_at          DateTime @default(now()) @db.Timestamp(3)
   updated_at          DateTime @default(now()) @db.Timestamp(3)
+}
+
+// The new campus "Stationery Store" (shopping-cart e-commerce, not the
+// Xerox/print-shop flow above - see stationery_store.sql's own top comment
+// for why the name collision is unlucky but deliberate-adjacent).
+model stationery_products {
+  id                  Int                      @id @default(autoincrement())
+  category            stationery_category_enum
+  name                String                   @db.VarChar(150)
+  description         String?                  @db.VarChar(500)
+  specs               String[]                 @default([])
+  price               Decimal                  @db.Decimal(10, 2)
+  original_price      Decimal?                 @db.Decimal(10, 2)
+  stock_quantity      Int                      @default(0)
+  image_url           String?                  @db.VarChar(500)
+  is_active           Boolean                  @default(true)
+  low_stock_threshold Int                      @default(10)
+  created_by_user_id  Int?
+  created_at          DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime                 @default(now()) @db.Timestamptz(6)
+  users               users?                   @relation(fields: [created_by_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  stationery_order_items stationery_order_items[]
+}
+
+model stationery_orders {
+  id                    Int                             @id @default(autoincrement())
+  user_id               Int
+  status                stationery_order_status_enum    @default(pending)
+  subtotal              Decimal                         @db.Decimal(10, 2)
+  gst_amount            Decimal                         @db.Decimal(10, 2)
+  total_amount          Decimal                         @db.Decimal(10, 2)
+  payment_method        stationery_payment_method_enum
+  payment_status        stationery_payment_status_enum  @default(pending)
+  pickup_token          String?                         @unique @db.VarChar(20)
+  razorpay_order_id     String?                         @unique @db.VarChar(100)
+  razorpay_payment_id   String?                         @db.VarChar(100)
+  razorpay_signature    String?                         @db.VarChar(255)
+  wallet_transaction_id Int?
+  cancel_reason         String?                         @db.VarChar(255)
+  created_at            DateTime                        @default(now()) @db.Timestamptz(6)
+  confirmed_at          DateTime?                       @db.Timestamptz(6)
+  ready_at              DateTime?                       @db.Timestamptz(6)
+  collected_at          DateTime?                       @db.Timestamptz(6)
+  cancelled_at          DateTime?                       @db.Timestamptz(6)
+  users                 users                           @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  wallet_transactions   wallet_transactions?             @relation(fields: [wallet_transaction_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  stationery_order_items stationery_order_items[]
+
+  @@index([user_id, created_at], map: "idx_stationery_orders_user")
+  @@index([status], map: "idx_stationery_orders_status")
+}
+
+model stationery_order_items {
+  id                  Int                 @id @default(autoincrement())
+  order_id            Int
+  product_id          Int
+  product_name        String              @db.VarChar(150)
+  unit_price          Decimal             @db.Decimal(10, 2)
+  quantity            Int
+  subtotal            Decimal             @db.Decimal(10, 2)
+  stationery_orders   stationery_orders   @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  stationery_products stationery_products @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([order_id], map: "idx_stationery_order_items_order")
+}
+
+enum stationery_category_enum {
+  study
+  food
+  care
+  hostel
+  college
+}
+
+enum stationery_order_status_enum {
+  pending
+  confirmed
+  preparing
+  ready_for_pickup
+  collected
+  cancelled
+}
+
+enum stationery_payment_method_enum {
+  wallet
+  razorpay
+}
+
+enum stationery_payment_status_enum {
+  pending
+  paid
+  failed
+  refunded
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.

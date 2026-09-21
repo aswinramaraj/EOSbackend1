@@ -78,6 +78,65 @@ export class ProfileService {
    * from a fixed/hardcoded catalogue. social_links is the free-form,
    * user-authored list (see user_social_links) shared by every role below.
    */
+  /**
+   * GET /me/my-profile/account-responsibilities — Switch Account feature
+   * (mobile app). `users.role_id` is a single required FK (no multi-role
+   * schema exists), so "which responsibilities does this HOD/Faculty
+   * account actually hold" is derived live from real mapping data instead
+   * of the JWT role alone:
+   *  - HOD: the account's own role is HOD.
+   *  - ADVISOR: any row in class_mentors for their own faculty_id (the
+   *    same table getMenteeClasses/AdvisorExaminationsService already use
+   *    to scope a mentor's own classes).
+   *  - SUBJECT_HANDLER: any row in faculty_subject_class_mapping for their
+   *    own faculty_id (same table HodAssignFacultyService's own
+   *    getHandledClasses uses).
+   * Neither check filters by academic_year — a mapping from any year still
+   * means "this person has handled/mentored that class", matching both of
+   * those existing services' own convention. A user can hold any subset of
+   * these three (including all three, or just one); order here (HOD,
+   * ADVISOR, SUBJECT_HANDLER) is also the default-selection order the
+   * mobile client uses. This never grants extra API access on its own — it
+   * only tells the client which Switch Account options to offer; every
+   * protected endpoint underneath still enforces the caller's real role and
+   * the same class_mentors/faculty_subject_class_mapping scoping
+   * independently.
+   */
+  async getAccountResponsibilities(
+    user: JwtPayload,
+  ): Promise<{ responsibilities: ('HOD' | 'ADVISOR' | 'SUBJECT_HANDLER')[] }> {
+    if (user.role !== ROLES.HOD && user.role !== ROLES.FACULTY) {
+      return { responsibilities: [] };
+    }
+
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { user_id: user.sub },
+      select: { id: true },
+    });
+    if (!faculty) {
+      return {
+        responsibilities: user.role === ROLES.HOD ? ['HOD'] : [],
+      };
+    }
+
+    const [mentorRow, mappingRow] = await Promise.all([
+      this.prisma.class_mentors.findFirst({
+        where: { faculty_id: faculty.id },
+        select: { id: true },
+      }),
+      this.prisma.faculty_subject_class_mapping.findFirst({
+        where: { faculty_id: faculty.id },
+        select: { id: true },
+      }),
+    ]);
+
+    const responsibilities: ('HOD' | 'ADVISOR' | 'SUBJECT_HANDLER')[] = [];
+    if (user.role === ROLES.HOD) responsibilities.push('HOD');
+    if (mentorRow) responsibilities.push('ADVISOR');
+    if (mappingRow) responsibilities.push('SUBJECT_HANDLER');
+    return { responsibilities };
+  }
+
   async getMyProfile(user: JwtPayload) {
     const socialLinks = await this.prisma.user_social_links.findMany({
       where: { user_id: user.sub },
@@ -95,6 +154,35 @@ export class ProfileService {
       return this.getSecretaryProfile(user.sub, socialLinks);
     }
     return this.getFacultyProfile(user.sub, socialLinks);
+  }
+
+  /**
+   * Same full profile shape getMyProfile's own student branch returns
+   * (Personal/Contact/Family/resume), just resolved from a `students.id`
+   * (the PK every parent-child endpoint already keys off - see
+   * ParentsService's own getChildTimetable/getChildFees/etc.) instead of
+   * the caller's own `users.id`. Ownership (is this really the caller's
+   * child?) is the caller's job to check first - ParentsService.
+   * getChildProfile does that via assertOwnChild before ever reaching here,
+   * same as every other child-scoped method in that service.
+   */
+  async getStudentProfileByStudentId(studentId: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { user_id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student profile not found',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+    const socialLinks = await this.prisma.user_social_links.findMany({
+      where: { user_id: student.user_id },
+      orderBy: [{ display_order: 'asc' }, { id: 'asc' }],
+      select: { id: true, title: true, url: true },
+    });
+    return this.getStudentProfile(student.user_id, socialLinks);
   }
 
   /**
@@ -235,6 +323,8 @@ export class ProfileService {
         nationality: true,
         religion: true,
         community: true,
+        student_type: true,
+        dayscholar_mode: true,
         soa_applications: { select: { first_name: true, last_name: true } },
         users: { select: { email: true } },
         courses: { select: { name: true } },
@@ -320,6 +410,10 @@ export class ProfileService {
       nationality: student.nationality,
       religion: student.religion,
       community: student.community,
+      // Bottom-nav tab decision (Bus/Hostel/neither) - see
+      // app/(tabs)/_layout.tsx's isDayscholarTransport/isHosteller.
+      student_type: student.student_type,
+      dayscholar_mode: student.dayscholar_mode,
       mobile: student.student_contacts?.student_mobile ?? null,
       personal_email: student.student_contacts?.student_email1 ?? null,
       address: formatAddress(student.student_addresses[0]),
@@ -368,6 +462,7 @@ export class ProfileService {
         employment_type: true,
         employment_status: true,
         staff_code: true,
+        dayscholar_mode: true,
         users: { select: { email: true } },
         departments: { select: { name: true, code: true } },
         faculty: { select: { first_name: true, last_name: true } },
@@ -384,6 +479,17 @@ export class ProfileService {
     if (!faculty) {
       return this.getStaffProfile(userId, socialLinks);
     }
+
+    // Faculty bottom-nav tab (Bus/Hostel/neither) - see
+    // app/(tabs)/_layout.tsx's isDayscholarTransport/isHosteller, same as
+    // the student branch below. Hostel residency for faculty is derived
+    // from faculty_hostel_mapping's existence (mirrors
+    // student_hostel_mapping) rather than a stored flag - a row present
+    // means this faculty member is a hostel resident.
+    const facultyHostelMapping = await this.prisma.faculty_hostel_mapping.findUnique({
+      where: { faculty_id: faculty.id },
+      select: { id: true },
+    });
 
     return {
       role: 'faculty' as const,
@@ -414,6 +520,13 @@ export class ProfileService {
       employment_type: faculty.employment_type,
       employment_status: faculty.employment_status,
       staff_code: faculty.staff_code,
+      // Reuses the student branch's exact field names (`student_type` /
+      // `dayscholar_mode`) rather than a faculty-specific name, so the
+      // mobile client's existing bottom-nav-tab logic works identically for
+      // both roles without a second code path. Odd naming for a faculty
+      // account, but it keeps one contract for both.
+      student_type: facultyHostelMapping ? 'hosteller' : 'dayscholar',
+      dayscholar_mode: faculty.dayscholar_mode,
     };
   }
 
