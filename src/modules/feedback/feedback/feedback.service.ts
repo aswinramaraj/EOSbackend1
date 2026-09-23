@@ -525,7 +525,18 @@ export class FeedbackService {
             service_type: null,
             is_published: true,
           },
-      include: { _count: { select: { feedback_questions: true } } },
+      include: {
+        _count: { select: { feedback_questions: true } },
+        // Who posted it - lets the student app group HoD-posted forms
+        // separately from the Academic Coordinator's.
+        users: {
+          select: {
+            email: true,
+            roles: { select: { name: true } },
+            faculty: { select: { first_name: true, last_name: true } },
+          },
+        },
+      },
       orderBy: { created_at: 'desc' },
     });
 
@@ -555,6 +566,10 @@ export class FeedbackService {
           title: form.title,
           form_type: form.form_type,
           question_count: form._count.feedback_questions,
+          posted_by_role: form.users.roles.name,
+          posted_by_name: form.users.faculty
+            ? `${form.users.faculty.first_name} ${form.users.faculty.last_name}`
+            : null,
           completed: isMatrix
             ? answered > 0
             : form._count.feedback_questions > 0 &&

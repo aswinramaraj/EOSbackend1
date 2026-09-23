@@ -1,4 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/common/storage/storage.service';
 import { CreateHrQueryDto } from './dto/create-hr-query.dto';
@@ -47,6 +52,63 @@ function resolveAssigneeName(
   return assignee.email;
 }
 
+/**
+ * hr_payroll_requests.status is CHECK-constrained to 'submitted' |
+ * 'under_review' | 'resolved' - there is no approved/rejected value. An HR
+ * decision is stored as status 'resolved' with resolution_note prefixed
+ * "Approved" / "Rejected", and read back through decisionFor() so callers
+ * get a clean pending/approved/rejected without a schema change.
+ */
+const APPROVED_PREFIX = 'Approved';
+const REJECTED_PREFIX = 'Rejected';
+
+export type HrPayrollDecision = 'pending' | 'approved' | 'rejected';
+
+function decisionFor(status: string, note: string | null): HrPayrollDecision {
+  if (status !== 'resolved') return 'pending';
+  return note?.startsWith(REJECTED_PREFIX) ? 'rejected' : 'approved';
+}
+
+/** Display identity for a requester: faculty -> non_teaching_staff -> email. */
+function resolveRequester(user: {
+  email: string;
+  faculty: {
+    first_name: string;
+    last_name: string;
+    designation: string | null;
+    departments: { name: string } | null;
+  } | null;
+  non_teaching_staff: {
+    first_name: string;
+    last_name: string | null;
+    departments: { name: string } | null;
+  }[];
+}) {
+  if (user.faculty) {
+    return {
+      kind: 'faculty' as const,
+      name: `${user.faculty.first_name} ${user.faculty.last_name}`,
+      designation: user.faculty.designation,
+      department: user.faculty.departments?.name ?? null,
+    };
+  }
+  const staff = user.non_teaching_staff?.[0];
+  if (staff) {
+    return {
+      kind: 'staff' as const,
+      name: [staff.first_name, staff.last_name].filter(Boolean).join(' '),
+      designation: 'Non-teaching staff',
+      department: staff.departments?.name ?? null,
+    };
+  }
+  return {
+    kind: 'unknown' as const,
+    name: user.email,
+    designation: null,
+    department: null,
+  };
+}
+
 @Injectable()
 export class HrQueriesService {
   private readonly logger = new Logger(HrQueriesService.name);
@@ -84,6 +146,7 @@ export class HrQueriesService {
       description: row.description,
       file_url: row.attachment_url,
       status: row.status,
+      decision: decisionFor(row.status, row.resolution_note),
       assigned_to_name: resolveAssigneeName(
         row.users_hr_payroll_requests_assigned_hr_user_idTousers,
       ),
@@ -153,5 +216,107 @@ export class HrQueriesService {
     });
 
     return rows.map((r) => this.toResponse(r));
+  }
+
+  // ───────────── HR Payroll: review every staff member's requests ─────────────
+
+  /** GET /hr/payroll-requests - every request, newest first, with the requester's identity. */
+  async listForReview() {
+    const rows = await this.prisma.hr_payroll_requests.findMany({
+      orderBy: { created_at: 'desc' },
+      include: {
+        users_hr_payroll_requests_requested_by_user_idTousers: {
+          select: {
+            email: true,
+            faculty: {
+              select: {
+                first_name: true,
+                last_name: true,
+                designation: true,
+                departments: { select: { name: true } },
+              },
+            },
+            non_teaching_staff: {
+              select: {
+                first_name: true,
+                last_name: true,
+                departments: { select: { name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return rows.map((r) => ({
+      id: r.id,
+      ticket_no: this.ticketNo(r.id, r.created_at),
+      category: r.category,
+      subject: r.subject,
+      description: r.description,
+      file_url: r.attachment_url,
+      status: r.status,
+      decision: decisionFor(r.status, r.resolution_note),
+      resolution_note: r.resolution_note,
+      resolved_at: r.resolved_at,
+      created_at: r.created_at,
+      requester: resolveRequester(
+        r.users_hr_payroll_requests_requested_by_user_idTousers,
+      ),
+    }));
+  }
+
+  /** PATCH /hr/payroll-requests/:id/approve | :id/reject - one decision per request. */
+  async decide(
+    id: number,
+    decision: 'approved' | 'rejected',
+    hrUserId: number,
+    note?: string,
+  ) {
+    const row = await this.prisma.hr_payroll_requests.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+    if (!row) {
+      throw new NotFoundException({
+        message: 'HR payroll request not found',
+        errorCode: 'HR_PAYROLL_REQUEST_NOT_FOUND',
+      });
+    }
+    if (row.status === 'resolved') {
+      throw new ConflictException({
+        message: 'This request has already been decided',
+        errorCode: 'HR_PAYROLL_REQUEST_ALREADY_DECIDED',
+      });
+    }
+
+    const prefix = decision === 'approved' ? APPROVED_PREFIX : REJECTED_PREFIX;
+    const trimmed = note?.trim();
+    // resolution_note is VARCHAR(255).
+    const resolutionNote = (trimmed ? `${prefix}: ${trimmed}` : prefix).slice(
+      0,
+      255,
+    );
+
+    const updated = await this.prisma.hr_payroll_requests.update({
+      where: { id },
+      data: {
+        status: 'resolved',
+        resolution_note: resolutionNote,
+        resolved_at: new Date(),
+        assigned_hr_user_id: hrUserId,
+      },
+    });
+
+    this.logger.log(
+      `HR payroll request ${decision}: id=${id} by user=${hrUserId}`,
+    );
+
+    return {
+      id: updated.id,
+      status: updated.status,
+      decision,
+      resolution_note: updated.resolution_note,
+    };
   }
 }

@@ -16,6 +16,46 @@ interface FormRow {
   average_rating: string | null;
 }
 
+export const FEEDBACK_TYPES = ['academic', 'service', 'mess', 'parent'] as const;
+export type FeedbackType = (typeof FEEDBACK_TYPES)[number];
+
+const TYPE_LABELS: Record<FeedbackType, string> = {
+  academic: 'Academic',
+  service: 'Campus services',
+  mess: 'Hostel mess',
+  parent: 'Parent',
+};
+
+const SUB_TYPE_LABELS: Record<string, string> = {
+  general: 'General forms',
+  end_semester: 'Faculty feedback',
+  food_court: 'Food Court',
+  medical: 'Medical',
+  library: 'Library',
+  stationary: 'Stationery',
+  copy_center: 'Copy Center',
+  mess: 'Mess',
+  about_student: 'About their child',
+  about_college: 'About the college',
+};
+
+interface GroupRow {
+  key: string | null;
+  label: string | null;
+  submissions: bigint;
+  rating_count: bigint;
+  average_rating: string | null;
+}
+
+interface CommentRow {
+  type: FeedbackType;
+  sub_type: string | null;
+  comment: string;
+  rating: number | null;
+  created_at: Date;
+  department_name: string | null;
+}
+
 interface RatingAgg {
   _sum: { rating_value: number | null };
   _count: { rating_value: number };
@@ -37,6 +77,180 @@ export class PrincipalFeedbackService {
   private readonly logger = new Logger(PrincipalFeedbackService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Every feedback source as one row per answer: type, sub_type, rating,
+   * comment, date, department and a submission_key (one per person per
+   * form/submission, so an academic form with 10 questions counts as one
+   * submission, same as one mess review). Department comes from the form's
+   * own class when it has one, else the student's class (service/mess
+   * reviews and parent feedback about a child); rows with neither stay
+   * department-less and only show under "All departments".
+   */
+  private feedbackItemsCte() {
+    return Prisma.sql`
+      WITH items AS (
+        SELECT 'academic'::text AS type, ff.form_type::text AS sub_type,
+               fr.rating_value::int AS rating, fr.response_text AS comment, fr.submitted_at AS created_at,
+               COALESCE(fc.department_id, sc.department_id) AS department_id,
+               'g' || ff.id || '-' || fr.student_id AS submission_key
+        FROM feedback_responses fr
+        JOIN feedback_questions fq ON fq.id = fr.question_id
+        JOIN feedback_forms ff ON ff.id = fq.form_id
+        LEFT JOIN classes fc ON fc.id = ff.class_id
+        LEFT JOIN students s ON s.id = fr.student_id
+        LEFT JOIN classes sc ON sc.id = s.class_id
+        WHERE ff.service_type IS NULL
+        UNION ALL
+        SELECT 'academic', ff.form_type::text,
+               ffr.rating_value::int, ffr.response_text, ffr.submitted_at,
+               COALESCE(fc.department_id, sc.department_id),
+               'm' || ff.id || '-' || ffr.student_id
+        FROM feedback_faculty_responses ffr
+        JOIN feedback_questions fq ON fq.id = ffr.question_id
+        JOIN feedback_forms ff ON ff.id = fq.form_id
+        LEFT JOIN classes fc ON fc.id = ff.class_id
+        LEFT JOIN students s ON s.id = ffr.student_id
+        LEFT JOIN classes sc ON sc.id = s.class_id
+        UNION ALL
+        SELECT 'service', ff.service_type::text,
+               fr.rating_value::int, fr.response_text, fr.submitted_at,
+               sc.department_id,
+               's' || ff.id || '-' || fr.student_id
+        FROM feedback_responses fr
+        JOIN feedback_questions fq ON fq.id = fr.question_id
+        JOIN feedback_forms ff ON ff.id = fq.form_id
+        LEFT JOIN students s ON s.id = fr.student_id
+        LEFT JOIN classes sc ON sc.id = s.class_id
+        WHERE ff.service_type IS NOT NULL
+        UNION ALL
+        SELECT 'mess', 'mess',
+               hmf.rating::int, hmf.comment, hmf.created_at,
+               sc.department_id,
+               'h' || hmf.id
+        FROM hostel_mess_feedback hmf
+        LEFT JOIN students s ON s.id = hmf.student_id
+        LEFT JOIN classes sc ON sc.id = s.class_id
+        UNION ALL
+        SELECT 'parent', pf.category::text,
+               pf.rating::int, pf.message, pf.created_at,
+               sc.department_id,
+               'p' || pf.id
+        FROM parent_feedback pf
+        LEFT JOIN students s ON s.id = pf.student_id
+        LEFT JOIN classes sc ON sc.id = s.class_id
+      )
+    `;
+  }
+
+  private toGroup(row: GroupRow) {
+    const ratingCount = Number(row.rating_count);
+    return {
+      submissions: Number(row.submissions),
+      rating_count: ratingCount,
+      average_rating:
+        row.average_rating !== null && ratingCount > 0 ? Math.round(Number(row.average_rating) * 100) / 100 : null,
+    };
+  }
+
+  /** GET /principal-feedback/insights - see the controller's doc comment. */
+  async getInsights(filters: { type?: FeedbackType; departmentId?: number }) {
+    try {
+      const conditions: Prisma.Sql[] = [];
+      if (filters.type) conditions.push(Prisma.sql`type = ${filters.type}`);
+      if (filters.departmentId) conditions.push(Prisma.sql`department_id = ${filters.departmentId}`);
+      const whereWith = (extra: Prisma.Sql[] = []) => {
+        const all = [...conditions, ...extra];
+        return all.length > 0 ? Prisma.sql`WHERE ${Prisma.join(all, ' AND ')}` : Prisma.empty;
+      };
+      const where = whereWith();
+      // "By type" always spans every type (department filter only) so the
+      // overall comparison stays visible even while one type is selected.
+      const deptOnlyWhere = filters.departmentId
+        ? Prisma.sql`WHERE department_id = ${filters.departmentId}`
+        : Prisma.empty;
+      const cte = this.feedbackItemsCte();
+      const aggregate = Prisma.sql`
+        COUNT(DISTINCT submission_key)::bigint AS submissions,
+        COUNT(rating)::bigint AS rating_count,
+        AVG(rating) AS average_rating
+      `;
+
+      // Sequential, not Promise.all - small shared Supabase pool (see getOverview).
+      const [summary] = await this.prisma.$queryRaw<GroupRow[]>(Prisma.sql`
+        ${cte} SELECT NULL AS key, NULL AS label, ${aggregate} FROM items ${where}
+      `);
+      const byType = await this.prisma.$queryRaw<GroupRow[]>(Prisma.sql`
+        ${cte} SELECT type AS key, NULL AS label, ${aggregate} FROM items ${deptOnlyWhere} GROUP BY type
+      `);
+      const byDepartment = await this.prisma.$queryRaw<GroupRow[]>(Prisma.sql`
+        ${cte} SELECT d.id::text AS key, d.name AS label, ${aggregate}
+        FROM items JOIN departments d ON d.id = items.department_id
+        ${where}
+        GROUP BY d.id, d.name
+      `);
+      const bySubType = await this.prisma.$queryRaw<GroupRow[]>(Prisma.sql`
+        ${cte} SELECT sub_type AS key, NULL AS label, ${aggregate} FROM items ${where} GROUP BY sub_type
+      `);
+      const distribution = await this.prisma.$queryRaw<{ rating: number; count: bigint }[]>(Prisma.sql`
+        ${cte} SELECT rating, COUNT(*)::bigint AS count FROM items
+        ${whereWith([Prisma.sql`rating BETWEEN 1 AND 5`])}
+        GROUP BY rating
+      `);
+      const comments = await this.prisma.$queryRaw<CommentRow[]>(Prisma.sql`
+        ${cte} SELECT items.type, items.sub_type, items.comment, items.rating, items.created_at, d.name AS department_name
+        FROM items LEFT JOIN departments d ON d.id = items.department_id
+        ${whereWith([Prisma.sql`NULLIF(TRIM(items.comment), '') IS NOT NULL`])}
+        ORDER BY items.created_at DESC
+        LIMIT 10
+      `);
+      const departments = await this.prisma.departments.findMany({
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      });
+
+      const typeRows = new Map(byType.map((r) => [r.key, r]));
+      const distributionMap = new Map(distribution.map((r) => [Number(r.rating), Number(r.count)]));
+
+      return {
+        filters: { type: filters.type ?? 'all', department_id: filters.departmentId ?? null },
+        summary: this.toGroup(summary),
+        // Every type always listed (zero rows included) so the chart's
+        // categories never shift when a type has no data yet.
+        by_type: FEEDBACK_TYPES.map((type) => {
+          const row = typeRows.get(type);
+          return {
+            type,
+            label: TYPE_LABELS[type],
+            ...(row ? this.toGroup(row) : { submissions: 0, rating_count: 0, average_rating: null }),
+          };
+        }),
+        by_department: byDepartment
+          .map((r) => ({ department_id: Number(r.key), name: r.label ?? '—', ...this.toGroup(r) }))
+          .sort((a, b) => b.submissions - a.submissions),
+        by_sub_type: bySubType
+          .map((r) => ({ key: r.key ?? 'other', label: SUB_TYPE_LABELS[r.key ?? ''] ?? r.key ?? 'Other', ...this.toGroup(r) }))
+          .sort((a, b) => b.submissions - a.submissions),
+        rating_distribution: [1, 2, 3, 4, 5].map((rating) => ({ rating, count: distributionMap.get(rating) ?? 0 })),
+        recent_comments: comments.map((c) => ({
+          type: c.type,
+          type_label: TYPE_LABELS[c.type] ?? c.type,
+          sub_type_label: c.sub_type ? (SUB_TYPE_LABELS[c.sub_type] ?? c.sub_type) : null,
+          comment: c.comment,
+          rating: c.rating,
+          created_at: c.created_at,
+          department_name: c.department_name,
+        })),
+        departments,
+      };
+    } catch (err) {
+      this.logger.error('DB error computing principal feedback insights', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
 
   async getOverview(filters?: { departmentId?: number; batchId?: number }) {
     try {

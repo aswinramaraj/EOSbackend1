@@ -840,7 +840,7 @@ export class AnnouncementsService {
           batch.map((userId) =>
             this.notifications.notify({
               user_id: userId,
-              title: 'New announcement',
+              title: 'New notice',
               message: title,
               type: 'announcement_new',
               related_entity_type: 'announcement',

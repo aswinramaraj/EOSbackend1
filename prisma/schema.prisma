@@ -597,6 +597,7 @@ model departments {
   sports_od_hod_approvals                                    sports_od_hod_approvals[]
   sports_teams                                               sports_teams[]
   subjects                                                   subjects[]
+  faculty_feedback_forms                                     faculty_feedback_forms[]
 }
 
 model e_resources {
@@ -876,6 +877,7 @@ model faculty {
   students                                                                                   students[]
   subject_academic_clearance                                                                 subject_academic_clearance[]
   timetable_slots                                                                            timetable_slots[]
+  faculty_feedback_responses                                                                 faculty_feedback_responses[]
 
   @@index([department_id], map: "idx_faculty_department")
 }
@@ -1060,6 +1062,49 @@ model feedback_forms {
   users                  users                      @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   feedback_rating_scales feedback_rating_scales?    @relation(fields: [rating_scale_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   feedback_questions     feedback_questions[]
+}
+
+/// HoD -> Faculty feedback (prisma/manual-sql/faculty_feedback.sql). A form
+/// targets every faculty member of `department_id`; each answers it once.
+model faculty_feedback_forms {
+  id                         Int                          @id @default(autoincrement())
+  created_by_user_id         Int
+  department_id              Int
+  title                      String                       @db.VarChar(200)
+  is_published               Boolean                      @default(true)
+  created_at                 DateTime                     @default(now()) @db.Timestamptz(6)
+  users                      users                        @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  departments                departments                  @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty_feedback_questions faculty_feedback_questions[]
+
+  @@index([department_id], map: "idx_faculty_feedback_forms_department")
+}
+
+model faculty_feedback_questions {
+  id                         Int                          @id @default(autoincrement())
+  form_id                    Int
+  question_text              String
+  sequence_no                Int?                         @db.SmallInt
+  question_type              feedback_question_type_enum  @default(rating)
+  faculty_feedback_forms     faculty_feedback_forms       @relation(fields: [form_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  faculty_feedback_responses faculty_feedback_responses[]
+
+  @@index([form_id], map: "idx_faculty_feedback_questions_form")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model faculty_feedback_responses {
+  id                         Int                        @id @default(autoincrement())
+  question_id                Int
+  faculty_id                 Int
+  rating_value               Int?                       @db.SmallInt
+  response_text              String?
+  submitted_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  faculty_feedback_questions faculty_feedback_questions @relation(fields: [question_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  faculty                    faculty                    @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([question_id, faculty_id], map: "faculty_feedback_responses_question_faculty_key")
+  @@index([faculty_id], map: "idx_faculty_feedback_responses_faculty")
 }
 
 model feedback_questions {
@@ -2685,6 +2730,7 @@ model users {
   visitor_logs                                                                      visitor_logs[]
   wallet_transactions                                                               wallet_transactions[]
   wallets                                                                           wallets?
+  faculty_feedback_forms                                                            faculty_feedback_forms[]
 }
 
 model vendor_quotations {

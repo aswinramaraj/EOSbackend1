@@ -128,6 +128,7 @@ import { HolidaySlotsModule } from './modules/faculty/holiday-slots/holiday-slot
 import { LeaveTypesModule } from './modules/faculty/leave-types/leave-types.module';
 import { HrPayrollModule } from './modules/faculty/hr-payroll/hr-payroll.module';
 import { HrQueriesModule } from './modules/faculty/hr-queries/hr-queries.module';
+import { FacultyFeedbackModule } from './modules/faculty/faculty-feedback/faculty-feedback.module';
 import { LessonPlansModule } from './modules/faculty/lesson-plans/lesson-plans.module';
 import { LmsNotesModule } from './modules/faculty/lms-notes/lms-notes.module';
 import { MediaRequestsModule } from './modules/faculty/media-requests/media-requests.module';
@@ -405,6 +406,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     HolidaySlotsModule,
     HrPayrollModule,
     HrQueriesModule,
+    FacultyFeedbackModule,
     LessonPlansModule,
     LmsNotesModule,
     MediaRequestsModule,
