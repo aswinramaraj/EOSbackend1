@@ -30,6 +30,7 @@ import { MeProfileModule } from './modules/admissions/students/me-profile/me-pro
 
 import { AnnouncementsModule } from './modules/announcements/announcements/announcements.module';
 import { ParentsModule } from './modules/parents/parents.module';
+import { FacultyHostelComplaintsModule } from './modules/faculty/hostel-complaints/faculty-hostel-complaints.module';
 import { PersonalCalendarModule } from './modules/personal-calendar/personal-calendar.module';
 import { StudentHigherEducationModule } from './modules/student-higher-education/student-higher-education.module';
 import { StudentEntrepreneurshipModule } from './modules/student-entrepreneurship/student-entrepreneurship.module';
@@ -309,6 +310,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     StudentsModule,
     MeProfileModule,
     ParentsModule,
+    FacultyHostelComplaintsModule,
     PersonalCalendarModule,
     StudentHigherEducationModule,
     PrincipalStudentsFlatModule,

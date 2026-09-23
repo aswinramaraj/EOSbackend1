@@ -42,11 +42,37 @@ export class MeHostelRoomService {
       });
     }
 
+    return this.getHostelRoomForStudentId(student.id, userId);
+  }
+
+  /**
+   * Studentid-keyed core, factored out so ParentsService can render a
+   * parent's own child's hostel room without going through the JWT-resolved
+   * `userId` path above (see ParentsService.getChildHostelRoom - same
+   * assertOwnChild-then-delegate idiom already used for
+   * attendance/performance/fees).
+   */
+  async getHostelRoomForStudentId(studentId: number, userIdForLogging?: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: {
+        student_id_no: true,
+        register_no: true,
+        soa_applications: { select: { first_name: true, last_name: true } },
+      },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student profile not found for this account',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
     const studentName = student.soa_applications
       ? `${student.soa_applications.first_name} ${student.soa_applications.last_name ?? ''}`.trim()
       : `Student ${student.student_id_no}`;
 
-    const mapping = await this.fetchMapping(userId, student.id);
+    const mapping = await this.fetchMapping(userIdForLogging ?? studentId, studentId);
 
     if (!mapping) {
       return {

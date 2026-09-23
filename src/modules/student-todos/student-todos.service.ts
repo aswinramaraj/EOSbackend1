@@ -1,6 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/common/storage/storage.service';
+import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import { CreateTodoDto } from './dto/create-todo.dto';
+import { UpdateTodoDto } from './dto/update-todo.dto';
 
 type PlacementTodoRow = {
   id: number;
@@ -9,44 +13,92 @@ type PlacementTodoRow = {
   deadline: Date | null;
   is_active: boolean;
   created_at: Date;
+  pdf_url: string | null;
+  link_url: string | null;
 };
 
 type PlacementTodoWithCountRow = PlacementTodoRow & { completed_count: bigint };
 
 type MyTodoRow = PlacementTodoRow & { completed_at: Date | null };
 
-// placement_todos / student_todo_completions are manual-SQL tables (see
-// prisma/manual-sql/student_todos.sql) - not schema.prisma models, per this
-// project's "never modify schema.prisma for a small additive table"
-// convention - so every query here is raw SQL via PrismaService's
-// $queryRaw/$executeRaw, same pattern as StationaryService.
+const PDF_MIME_TYPES = ['application/pdf'];
+const PDF_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+
+// placement_todos / student_todo_completions ARE real schema.prisma models
+// (see schema.prisma) but every query here is still raw SQL via
+// PrismaService's $queryRaw/$executeRaw, matching how this module was
+// originally written - same pattern as StationaryService.
+//
+// "Students who opted placement" = students.career_path = 'placement' (set
+// by Placement staff on the Students page, see DrivesService.setStudentCareerPath).
+// Every to-do posted here is scoped to that group only, not a broadcast to
+// all students - a career_path filter joins in on both the student-facing
+// list and the admin's own completion-count denominator.
 @Injectable()
 export class StudentTodosService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   // ============================================================
   // PLACEMENT / ADMIN
   // ============================================================
 
-  /** POST /placement/todos — broadcasts a new to-do to every student. */
+  /** POST /placement/todos — broadcasts a new to-do to every student with career_path='placement'. */
   async createTodo(userId: number, dto: CreateTodoDto) {
     const rows = await this.prisma.$queryRaw<{ id: number }[]>`
-      INSERT INTO placement_todos (title, description, deadline, created_by_user_id)
-      VALUES (${dto.title}, ${dto.description ?? null}, ${dto.deadline ? new Date(dto.deadline) : null}, ${userId})
+      INSERT INTO placement_todos (title, description, deadline, created_by_user_id, pdf_url, link_url)
+      VALUES (
+        ${dto.title},
+        ${dto.description ?? null},
+        ${dto.deadline ? new Date(dto.deadline) : null},
+        ${userId},
+        ${dto.pdfUrl ?? null},
+        ${dto.linkUrl ?? null}
+      )
       RETURNING id
     `;
     return { id: rows[0].id };
   }
 
   /**
+   * POST /placement/todos/pdf-upload - standalone upload, not tied to a
+   * to-do id yet (the composer form needs to show/attach a PDF before the
+   * to-do itself is created). Returns a public pdf_url the caller then
+   * passes straight through createTodo's own pdfUrl field.
+   */
+  async uploadTodoPdf(file: Express.Multer.File) {
+    if (!PDF_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException({
+        message: `That file type is not accepted. PDF only - got ${file.mimetype || 'an unknown type'}.`,
+        errorCode: 'INVALID_FILE_TYPE',
+      });
+    }
+    if (file.size > PDF_MAX_BYTES) {
+      throw new BadRequestException({
+        message: `File is too large - the limit is ${PDF_MAX_BYTES / (1024 * 1024)}MB.`,
+        errorCode: 'FILE_TOO_LARGE',
+      });
+    }
+    const { key } = await this.storage.upload(
+      'placement-todos',
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+      STORAGE_BUCKETS.PLACEMENT_TODO_ATTACHMENTS,
+    );
+    return { pdf_url: this.storage.getPublicUrl(key, STORAGE_BUCKETS.PLACEMENT_TODO_ATTACHMENTS) };
+  }
+
+  /**
    * GET /placement/todos — the caller's own posted to-dos, each with how
-   * many students have marked it done (out of every student that exists -
-   * this is a broadcast to all students, not scoped to any one class/dept).
+   * many opted-in (career_path='placement') students have marked it done.
    */
   async listMyPostedTodos(userId: number) {
     const [todos, [{ total }]] = await Promise.all([
       this.prisma.$queryRaw<PlacementTodoWithCountRow[]>`
-        SELECT t.id, t.title, t.description, t.deadline, t.is_active, t.created_at,
+        SELECT t.id, t.title, t.description, t.deadline, t.is_active, t.created_at, t.pdf_url, t.link_url,
                COUNT(c.id) AS completed_count
         FROM placement_todos t
         LEFT JOIN student_todo_completions c ON c.todo_id = t.id
@@ -54,7 +106,9 @@ export class StudentTodosService {
         GROUP BY t.id
         ORDER BY t.created_at DESC
       `,
-      this.prisma.$queryRaw<{ total: bigint }[]>`SELECT COUNT(*) AS total FROM students`,
+      this.prisma.$queryRaw<{ total: bigint }[]>`
+        SELECT COUNT(*) AS total FROM students WHERE career_path = 'placement'
+      `,
     ]);
     return todos.map((t) => ({
       id: t.id,
@@ -63,6 +117,8 @@ export class StudentTodosService {
       deadline: t.deadline,
       is_active: t.is_active,
       created_at: t.created_at,
+      pdf_url: t.pdf_url,
+      link_url: t.link_url,
       completed_count: Number(t.completed_count),
       total_students: Number(total),
     }));
@@ -72,11 +128,18 @@ export class StudentTodosService {
   // STUDENT
   // ============================================================
 
-  /** GET /me/todos — every active to-do, with the caller's own completion. */
+  /**
+   * GET /me/todos — every active to-do, with the caller's own completion.
+   * Returns nothing for a student whose career_path isn't 'placement' -
+   * these to-dos are Placement Cell-only, not a general broadcast.
+   */
   async listMyTodos(userId: number) {
     const student = await this.resolveStudentByUserId(userId);
+    if (student.career_path !== 'placement') {
+      return [];
+    }
     const rows = await this.prisma.$queryRaw<MyTodoRow[]>`
-      SELECT t.id, t.title, t.description, t.deadline, t.is_active, t.created_at, c.completed_at
+      SELECT t.id, t.title, t.description, t.deadline, t.is_active, t.created_at, t.pdf_url, t.link_url, c.completed_at
       FROM placement_todos t
       LEFT JOIN student_todo_completions c ON c.todo_id = t.id AND c.student_id = ${student.id}
       WHERE t.is_active = true
@@ -87,6 +150,8 @@ export class StudentTodosService {
       title: r.title,
       description: r.description,
       deadline: r.deadline,
+      pdf_url: r.pdf_url,
+      link_url: r.link_url,
       is_completed: r.completed_at !== null,
       completed_at: r.completed_at,
     }));
@@ -109,6 +174,47 @@ export class StudentTodosService {
       ON CONFLICT (todo_id, student_id) DO NOTHING
     `;
     return { id: todoId, is_completed: true };
+  }
+
+  /** PATCH /placement/todos/:id — only the fields present in the body change; only the poster's own to-dos. */
+  async updateTodo(userId: number, todoId: number, dto: UpdateTodoDto) {
+    const sets: Prisma.Sql[] = [];
+    if (dto.title !== undefined) sets.push(Prisma.sql`title = ${dto.title}`);
+    if (dto.description !== undefined) sets.push(Prisma.sql`description = ${dto.description || null}`);
+    if (dto.deadline !== undefined) sets.push(Prisma.sql`deadline = ${dto.deadline ? new Date(dto.deadline) : null}`);
+    if (dto.pdfUrl !== undefined) sets.push(Prisma.sql`pdf_url = ${dto.pdfUrl || null}`);
+    if (dto.linkUrl !== undefined) sets.push(Prisma.sql`link_url = ${dto.linkUrl || null}`);
+
+    if (sets.length === 0) {
+      return { id: todoId };
+    }
+
+    const rows = await this.prisma.$queryRaw<{ id: number }[]>(
+      Prisma.sql`
+        UPDATE placement_todos
+        SET ${Prisma.join(sets, ', ')}
+        WHERE id = ${todoId} AND created_by_user_id = ${userId}
+        RETURNING id
+      `,
+    );
+    if (!rows[0]) {
+      throw new NotFoundException({ message: 'To-do not found', errorCode: 'TODO_NOT_FOUND' });
+    }
+    return { id: todoId };
+  }
+
+  /** DELETE /placement/todos/:id — soft delete (is_active=false); only the poster's own to-dos. */
+  async deactivateTodo(userId: number, todoId: number) {
+    const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+      UPDATE placement_todos
+      SET is_active = false
+      WHERE id = ${todoId} AND created_by_user_id = ${userId}
+      RETURNING id
+    `;
+    if (!rows[0]) {
+      throw new NotFoundException({ message: 'To-do not found', errorCode: 'TODO_NOT_FOUND' });
+    }
+    return { id: todoId };
   }
 
   private async resolveStudentByUserId(userId: number) {

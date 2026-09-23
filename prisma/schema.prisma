@@ -839,6 +839,7 @@ model faculty {
   faculty_subject_class_mapping_faculty_subject_class_mapping_substitute_faculty_idTofaculty faculty_subject_class_mapping[]    @relation("faculty_subject_class_mapping_substitute_faculty_idTofaculty")
   finance_order_allotments                                                                   finance_order_allotments[]
   finance_proposal_assignments                                                               finance_proposal_assignments[]
+  hostel_complaints                                                                          hostel_complaints[]
   hr_queries                                                                                 hr_queries[]
   incubations                                                                                incubations[]
   invigilation_duties                                                                        invigilation_duties[]
@@ -1052,6 +1053,7 @@ model feedback_forms {
   form_type              feedback_form_type_enum    @default(general)
   rating_scale_id        Int?
   category               feedback_course_type_enum?
+  service_type           feedback_service_type_enum?
   is_published           Boolean                    @default(true)
   batches                batches?                   @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   classes                classes?                   @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1311,7 +1313,8 @@ model hostels {
 /// raised by hostel residents.
 model hostel_complaints {
   id              Int                            @id @default(autoincrement())
-  student_id      Int
+  student_id      Int?
+  faculty_id      Int?
   hostel_id       Int?
   category        hostel_complaint_category_enum
   title           String                         @db.VarChar(150)
@@ -1323,7 +1326,8 @@ model hostel_complaints {
   resolved_at     DateTime?                      @db.Timestamptz(6)
   created_at      DateTime                       @default(now()) @db.Timestamptz(6)
   hostels         hostels?                       @relation(fields: [hostel_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  students        students                       @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students        students?                      @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  faculty         faculty?                       @relation(fields: [faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 /// Per-submission mess rating/feedback — distinct from hostel_complaints
@@ -1557,9 +1561,28 @@ model od_requests {
   email_sent_at            DateTime?                   @db.Timestamptz(6)
   email_body               String?
   admin_remarks            String?
-  od_request_hod_approvals od_request_hod_approvals[]
+  od_request_hod_approvals          od_request_hod_approvals[]
+  od_request_parent_acknowledgements od_request_parent_acknowledgements[]
   faculty                  faculty?                    @relation(fields: [faculty_guide_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   od_teams                 od_teams                    @relation(fields: [team_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+// One row per parent per OD request - a student can have 2 linked parent
+// rows (father+mother, see parent_student_mapping), so "acknowledged" is
+// tracked per-parent rather than one ambiguous flag on od_requests itself.
+// Same fan-out shape as od_request_hod_approvals. Anchored to the whole OD
+// request (team-level), not per-member - a parent acknowledges the same
+// event a mentor/HoD reviews, not a per-student decision.
+model od_request_parent_acknowledgements {
+  id              Int       @id @default(autoincrement())
+  od_request_id   Int
+  parent_user_id  Int
+  acknowledged_at DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  od_requests     od_requests @relation(fields: [od_request_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users           users       @relation(fields: [parent_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([od_request_id, parent_user_id])
 }
 
 model od_team_members {
@@ -1603,6 +1626,32 @@ model parent_student_mapping {
 
   @@unique([parent_user_id, student_id])
   @@index([student_id], map: "idx_parent_student_student")
+}
+
+// Free-text feedback a parent submits - either about their own linked
+// child (student_id set, ownership checked the same assertOwnChild way as
+// every other parent-on-behalf-of-child write) or about the college in
+// general (student_id null). Deliberately NOT built on feedback_forms/
+// feedback_responses - that mechanism is form-based and coordinator-
+// authored, with student_id hard-wired as "the respondent answering about
+// themselves," not "the subject of someone else's feedback" - retrofitting
+// it would blur that semantics across a 1000+ line service. This is its
+// own simple table instead.
+model parent_feedback {
+  id             Int                            @id @default(autoincrement())
+  parent_user_id Int
+  student_id     Int?
+  category       parent_feedback_category_enum
+  message        String
+  rating         Int?
+  created_at     DateTime                       @default(now()) @db.Timestamptz(6)
+  users          users                          @relation(fields: [parent_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  students       students?                      @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+enum parent_feedback_category_enum {
+  about_student
+  about_college
 }
 
 model payslip_requests {
@@ -2134,10 +2183,29 @@ model student_leaves {
   routed_to_warden                                       Boolean                   @default(false)
   approved_by_warden_user_id                             Int?
   attachment_url                                         String?                   @db.VarChar(500)
+  leave_parent_acknowledgements                          leave_parent_acknowledgements[]
   faculty                                                faculty?                  @relation(fields: [approved_by_faculty_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users                                                  users?                    @relation(fields: [approved_by_hod_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_student_leaves_approved_by_warden_user_idTousers users?                    @relation("student_leaves_approved_by_warden_user_idTousers", fields: [approved_by_warden_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   students                                               students                  @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+// One row per parent per leave request - covers BOTH the academic Leave
+// tab and the Hostel tab's Leave screen, since both write to this same
+// student_leaves table (routed_to_warden just picks which approval chain
+// runs). A student can have 2 linked parent rows (father+mother, see
+// parent_student_mapping), so "acknowledged" is tracked per-parent rather
+// than one ambiguous flag on student_leaves itself.
+model leave_parent_acknowledgements {
+  id              Int       @id @default(autoincrement())
+  leave_id        Int
+  parent_user_id  Int
+  acknowledged_at DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  student_leaves  student_leaves @relation(fields: [leave_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users           users          @relation(fields: [parent_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([leave_id, parent_user_id])
 }
 
 model student_profiles {
@@ -2267,6 +2335,7 @@ model students {
   od_request_hod_approvals                                          od_request_hod_approvals[]
   od_team_members                                                   od_team_members[]
   od_teams                                                          od_teams[]
+  parent_feedback                                                   parent_feedback[]
   parent_student_mapping                                            parent_student_mapping[]
   photocopy_requests                                                photocopy_requests[]
   placement_interviews                                              placement_interviews[]
@@ -2519,6 +2588,7 @@ model users {
   incubations                                                                       incubations[]
   iqac_accreditation_evidence_items                                                 iqac_accreditation_evidence_items[]
   iqac_metric_targets                                                               iqac_metric_targets[]
+  leave_parent_acknowledgements                                                     leave_parent_acknowledgements[]
   lms_resources                                                                     lms_resources[]
   main_gate_in_out_ledger                                                           main_gate_in_out_ledger[]
   malpractice_incidents                                                             malpractice_incidents[]
@@ -2545,8 +2615,10 @@ model users {
   non_teaching_staff                                                                non_teaching_staff[]
   notifications                                                                     notifications[]
   od_request_hod_approvals                                                          od_request_hod_approvals[]
+  od_request_parent_acknowledgements                                                od_request_parent_acknowledgements[]
   online_class_participants                                                         online_class_participants[]
   outcome_attainments                                                               outcome_attainments[]
+  parent_feedback                                                                   parent_feedback[]
   parent_student_mapping                                                            parent_student_mapping[]
   payslip_requests                                                                  payslip_requests[]
   personal_calendar_entries                                                         personal_calendar_entries[]
@@ -6224,6 +6296,8 @@ model placement_todos {
   created_by_user_id       Int
   is_active                Boolean                    @default(true)
   created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  pdf_url                  String?                    @db.VarChar(500)
+  link_url                 String?                    @db.VarChar(500)
   users                    users                      @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   student_todo_completions student_todo_completions[]
 }
@@ -6363,6 +6437,10 @@ model canteen_orders {
   pickup_token          String?               @db.VarChar(12)
   wallet_transaction_id Int?
   token_date            DateTime?             @db.Date
+  payment_status        String?               @default("pending") @db.VarChar(20)
+  razorpay_order_id     String?               @unique(map: "uq_canteen_orders_razorpay_order_id") @db.VarChar(100)
+  razorpay_payment_id   String?               @db.VarChar(100)
+  razorpay_signature    String?               @db.VarChar(255)
   canteen_bills         canteen_bills[]
   canteen_order_items   canteen_order_items[]
   users                 users?                @relation(fields: [placed_by_user_id], references: [id], onUpdate: NoAction)
@@ -6576,6 +6654,15 @@ enum fee_structure_applies_to_enum {
 enum feedback_form_type_enum {
   general
   end_semester
+}
+
+/** A form tagged with one of these is a Campus-tab service review (Food Court/Medical/Library/Stationary/Copy Center), not a class/batch-scoped academic form - see feedback_forms.service_type. */
+enum feedback_service_type_enum {
+  food_court
+  medical
+  library
+  stationary
+  copy_center
 }
 
 enum feedback_question_type_enum {

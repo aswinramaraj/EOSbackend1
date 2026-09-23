@@ -17,6 +17,8 @@ import { ROLES } from 'src/common/constants/roles.constant';
 import { CanteenDishesService } from 'src/modules/canteen-admin/canteen-dishes.service';
 import { CanteenOrderingService } from './canteen-ordering.service';
 import { PlaceOrderDto } from './dto/place-order.dto';
+import { CreateRazorpayOrderDto } from './dto/create-razorpay-order.dto';
+import { VerifyRazorpayOrderDto } from './dto/verify-razorpay-order.dto';
 
 /**
  * Every role gets canteen ordering except: Parent (no wallet at all, same
@@ -69,6 +71,24 @@ export class CanteenOrderingController {
   @Post('orders')
   placeOrder(@CurrentUser() user: JwtPayload, @Body() dto: PlaceOrderDto) {
     return this.ordering.placeOrder(user.sub, dto);
+  }
+
+  /** POST /me/canteen-ordering/checkout/razorpay-order — stages a Razorpay order. */
+  @Post('checkout/razorpay-order')
+  createRazorpayOrder(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateRazorpayOrderDto,
+  ) {
+    return this.ordering.createRazorpayOrder(user.sub, dto);
+  }
+
+  /** POST /me/canteen-ordering/checkout/razorpay-verify — server re-verifies the signature. */
+  @Post('checkout/razorpay-verify')
+  verifyRazorpayPayment(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: VerifyRazorpayOrderDto,
+  ) {
+    return this.ordering.verifyRazorpayPayment(user.sub, dto);
   }
 
   @Get('orders')

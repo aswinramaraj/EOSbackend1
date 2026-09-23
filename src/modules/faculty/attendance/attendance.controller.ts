@@ -138,8 +138,11 @@ export class AttendanceController {
    */
   @Get('staff-attendance-review')
   @Roles(ROLES.HOD, ROLES.HR_PAYROLL)
-  listStaffAttendanceForReview(@Query() query: GetStaffAttendanceDto) {
-    return this.meStaffAttendanceService.listStaffAttendanceForReview(query);
+  listStaffAttendanceForReview(
+    @Query() query: GetStaffAttendanceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.meStaffAttendanceService.listStaffAttendanceForReview(query, user);
   }
 
   /**
@@ -152,10 +155,12 @@ export class AttendanceController {
   getStaffAttendanceForFaculty(
     @Param('facultyId', ParseIntPipe) facultyId: number,
     @Query() query: GetStaffAttendanceDto,
+    @CurrentUser() user: JwtPayload,
   ) {
     return this.meStaffAttendanceService.getStaffAttendanceForFacultyId(
       facultyId,
       query,
+      user,
     );
   }
 }

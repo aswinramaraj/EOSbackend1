@@ -18,6 +18,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { WalletService } from 'src/modules/wallet/wallet.service';
 import { StorageService } from 'src/common/storage/storage.service';
 import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { CheckoutItemDto } from './dto/checkout-item.dto';
 import { CheckoutWalletDto } from './dto/checkout-wallet.dto';
 import { CheckoutRazorpayOrderDto } from './dto/checkout-razorpay-order.dto';
@@ -56,7 +58,34 @@ export class StationeryService {
     private readonly prisma: PrismaService,
     private readonly walletService: WalletService,
     private readonly storage: StorageService,
+    private readonly notifications: NotificationsService,
   ) {}
+
+  /**
+   * Every paid checkout (wallet or Razorpay-verified) ends by calling this -
+   * broadcasts to every STATIONERY/ADMIN-role user (a global role with no
+   * per-order assignee), same "notifyRoleUsers" broadcast pattern
+   * AppraisalService already uses for HR Payroll. Best-effort: a failed
+   * notify must never fail the checkout itself, which has already
+   * succeeded by the time this runs.
+   */
+  private async notifyStationeryAdmins(orderId: number, totalAmount: Prisma.Decimal | number) {
+    try {
+      const admins = await this.prisma.users.findMany({
+        where: { roles: { name: { in: [ROLES.STATIONERY, ROLES.ADMIN] } } },
+        select: { id: true },
+      });
+      for (const admin of admins) {
+        await this.notifications.notify({
+          user_id: admin.id,
+          title: 'New Stationery Store order',
+          message: `Order #${orderId} (₹${totalAmount}) was just placed and paid.`,
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Failed to notify Stationery Store admins of order ${orderId}`, err);
+    }
+  }
 
   private readonly PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
   private readonly PHOTO_MAX_BYTES = 5 * 1024 * 1024; // 5MB, same limit as venues/student photos
@@ -316,11 +345,13 @@ export class StationeryService {
     );
 
     try {
-      return await this.prisma.$transaction((tx) =>
+      const created = await this.prisma.$transaction((tx) =>
         this.decrementStockAndCreateOrder(tx, userId, priced, subtotal, gstAmount, total, 'wallet', {
           walletTransactionId: transactionId,
         }),
       );
+      await this.notifyStationeryAdmins(created.id, total);
+      return created;
     } catch (err) {
       this.logger.error(
         `Wallet debited (txn=${transactionId}) but order creation failed for user=${userId} - needs manual reconciliation`,
@@ -485,6 +516,7 @@ export class StationeryService {
           include: { stationery_order_items: true },
         });
       });
+      await this.notifyStationeryAdmins(confirmed.id, confirmed.total_amount);
       return confirmed;
     } catch (err) {
       // The money has already been charged by Razorpay - mark the order
@@ -627,6 +659,30 @@ export class StationeryService {
     });
   }
 
+  /**
+   * DELETE /stationery/admin/products/:id/permanent - a real hard delete,
+   * only ever allowed for a product with zero order history (any row in
+   * stationery_order_items blocks this via ON DELETE RESTRICT anyway - this
+   * check just surfaces that as a clear message instead of a raw DB error).
+   * A product that has ever been ordered must be deactivated instead (see
+   * deactivateProduct above) so past orders/reports keep referencing it.
+   */
+  async deleteProductPermanently(id: number) {
+    const existing = await this.prisma.stationery_products.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException({ message: 'Product not found', errorCode: 'PRODUCT_NOT_FOUND' });
+    }
+    const orderCount = await this.prisma.stationery_order_items.count({ where: { product_id: id } });
+    if (orderCount > 0) {
+      throw new BadRequestException({
+        message: 'This product has order history and can\'t be deleted - deactivate it instead.',
+        errorCode: 'PRODUCT_HAS_ORDERS',
+      });
+    }
+    await this.prisma.stationery_products.delete({ where: { id } });
+    return { id };
+  }
+
   /** GET /stationery/admin/orders?status= */
   async listAllOrders(status?: string) {
     const orders = await this.prisma.stationery_orders.findMany({
@@ -717,19 +773,25 @@ export class StationeryService {
    * top-selling products and category-wise sales, filtered to orders
    * created within the requested range.
    */
-  async getReports(range: 'today' | 'week' | 'month' | 'all' = 'all') {
-    let since: Date | undefined;
-    if (range !== 'all') {
-      since = new Date();
-      since.setHours(0, 0, 0, 0);
-      if (range === 'week') since.setDate(since.getDate() - 6);
-      if (range === 'month') since.setDate(since.getDate() - 29);
+  /**
+   * GET /stationery/admin/reports?from=&to= - both optional (ISO date
+   * strings). Omitting either gives the all-time report the page itself
+   * always displays; passing both scopes just that one call, e.g. the
+   * Reports page's own date-range CSV export, without touching the
+   * on-screen (always all-time) metrics.
+   */
+  async getReports(from?: string, to?: string) {
+    let createdAtFilter: { gte?: Date; lte?: Date } | undefined;
+    if (from || to) {
+      createdAtFilter = {};
+      if (from) createdAtFilter.gte = new Date(`${from}T00:00:00.000Z`);
+      if (to) createdAtFilter.lte = new Date(`${to}T23:59:59.999Z`);
     }
 
     const orders = await this.prisma.stationery_orders.findMany({
       where: {
         NOT: { status: 'pending', payment_status: 'pending' },
-        ...(since ? { created_at: { gte: since } } : {}),
+        ...(createdAtFilter ? { created_at: createdAtFilter } : {}),
       },
       include: { stationery_order_items: true },
     });

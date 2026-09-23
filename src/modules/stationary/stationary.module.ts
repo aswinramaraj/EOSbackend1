@@ -9,5 +9,8 @@ import { StationaryVendorController } from './stationary-vendor.controller';
   imports: [PrismaModule, NotificationsModule],
   controllers: [StationaryController, StationaryVendorController],
   providers: [StationaryService],
+  // Exported so ParentsModule can reuse listMyRequests for a parent's
+  // read-only Copy Center request history view.
+  exports: [StationaryService],
 })
 export class StationaryModule {}

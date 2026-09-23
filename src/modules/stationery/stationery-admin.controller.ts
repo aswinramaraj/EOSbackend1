@@ -30,10 +30,10 @@ export class StationeryAdminController {
     return this.stationeryService.getDashboard();
   }
 
-  /** GET /api/v1/stationery/admin/reports - all-time totals (no range filter). */
+  /** GET /api/v1/stationery/admin/reports?from=&to= - all-time totals unless from/to are both given. */
   @Get('reports')
-  getReports() {
-    return this.stationeryService.getReports('all');
+  getReports(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.stationeryService.getReports(from, to);
   }
 
   /** GET /api/v1/stationery/admin/products - includes inactive products. */
@@ -76,6 +76,16 @@ export class StationeryAdminController {
   @Delete('products/:id')
   deactivateProduct(@Param('id', ParseIntPipe) id: number) {
     return this.stationeryService.deactivateProduct(id);
+  }
+
+  /**
+   * DELETE /api/v1/stationery/admin/products/:id/permanent - real hard
+   * delete, only for a product with zero order history (see
+   * StationeryService.deleteProductPermanently).
+   */
+  @Delete('products/:id/permanent')
+  deleteProductPermanently(@Param('id', ParseIntPipe) id: number) {
+    return this.stationeryService.deleteProductPermanently(id);
   }
 
   /** GET /api/v1/stationery/admin/orders?status= */

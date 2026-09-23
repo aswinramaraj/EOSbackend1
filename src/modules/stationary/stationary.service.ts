@@ -9,6 +9,7 @@ import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { CreateStationaryOrderDto } from './dto/create-stationary-order.dto';
 import { VerifyStationaryPaymentDto } from './dto/verify-stationary-payment.dto';
 import { UpdateStationaryRequestStatusDto } from './dto/update-stationary-request-status.dto';
@@ -89,6 +90,32 @@ export class StationaryService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
   ) {}
+
+  /**
+   * Every paid online print request ends by calling this - broadcasts to
+   * every STATIONARY/ADMIN-role user (a global role with no per-request
+   * assignee), same "notifyRoleUsers" broadcast pattern AppraisalService
+   * uses for HR Payroll and the Stationery Store's own identical helper.
+   * Best-effort: a failed notify must never fail the payment verification
+   * itself, which has already succeeded by the time this runs.
+   */
+  private async notifyStationaryAdmins(requestId: number, amount: string | number) {
+    try {
+      const admins = await this.prisma.users.findMany({
+        where: { roles: { name: { in: [ROLES.STATIONARY, ROLES.ADMIN] } } },
+        select: { id: true },
+      });
+      for (const admin of admins) {
+        await this.notifications.notify({
+          user_id: admin.id,
+          title: 'New print request',
+          message: `Print request #${requestId} (₹${amount}) was just paid and sent to the print shop.`,
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Failed to notify Stationary admins of request ${requestId}`, err);
+    }
+  }
 
   private getRazorpay(): Razorpay {
     if (!this.razorpay) {
@@ -220,6 +247,7 @@ export class StationaryService {
     } catch (err) {
       this.logger.error(`Failed to notify user ${userId} of stationary payment`, err);
     }
+    await this.notifyStationaryAdmins(request.id, request.amount);
 
     return { id: request.id, amount: Number(request.amount), status: 'paid' as const };
   }

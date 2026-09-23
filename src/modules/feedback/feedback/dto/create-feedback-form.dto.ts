@@ -14,6 +14,7 @@ import { Type } from 'class-transformer';
 import {
   feedback_course_type_enum,
   feedback_form_type_enum,
+  feedback_service_type_enum,
 } from '../../../../../generated/prisma/enums';
 import { CreateFeedbackQuestionDto } from './create-feedback-question.dto';
 
@@ -54,6 +55,16 @@ export class CreateFeedbackFormDto {
   @IsOptional()
   @IsEnum(feedback_course_type_enum)
   category?: feedback_course_type_enum;
+
+  /**
+   * Marks this as a Campus-tab service review (Food Court/Medical/Library/
+   * Stationary/Copy Center) instead of an academic class/batch form. Leave
+   * unset for an ordinary academic form. class_id/batch_id are meaningless
+   * for a service form - every student can answer it regardless of class.
+   */
+  @IsOptional()
+  @IsEnum(feedback_service_type_enum)
+  service_type?: feedback_service_type_enum;
 
   @IsArray()
   @ArrayMinSize(1, {

@@ -202,6 +202,9 @@ export class HostelReportsService {
             soa_applications: { select: { first_name: true, last_name: true } },
           },
         },
+        faculty: {
+          select: { first_name: true, last_name: true },
+        },
       },
       orderBy: { created_at: 'desc' },
     });
@@ -218,7 +221,11 @@ export class HostelReportsService {
         { header: 'Resolved', key: 'resolved_at', width: 14 },
       ],
       rows: complaints.map((c) => ({
-        raised_by: residentName(c.students),
+        raised_by: c.students
+          ? residentName(c.students)
+          : c.faculty
+            ? `${c.faculty.first_name} ${c.faculty.last_name ?? ''}`.trim()
+            : 'Unknown',
         category: c.category,
         title: c.title,
         priority: c.priority,

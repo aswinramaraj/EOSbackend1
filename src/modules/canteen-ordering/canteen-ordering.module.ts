@@ -10,5 +10,8 @@ import { CanteenOrderingService } from './canteen-ordering.service';
   imports: [PrismaModule, CanteenAdminModule, WalletModule, CanteenQueueModule],
   controllers: [CanteenOrderingController],
   providers: [CanteenOrderingService],
+  // Exported so ParentsModule can reuse listOrdersForStudentUserId for a
+  // parent's read-only order history view.
+  exports: [CanteenOrderingService],
 })
 export class CanteenOrderingModule {}

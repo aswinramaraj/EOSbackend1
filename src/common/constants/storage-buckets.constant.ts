@@ -31,4 +31,7 @@ export const STORAGE_BUCKETS = {
   /** Stationery Store product photos (web admin) — not yet confirmed to
    * exist in the Supabase project, same caveat as VENUE_PHOTOS above. */
   STATIONERY_PRODUCT_IMAGES: 'stationery_product_images',
+  /** Placement Cell to-do PDF attachments (web admin) — not yet confirmed to
+   * exist in the Supabase project, same caveat as VENUE_PHOTOS above. */
+  PLACEMENT_TODO_ATTACHMENTS: 'placement_todo_attachments',
 } as const;

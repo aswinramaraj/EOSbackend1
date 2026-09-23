@@ -63,6 +63,8 @@ import { MeFacultyDirectoryService } from './me-faculty-directory.service';
 import { MeFeesService } from './me-fees.service';
 import { MeExamScheduleService } from './me-exam-schedule.service';
 import { MeHostelRoomService } from './me-hostel-room.service';
+import { MeHostelNightAttendanceService } from './me-hostel-night-attendance.service';
+import { GetHostelNightAttendanceDto } from './dto/get-hostel-night-attendance.dto';
 import { MeHostelComplaintsService } from './me-hostel-complaints.service';
 import { MeMessFeedbackService } from './me-mess-feedback.service';
 import { MeAcademicCalendarService } from './me-academic-calendar.service';
@@ -92,6 +94,7 @@ export class MeController {
     private readonly meFeesService: MeFeesService,
     private readonly meExamScheduleService: MeExamScheduleService,
     private readonly meHostelRoomService: MeHostelRoomService,
+    private readonly meHostelNightAttendanceService: MeHostelNightAttendanceService,
     private readonly meHostelComplaintsService: MeHostelComplaintsService,
     private readonly meMessFeedbackService: MeMessFeedbackService,
     private readonly meAcademicCalendarService: MeAcademicCalendarService,
@@ -878,6 +881,30 @@ export class MeController {
   @Roles(ROLES.STUDENT)
   getHostelRoom(@CurrentUser() user: JwtPayload) {
     return this.meHostelRoomService.getMyHostelRoom(user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/hostel-night-attendance?from=&to=
+   *
+   * Self-scoped: student_id resolved from the JWT. Only the warden's
+   * PUBLISHED night roll-call marks are returned (never an in-progress
+   * draft), most-recent-date first. Pass from/to (e.g. a calendar month's
+   * first/last day) to scope to that range; omit both for the last 90
+   * records. `is_hostel_resident: false` (empty records) is a normal
+   * response for a day scholar, not an error.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR  – from/to present but not a valid date string
+   *  401 UNAUTHORIZED      – missing/invalid JWT
+   *  403 FORBIDDEN         – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND – authenticated user has no linked student record
+   *  500 INTERNAL_ERROR    – unexpected server failure
+   */
+  @Get('hostel-night-attendance')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  getHostelNightAttendance(@CurrentUser() user: JwtPayload, @Query() query: GetHostelNightAttendanceDto) {
+    return this.meHostelNightAttendanceService.getMyNightAttendance(user.sub, query);
   }
 
   /**

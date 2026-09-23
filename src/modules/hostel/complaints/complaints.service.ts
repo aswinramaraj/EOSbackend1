@@ -28,6 +28,22 @@ const COMPLAINT_INCLUDE = {
       },
     },
   },
+  // A complaint raised by a hostel-resident FACULTY member (see
+  // FacultyHostelComplaintsService) - exactly one of students/faculty is
+  // ever set per row, never both (student_id/faculty_id are sibling
+  // nullable columns, see hostel_complaints_faculty_support.sql).
+  faculty: {
+    select: {
+      id: true,
+      user_id: true,
+      first_name: true,
+      last_name: true,
+      users: { select: { email: true } },
+      faculty_hostel_mapping: {
+        select: { hostel_rooms: { select: { room_number: true } } },
+      },
+    },
+  },
   hostels: { select: { id: true, name: true, code: true } },
 } satisfies Prisma.hostel_complaintsInclude;
 
@@ -37,17 +53,35 @@ type ComplaintWithRelations = Prisma.hostel_complaintsGetPayload<{
 
 function toComplaintResponse(complaint: ComplaintWithRelations) {
   const student = complaint.students;
-  const name = formatStudentName(
-    student.soa_applications?.first_name,
-    student.soa_applications?.last_name,
-    student.users.email,
-  );
+  const faculty = complaint.faculty;
+
+  const resident = student
+    ? {
+        kind: 'student' as const,
+        id: student.id,
+        name: formatStudentName(
+          student.soa_applications?.first_name,
+          student.soa_applications?.last_name,
+          student.users.email,
+        ),
+        student_id_no: student.student_id_no,
+        room_number: student.student_hostel_mapping?.hostel_rooms.room_number ?? null,
+      }
+    : faculty
+      ? {
+          kind: 'faculty' as const,
+          id: faculty.id,
+          name: faculty.last_name ? `${faculty.first_name} ${faculty.last_name}` : faculty.first_name,
+          student_id_no: null,
+          room_number: faculty.faculty_hostel_mapping?.hostel_rooms.room_number ?? null,
+        }
+      : null;
 
   return {
     id: complaint.id,
-    student: { id: student.id, name, student_id_no: student.student_id_no },
-    room_number:
-      student.student_hostel_mapping?.hostel_rooms.room_number ?? null,
+    student: resident?.kind === 'student' ? { id: resident.id, name: resident.name, student_id_no: resident.student_id_no } : null,
+    faculty: resident?.kind === 'faculty' ? { id: resident.id, name: resident.name } : null,
+    room_number: resident?.room_number ?? null,
     hostel: complaint.hostels,
     category: complaint.category,
     title: complaint.title,
@@ -188,10 +222,11 @@ export class ComplaintsService {
         include: COMPLAINT_INCLUDE,
       });
 
-      if (dto.status !== undefined) {
+      const notifyUserId = updated.students?.user_id ?? updated.faculty?.user_id;
+      if (dto.status !== undefined && notifyUserId != null) {
         try {
           await this.notifications.notify({
-            user_id: updated.students.user_id,
+            user_id: notifyUserId,
             title: 'Hostel complaint status updated',
             message: `Your complaint "${updated.title}" is now: ${updated.status}.`,
             type: 'hostel_complaint_status_updated',
