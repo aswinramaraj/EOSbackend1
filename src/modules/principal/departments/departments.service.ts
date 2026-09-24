@@ -6,6 +6,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import { AuditLogService } from 'src/common/audit-log/audit-log.service';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { AssignHodDto } from './dto/assign-hod.dto';
 
 function currentTermRange(today: Date): { start: Date; end: Date } {
@@ -368,6 +369,17 @@ export class PrincipalDepartmentsService {
    * set correctly — a designation string like "HOD" typed elsewhere never
    * touches this column and is ambiguous besides.
    *
+   * Also keeps `users.role_id` (login/portal access) in sync with this
+   * appointment — previously this method only updated the data-routing
+   * column above, so a newly appointed HoD stayed logged in as plain
+   * faculty and could never actually reach /hod/*. The outgoing HoD (if
+   * any) is reverted to the faculty role; the incoming one is promoted to
+   * hod. Both role lookups are by name (never a hardcoded id), same
+   * pattern as AlumniGraduationService. A faculty can only ever be a
+   * candidate for THIS department (assignHod already requires
+   * faculty.department_id === departmentId), so there is no risk of this
+   * silently stripping someone's HoD status in a different department.
+   *
    * `performedByUserId` is the Principal's own user id (from the JWT, never
    * the client) — recorded on the audit_logs row this write creates so
    * "who changed it" can never be spoofed by the request body. A no-op call
@@ -389,6 +401,7 @@ export class PrincipalDepartmentsService {
       });
     }
 
+    let newHodUserId: number | null = null;
     if (dto.faculty_id != null) {
       const faculty = await this.prisma.faculty.findUnique({
         where: { id: dto.faculty_id },
@@ -405,16 +418,48 @@ export class PrincipalDepartmentsService {
           errorCode: 'FACULTY_WRONG_DEPARTMENT',
         });
       }
+      newHodUserId = faculty.user_id;
     }
 
     const previousHodFacultyId = dept.head_of_department_faculty_id;
+    const hasChange = previousHodFacultyId !== dto.faculty_id;
 
-    await this.prisma.departments.update({
-      where: { id: departmentId },
-      data: { head_of_department_faculty_id: dto.faculty_id },
-    });
+    let previousHodUserId: number | null = null;
+    if (hasChange && previousHodFacultyId != null) {
+      const previousHod = await this.prisma.faculty.findUnique({
+        where: { id: previousHodFacultyId },
+        select: { user_id: true },
+      });
+      previousHodUserId = previousHod?.user_id ?? null;
+    }
 
-    if (previousHodFacultyId !== dto.faculty_id) {
+    if (hasChange) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.departments.update({
+          where: { id: departmentId },
+          data: { head_of_department_faculty_id: dto.faculty_id },
+        });
+
+        if (newHodUserId != null) {
+          const hodRole = await tx.roles.findUniqueOrThrow({
+            where: { name: ROLES.HOD },
+          });
+          await tx.users.update({
+            where: { id: newHodUserId },
+            data: { role_id: hodRole.id },
+          });
+        }
+        if (previousHodUserId != null) {
+          const facultyRole = await tx.roles.findUniqueOrThrow({
+            where: { name: ROLES.FACULTY },
+          });
+          await tx.users.update({
+            where: { id: previousHodUserId },
+            data: { role_id: facultyRole.id },
+          });
+        }
+      });
+
       // Awaited (not fire-and-forget): the caller refetches appointment
       // history right after this PATCH resolves, and record() already
       // swallows its own errors internally, so awaiting adds no failure risk

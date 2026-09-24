@@ -8,8 +8,12 @@ import { ProfileModule } from 'src/modules/profile/profile.module';
 import { CanteenOrderingModule } from 'src/modules/canteen-ordering/canteen-ordering.module';
 import { StationeryModule } from 'src/modules/stationery/stationery.module';
 import { StationaryModule } from 'src/modules/stationary/stationary.module';
-import { MedicalCentreModule } from 'src/modules/medical-centre/medical-centre.module';
 import { BorrowRecordsModule } from 'src/modules/library/borrow-records/borrow-records.module';
+import { MedicalCentreModule } from 'src/modules/medical-centre/medical-centre.module';
+import { HallTicketClearanceModule } from 'src/modules/hall-ticket-clearance/hall-ticket-clearance.module';
+import { LmsModule } from 'src/modules/lms/lms.module';
+import { StudentHigherEducationModule } from 'src/modules/student-higher-education/student-higher-education.module';
+import { StudentEntrepreneurshipModule } from 'src/modules/student-entrepreneurship/student-entrepreneurship.module';
 import { ParentsController } from './parents.controller';
 import { ParentsService } from './parents.service';
 
@@ -24,8 +28,12 @@ import { ParentsService } from './parents.service';
     CanteenOrderingModule,
     StationeryModule,
     StationaryModule,
-    MedicalCentreModule,
     BorrowRecordsModule,
+    MedicalCentreModule,
+    HallTicketClearanceModule,
+    LmsModule,
+    StudentHigherEducationModule,
+    StudentEntrepreneurshipModule,
   ],
   controllers: [ParentsController],
   providers: [ParentsService],

@@ -9,5 +9,6 @@ import { LmsController } from './lms.controller';
   imports: [PrismaModule, StorageModule, NotificationsModule],
   controllers: [LmsController],
   providers: [LmsService],
+  exports: [LmsService],
 })
 export class LmsModule {}

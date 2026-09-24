@@ -1,31 +1,32 @@
 import {
+  ArrayMinSize,
+  IsArray,
   IsIn,
-  IsInt,
   IsISO8601,
+  IsInt,
   IsNotEmpty,
   IsOptional,
-  IsPositive,
   IsString,
   MaxLength,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PatentContributorDto } from './patent-contributor.dto';
 
 const STAGES = ['filed', 'published', 'granted'] as const;
 
 /**
- * The reference design's "Add faculty entry" popup for Patents — real
- * faculty_patents/faculty_patent_inventors rows. title finds an existing
- * real patent by that exact name or creates one (stage/filed_year/
- * stage_date only used on create); this call always inserts a real
- * inventorship row for the given faculty.
+ * The redesigned "Add entry" modal for Patents: patent title first, then
+ * Stage/Filed year/Stage date, then a repeatable faculty-or-student
+ * contributor list (each tagged Inventor / Co-inventor) instead of a single
+ * faculty + role. Finds an existing real patents row by exact title
+ * or creates one (stage/filed_year/stage_date only used on create) — same
+ * convention as before, now inserting one inventorship row per submitted
+ * contributor.
  */
 export class AddPatentEntryDto {
-  @IsInt()
-  @IsPositive()
-  faculty_id: number;
-
   @IsString()
   @IsNotEmpty()
   @MaxLength(500)
@@ -46,8 +47,9 @@ export class AddPatentEntryDto {
   @IsISO8601()
   stage_date?: string;
 
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(30)
-  role: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => PatentContributorDto)
+  contributors: PatentContributorDto[];
 }

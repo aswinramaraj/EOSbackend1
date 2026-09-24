@@ -1,4 +1,15 @@
-import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Post, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
@@ -12,6 +23,13 @@ import { GetMyTimetableQueryDto } from 'src/modules/faculty/timetable/dto/get-my
 import { GetHostelNightAttendanceDto } from 'src/modules/admissions/students/me-profile/dto/get-hostel-night-attendance.dto';
 import { CreateFeePaymentOrderDto } from 'src/modules/fees-billing/fee-payments/dto/create-fee-payment-order.dto';
 import { VerifyFeePaymentDto } from 'src/modules/fees-billing/fee-payments/dto/verify-fee-payment.dto';
+import { GetMyBorrowRecordsDto } from 'src/modules/library/borrow-records/dto/get-my-borrow-records.dto';
+import { GetLeavesDto } from 'src/modules/admissions/students/me-profile/dto/get-leaves.dto';
+import { GetOdRequestsDto } from 'src/modules/admissions/students/me-profile/dto/get-od-requests.dto';
+import { GetBonafideRequestsDto } from 'src/modules/admissions/students/me-profile/dto/get-bonafide-requests.dto';
+import { GetHostelOutingsDto } from 'src/modules/admissions/students/me-profile/dto/get-hostel-outings.dto';
+import { GetCampusOutingsDto } from 'src/modules/admissions/students/me-profile/dto/get-campus-outings.dto';
+import { ListClearanceQueryDto } from 'src/modules/hall-ticket-clearance/dto/list-clearance-query.dto';
 import { renderFeeReceiptPdf } from 'src/modules/admissions/students/me-profile/receipt-pdf.util';
 import { renderMarksheetPdf } from 'src/modules/admissions/students/me-profile/marksheet-pdf.util';
 import { SubmitParentFeedbackDto } from './dto/submit-parent-feedback.dto';
@@ -31,7 +49,10 @@ export class ParentsController {
 
   /** GET /api/v1/me/children/:studentId/profile — Parent only, own child. */
   @Get('children/:studentId/profile')
-  getChildProfile(@Param('studentId', ParseIntPipe) studentId: number, @CurrentUser() user: JwtPayload) {
+  getChildProfile(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.parentsService.getChildProfile(user.sub, studentId);
   }
 
@@ -73,7 +94,11 @@ export class ParentsController {
         errorCode: 'VALIDATION_ERROR',
       });
     }
-    const sheet = await this.parentsService.getChildMarksheet(user.sub, studentId, semester);
+    const sheet = await this.parentsService.getChildMarksheet(
+      user.sub,
+      studentId,
+      semester,
+    );
     const buffer = await renderMarksheetPdf(sheet);
     res.set({
       'Content-Type': 'application/pdf',
@@ -104,7 +129,11 @@ export class ParentsController {
     @CurrentUser() user: JwtPayload,
     @Res() res: Response,
   ) {
-    const receipt = await this.parentsService.getChildFeeReceipt(user.sub, studentId, paymentId);
+    const receipt = await this.parentsService.getChildFeeReceipt(
+      user.sub,
+      studentId,
+      paymentId,
+    );
     const buffer = await renderFeeReceiptPdf(receipt);
     res.set({
       'Content-Type': 'application/pdf',
@@ -121,7 +150,12 @@ export class ParentsController {
     @Body() dto: CreateFeePaymentOrderDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.parentsService.payChildFeeDemand(user.sub, studentId, demandMappingId, dto);
+    return this.parentsService.payChildFeeDemand(
+      user.sub,
+      studentId,
+      demandMappingId,
+      dto,
+    );
   }
 
   /** POST /api/v1/me/children/:studentId/fees/payment-order/verify — Parent only, own child. */
@@ -159,7 +193,10 @@ export class ParentsController {
    * child is a hosteller.
    */
   @Get('children/:studentId/hostel-room')
-  getChildHostelRoom(@Param('studentId', ParseIntPipe) studentId: number, @CurrentUser() user: JwtPayload) {
+  getChildHostelRoom(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.parentsService.getChildHostelRoom(user.sub, studentId);
   }
 
@@ -170,12 +207,19 @@ export class ParentsController {
     @Query() query: GetHostelNightAttendanceDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.parentsService.getChildNightAttendance(user.sub, studentId, query);
+    return this.parentsService.getChildNightAttendance(
+      user.sub,
+      studentId,
+      query,
+    );
   }
 
   /** GET /api/v1/me/children/:studentId/hostel-gate-log — Parent only, own child. */
   @Get('children/:studentId/hostel-gate-log')
-  getChildGateLog(@Param('studentId', ParseIntPipe) studentId: number, @CurrentUser() user: JwtPayload) {
+  getChildGateLog(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.parentsService.getChildGateLog(user.sub, studentId);
   }
 
@@ -197,45 +241,30 @@ export class ParentsController {
     return this.parentsService.getChildPlacementHistory(user.sub, studentId);
   }
 
-  /** GET /api/v1/me/children/:studentId/leaves — Parent only, own child. Leave + Hostel Leave together (see getChildLeaves). */
-  @Get('children/:studentId/leaves')
-  getChildLeaves(
+  /** GET /api/v1/me/children/:studentId/canteen-orders — Parent only, own child. Today/still-active orders, mirrors the student's own "Orders" tab. */
+  @Get('children/:studentId/canteen-orders')
+  getChildCanteenOrders(
     @Param('studentId', ParseIntPipe) studentId: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.parentsService.getChildLeaves(user.sub, studentId);
+    return this.parentsService.getChildCanteenOrders(user.sub, studentId);
   }
 
-  /** POST /api/v1/me/children/:studentId/leaves/:leaveId/acknowledge — Parent only, own child. */
-  @Post('children/:studentId/leaves/:leaveId/acknowledge')
-  acknowledgeChildLeave(
+  /** GET /api/v1/me/children/:studentId/library-records?status= — Parent only, own child. */
+  @Get('children/:studentId/library-records')
+  getChildLibraryRecords(
     @Param('studentId', ParseIntPipe) studentId: number,
-    @Param('leaveId', ParseIntPipe) leaveId: number,
+    @Query() query: GetMyBorrowRecordsDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.parentsService.acknowledgeChildLeave(user.sub, studentId, leaveId);
+    return this.parentsService.getChildLibraryRecords(
+      user.sub,
+      studentId,
+      query,
+    );
   }
 
-  /** GET /api/v1/me/children/:studentId/od-requests — Parent only, own child. */
-  @Get('children/:studentId/od-requests')
-  getChildOdRequests(
-    @Param('studentId', ParseIntPipe) studentId: number,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.parentsService.getChildOdRequests(user.sub, studentId);
-  }
-
-  /** POST /api/v1/me/children/:studentId/od-requests/:odRequestId/acknowledge — Parent only, own child. */
-  @Post('children/:studentId/od-requests/:odRequestId/acknowledge')
-  acknowledgeChildOdRequest(
-    @Param('studentId', ParseIntPipe) studentId: number,
-    @Param('odRequestId', ParseIntPipe) odRequestId: number,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.parentsService.acknowledgeChildOdRequest(user.sub, studentId, odRequestId);
-  }
-
-  /** GET /api/v1/me/children/:studentId/craveo-orders — Parent only, own child. Read-only order history. */
+  /** GET /api/v1/me/children/:studentId/craveo-orders — Parent only, own child. Full read-only order history (unlike canteen-orders above, not scoped to today). */
   @Get('children/:studentId/craveo-orders')
   getChildCraveoOrders(
     @Param('studentId', ParseIntPipe) studentId: number,
@@ -244,7 +273,7 @@ export class ParentsController {
     return this.parentsService.getChildCraveoOrders(user.sub, studentId);
   }
 
-  /** GET /api/v1/me/children/:studentId/library-history — Parent only, own child. */
+  /** GET /api/v1/me/children/:studentId/library-history — Parent only, own child. Full read-only history (unlike library-records above). */
   @Get('children/:studentId/library-history')
   getChildLibraryHistory(
     @Param('studentId', ParseIntPipe) studentId: number,
@@ -260,6 +289,165 @@ export class ParentsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.parentsService.getChildMedicalAppointments(user.sub, studentId);
+  }
+
+  /** GET /api/v1/me/children/:studentId/exam-schedule — Parent only, own child. */
+  @Get('children/:studentId/exam-schedule')
+  getChildExamSchedule(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildExamSchedule(user.sub, studentId);
+  }
+
+  /** GET /api/v1/me/children/:studentId/career-path — Parent only, own child. */
+  @Get('children/:studentId/career-path')
+  getChildCareerPath(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildCareerPath(user.sub, studentId);
+  }
+
+  /** GET /api/v1/me/children/:studentId/leaves — Parent only, own child. Leave + Hostel Leave together (see ParentsService.getChildLeaves), each row carrying this parent's own acknowledged_at. */
+  @Get('children/:studentId/leaves')
+  getChildLeaves(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Query() query: GetLeavesDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildLeaves(user.sub, studentId, query);
+  }
+
+  /** POST /api/v1/me/children/:studentId/leaves/:leaveId/acknowledge — Parent only, own child. */
+  @Post('children/:studentId/leaves/:leaveId/acknowledge')
+  acknowledgeChildLeave(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Param('leaveId', ParseIntPipe) leaveId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.acknowledgeChildLeave(
+      user.sub,
+      studentId,
+      leaveId,
+    );
+  }
+
+  /** GET /api/v1/me/children/:studentId/od-requests — Parent only, own child. Each row carries this parent's own acknowledged_at. */
+  @Get('children/:studentId/od-requests')
+  getChildOdRequests(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Query() query: GetOdRequestsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildOdRequests(user.sub, studentId, query);
+  }
+
+  /** POST /api/v1/me/children/:studentId/od-requests/:odRequestId/acknowledge — Parent only, own child. */
+  @Post('children/:studentId/od-requests/:odRequestId/acknowledge')
+  acknowledgeChildOdRequest(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Param('odRequestId', ParseIntPipe) odRequestId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.acknowledgeChildOdRequest(
+      user.sub,
+      studentId,
+      odRequestId,
+    );
+  }
+
+  /** GET /api/v1/me/children/:studentId/bonafide-requests — Parent only, own child. */
+  @Get('children/:studentId/bonafide-requests')
+  getChildBonafideRequests(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Query() query: GetBonafideRequestsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildBonafideRequests(
+      user.sub,
+      studentId,
+      query,
+    );
+  }
+
+  /** GET /api/v1/me/children/:studentId/clearance-requests — Parent only, own child ("No-due" tab). */
+  @Get('children/:studentId/clearance-requests')
+  getChildClearanceRequests(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Query() query: ListClearanceQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildClearanceRequests(
+      user.sub,
+      studentId,
+      query,
+    );
+  }
+
+  /** GET /api/v1/me/children/:studentId/hostel-outings — Parent only, own child. */
+  @Get('children/:studentId/hostel-outings')
+  getChildHostelOutings(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Query() query: GetHostelOutingsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildHostelOutings(
+      user.sub,
+      studentId,
+      query,
+    );
+  }
+
+  /** GET /api/v1/me/children/:studentId/campus-outings — Parent only, own child ("In / out request" tab). */
+  @Get('children/:studentId/campus-outings')
+  getChildCampusOutings(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Query() query: GetCampusOutingsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildCampusOutings(
+      user.sub,
+      studentId,
+      query,
+    );
+  }
+
+  /** GET /api/v1/me/children/:studentId/higher-education — Parent only, own child. */
+  @Get('children/:studentId/higher-education')
+  getChildHigherEducation(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildHigherEducation(user.sub, studentId);
+  }
+
+  /** GET /api/v1/me/children/:studentId/entrepreneurship — Parent only, own child ("My Venture" tab). */
+  @Get('children/:studentId/entrepreneurship')
+  getChildEntrepreneurship(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildEntrepreneurship(user.sub, studentId);
+  }
+
+  /** GET /api/v1/me/children/:studentId/lms/subjects — Parent only, own child. */
+  @Get('children/:studentId/lms/subjects')
+  getChildLmsSubjects(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildLmsSubjects(user.sub, studentId);
+  }
+
+  /** GET /api/v1/me/children/:studentId/lms/subjects/:subjectId/tasks — Parent only, own child. */
+  @Get('children/:studentId/lms/subjects/:subjectId/tasks')
+  getChildLmsTasks(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @Param('subjectId', ParseIntPipe) subjectId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.getChildLmsTasks(user.sub, studentId, subjectId);
   }
 
   /** GET /api/v1/me/children/:studentId/stationery-orders — Parent only, own child. */
@@ -287,12 +475,24 @@ export class ParentsController {
     @Body() dto: SubmitParentFeedbackDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.parentsService.submitChildFeedback(user.sub, studentId, dto.message, dto.rating);
+    return this.parentsService.submitChildFeedback(
+      user.sub,
+      studentId,
+      dto.message,
+      dto.rating,
+    );
   }
 
   /** POST /api/v1/me/feedback/college — Parent only. Free-text feedback about the college, not tied to any one child. */
   @Post('feedback/college')
-  submitCollegeFeedback(@Body() dto: SubmitParentFeedbackDto, @CurrentUser() user: JwtPayload) {
-    return this.parentsService.submitCollegeFeedback(user.sub, dto.message, dto.rating);
+  submitCollegeFeedback(
+    @Body() dto: SubmitParentFeedbackDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.parentsService.submitCollegeFeedback(
+      user.sub,
+      dto.message,
+      dto.rating,
+    );
   }
 }

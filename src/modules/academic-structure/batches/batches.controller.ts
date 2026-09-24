@@ -14,6 +14,8 @@ import { UpdateBatchDto } from './dto/update-batch.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 
 @Controller('batches')
@@ -23,8 +25,11 @@ export class BatchesController {
 
   @Post()
   @Roles(ROLES.ADMIN)
-  create(@Body() createBatchDto: CreateBatchDto) {
-    return this.batchesService.create(createBatchDto);
+  create(
+    @Body() createBatchDto: CreateBatchDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.batchesService.create(createBatchDto, user.sub);
   }
 
   @Get()
@@ -39,13 +44,17 @@ export class BatchesController {
 
   @Patch(':id')
   @Roles(ROLES.ADMIN)
-  update(@Param('id') id: string, @Body() updateBatchDto: UpdateBatchDto) {
-    return this.batchesService.update(+id, updateBatchDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateBatchDto: UpdateBatchDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.batchesService.update(+id, updateBatchDto, user.sub);
   }
 
   @Delete(':id')
   @Roles(ROLES.ADMIN)
-  remove(@Param('id') id: string) {
-    return this.batchesService.remove(+id);
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.batchesService.remove(+id, user.sub);
   }
 }

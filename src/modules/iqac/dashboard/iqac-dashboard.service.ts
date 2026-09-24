@@ -3,6 +3,10 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { PrincipalDashboardService } from 'src/modules/principal/dashboard/dashboard.service';
 import { PrincipalPlacementsService } from 'src/modules/principal/placements/placements.service';
 import { PrincipalHigherEducationService } from 'src/modules/principal/higher-education/higher-education.service';
+import {
+  getPatentsTable,
+  getPublicationsTable,
+} from 'src/common/db/publications-table.util';
 
 @Injectable()
 export class IqacDashboardService {
@@ -20,36 +24,46 @@ export class IqacDashboardService {
    * real here, reusing the exact same services Principal/Placements/
    * Higher-education already expose (not re-derived) plus a few direct
    * counts (courses, department_mous, department_research_funding,
-   * faculty_patents) that are simple enough not to warrant their own
-   * service. "Student/Faculty Satisfaction" stay null — no aggregate
+   * patents) that are simple enough not to warrant their own service —
+   * publications/patents counts go through the table-name resolvers since
+   * both tables are mid-rename (see research_development_rename.query.md).
+   * "Student/Faculty Satisfaction" stay null — no aggregate
    * satisfaction score exists anywhere in the schema (a mean
    * feedback_responses rating would be a guess at what "satisfaction"
    * means, not a read of a real tracked figure; feedback_faculty_responses
    * is students rating faculty, not faculty's own satisfaction).
    */
   async overview() {
+    const [publicationsTable, patentsTable] = await Promise.all([
+      getPublicationsTable(this.prisma),
+      getPatentsTable(this.prisma),
+    ]);
     const [
       principalSummary,
       insights,
       placementSummary,
       higherEducationSummary,
       coursesTotal,
-      publicationsTotal,
+      [{ count: publicationsTotal }],
       mousTotal,
       fundedProjects,
-      patentsTotal,
+      [{ count: patentsTotal }],
     ] = await Promise.all([
       this.dashboard.summary(),
       this.dashboard.insights(),
       this.placements.summary(),
       this.higherEducation.summary(),
       this.prisma.courses.count(),
-      this.prisma.faculty_publications.count(),
+      this.prisma.$queryRawUnsafe<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM ${publicationsTable}`,
+      ),
       this.prisma.department_mous.count(),
       this.prisma.department_research_funding.findMany({
         select: { sanctioned_amount: true },
       }),
-      this.prisma.faculty_patents.count(),
+      this.prisma.$queryRawUnsafe<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM ${patentsTable}`,
+      ),
     ]);
 
     const studentsTotal = principalSummary.students.total_active;

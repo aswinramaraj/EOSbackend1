@@ -20,12 +20,25 @@ export class MeCareerPathService {
 
   async getMyCareerPath(userId: number) {
     const student = await this.findStudentOrThrow(userId);
+    return this.computeCareerPath(student.id);
+  }
 
+  /**
+   * Same computation as getMyCareerPath, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService
+   * to gate the same career-path-tagged nav items (Placements/My
+   * Venture/Higher Studies) by the child's own declared path.
+   */
+  async getCareerPathForStudentId(studentId: number) {
+    return this.computeCareerPath(studentId);
+  }
+
+  private async computeCareerPath(studentId: number) {
     try {
       const rows = await this.prisma.$queryRaw<
         { career_path: CareerPath | null }[]
       >`
-        SELECT career_path FROM students WHERE id = ${student.id}
+        SELECT career_path FROM students WHERE id = ${studentId}
       `;
       return { career_path: rows[0]?.career_path ?? null };
     } catch {

@@ -14,6 +14,7 @@ import { SmsService } from 'src/common/sms/sms.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
+import { hashPassword } from 'src/common/utils/credentials.util';
 import {
   address_type_enum,
   dayscholar_mode_enum,
@@ -381,7 +382,7 @@ export class SoaApplicationsService {
     // plaintext is kept only long enough to (a) return it once in this
     // response and (b) best-effort SMS it to the student below.
     const plainPassword = dto.password ?? this.generateNumericPassword();
-    const passwordHash = this.hashPassword(plainPassword);
+    const passwordHash = hashPassword(plainPassword);
 
     const createdStudent = await this.runPerfectEntryTransaction(
       id,
@@ -829,10 +830,6 @@ export class SoaApplicationsService {
   }
 
   /** Same one-way SHA-256 hashing scheme used by AuthService's login check and faculty.service.ts's own createFaculty(). */
-  private hashPassword(plain: string): string {
-    return crypto.createHash('sha256').update(plain).digest('hex');
-  }
-
   /**
    * Used when the wizard's "Auto-generate" toggle is on — a random 6-digit
    * numeric code (e.g. "004821", leading zeros kept), the format the

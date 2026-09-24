@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
 import { MentorQueryDto } from './dto/mentor-query.dto';
@@ -33,9 +34,12 @@ const MENTOR_SELECT = {
 export class ClassesService {
   private readonly logger = new Logger(ClassesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
-  async create(createClassDto: CreateClassDto) {
+  async create(createClassDto: CreateClassDto, performedByUserId: number) {
     const { batch_id, department_id, course_id, section, current_semester } =
       createClassDto;
 
@@ -99,8 +103,9 @@ export class ClassesService {
       });
     }
 
+    let created: Awaited<ReturnType<typeof this.prisma.classes.create>>;
     try {
-      return await this.prisma.classes.create({
+      created = await this.prisma.classes.create({
         data: {
           batch_id,
           department_id,
@@ -125,6 +130,22 @@ export class ClassesService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    await this.auditLog.record({
+      entityType: 'class',
+      entityId: created.id,
+      action: 'class_created',
+      performedByUserId,
+      newValue: {
+        batch_id,
+        department_id,
+        course_id,
+        section,
+        current_semester,
+      },
+    });
+
+    return created;
   }
 
   async findAll() {
@@ -155,7 +176,11 @@ export class ClassesService {
     return classRecord;
   }
 
-  async update(id: number, updateClassDto: UpdateClassDto) {
+  async update(
+    id: number,
+    updateClassDto: UpdateClassDto,
+    performedByUserId: number,
+  ) {
     const existing = await this.prisma.classes.findUnique({
       where: { id },
     });
@@ -220,7 +245,7 @@ export class ClassesService {
     }
 
     try {
-      return await this.prisma.classes.update({
+      await this.prisma.classes.update({
         where: { id },
 
         data: {
@@ -247,6 +272,22 @@ export class ClassesService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    await this.auditLog.record({
+      entityType: 'class',
+      entityId: id,
+      action: 'class_updated',
+      performedByUserId,
+      oldValue: {
+        batch_id: existing.batch_id,
+        department_id: existing.department_id,
+        course_id: existing.course_id,
+        section: existing.section,
+      },
+      newValue: { batch_id, department_id, course_id, section },
+    });
+
+    return this.findOne(id);
   }
 
   /**
@@ -336,7 +377,7 @@ export class ClassesService {
    * Blocked (409 CLASS_IN_USE) if any student is currently assigned to this
    * class — reports the exact count so the UI can show it before the click.
    */
-  async remove(id: number) {
+  async remove(id: number, performedByUserId: number) {
     const existing = await this.prisma.classes.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException({
@@ -359,6 +400,18 @@ export class ClassesService {
 
     try {
       await this.prisma.classes.delete({ where: { id } });
+      await this.auditLog.record({
+        entityType: 'class',
+        entityId: id,
+        action: 'class_deleted',
+        performedByUserId,
+        oldValue: {
+          batch_id: existing.batch_id,
+          department_id: existing.department_id,
+          course_id: existing.course_id,
+          section: existing.section,
+        },
+      });
       return { message: 'Class deleted successfully' };
     } catch (error: unknown) {
       if (prismaErrorCode(error) === 'P2003') {

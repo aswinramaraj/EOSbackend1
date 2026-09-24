@@ -131,12 +131,31 @@ export class MeBonafideRequestsService {
       });
     }
 
+    return this.computeBonafideRequests(student.id, dto);
+  }
+
+  /**
+   * Same computation as getMyBonafideRequests, but for a student chosen by
+   * id rather than resolved from the caller's own JWT - used by
+   * ParentsService. Read-only: no createBonafideRequestForStudentId, a
+   * parent never files this on a child's behalf.
+   */
+  async getBonafideRequestsForStudentId(
+    studentId: number,
+    dto: GetBonafideRequestsDto,
+  ) {
+    return this.computeBonafideRequests(studentId, dto);
+  }
+
+  private async computeBonafideRequests(
+    studentId: number,
+    dto: GetBonafideRequestsDto,
+  ) {
     const page = dto.page ?? 1;
     const pageSize = dto.page_size ?? 20;
 
     const [total, rows] = await this.fetchRequests(
-      userId,
-      student.id,
+      studentId,
       dto.status,
       page,
       pageSize,
@@ -159,7 +178,6 @@ export class MeBonafideRequestsService {
   }
 
   private async fetchRequests(
-    userId: number,
     studentId: number,
     status: GetBonafideRequestsDto['status'],
     page: number,
@@ -191,7 +209,7 @@ export class MeBonafideRequestsService {
       ]);
     } catch (err) {
       this.logger.error(
-        `Failed to fetch bonafide requests for user ${userId}`,
+        `Failed to fetch bonafide requests for student ${studentId}`,
         err,
       );
       throw new InternalServerErrorException({

@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
+import { getPublicationsTable } from 'src/common/db/publications-table.util';
 import { PrincipalDashboardService } from '../dashboard/dashboard.service';
 import { ListPrincipalFacultyQueryDto } from './dto/list-principal-faculty-query.dto';
 
@@ -348,17 +349,19 @@ export class PrincipalFacultyService {
     return result;
   }
 
-  /** All-time publication count per faculty, from the real (currently sparsely-populated) faculty_publications table. */
+  /** All-time publication count per faculty, from the real (currently sparsely-populated) publications table. */
   private async publicationsByFaculty(
     facultyIds: number[],
   ): Promise<Map<number, number>> {
     if (facultyIds.length === 0) return new Map();
-    const rows = await this.prisma.faculty_publications.groupBy({
-      by: ['faculty_id'],
-      where: { faculty_id: { in: facultyIds } },
-      _count: { _all: true },
-    });
-    return new Map(rows.map((r) => [r.faculty_id, r._count._all]));
+    const table = await getPublicationsTable(this.prisma);
+    const rows = await this.prisma.$queryRawUnsafe<
+      { faculty_id: number; count: number }[]
+    >(
+      `SELECT faculty_id, count(*)::int AS count FROM ${table} WHERE faculty_id = ANY($1) GROUP BY faculty_id`,
+      facultyIds,
+    );
+    return new Map(rows.map((r) => [r.faculty_id, r.count]));
   }
 
   /**
@@ -472,41 +475,16 @@ export class PrincipalFacultyService {
    * is embedded in real `venue` strings inconsistently, not a separate,
    * groupable value) — dropped rather than guessed at.
    */
-  /**
-   * POST /me/iqac/faculty-development/publications — the reference
-   * design's "+ Add faculty entry" action for this metric. A real
-   * faculty_publications row, not a fabricated one.
-   */
-  async createPublication(dto: {
-    faculty_id: number;
-    title: string;
-    type: string;
-    year?: number;
-    venue?: string;
-    doi?: string;
-    citation_count?: number;
-  }) {
-    const faculty = await this.prisma.faculty.findUnique({
-      where: { id: dto.faculty_id },
-      select: { id: true },
-    });
-    if (!faculty) {
-      throw new NotFoundException({
-        message: 'Faculty not found',
-        errorCode: 'FACULTY_NOT_FOUND',
-      });
-    }
-    return this.prisma.faculty_publications.create({ data: dto });
-  }
-
   async leadingPublicationVenues() {
-    const rows = await this.prisma.faculty_publications.findMany({
-      select: {
-        venue: true,
-        citation_count: true,
-        faculty: { select: { departments: { select: { code: true } } } },
-      },
-    });
+    const table = await getPublicationsTable(this.prisma);
+    const rows = await this.prisma.$queryRawUnsafe<
+      { venue: string | null; citation_count: number; dept_code: string | null }[]
+    >(
+      `SELECT p.venue, p.citation_count, d.code AS dept_code
+       FROM ${table} p
+       LEFT JOIN faculty f ON f.id = p.faculty_id
+       LEFT JOIN departments d ON d.id = f.department_id`,
+    );
 
     const byVenue = new Map<
       string,
@@ -521,8 +499,7 @@ export class PrincipalFacultyService {
       };
       entry.papers += 1;
       entry.citations += r.citation_count;
-      const deptCode = r.faculty?.departments?.code;
-      if (deptCode) entry.departments.add(deptCode);
+      if (r.dept_code) entry.departments.add(r.dept_code);
       byVenue.set(venue, entry);
     }
 
@@ -542,21 +519,23 @@ export class PrincipalFacultyService {
    * matching the reference design's always-8-department rollup grid.
    */
   async publicationDepartments() {
+    const table = await getPublicationsTable(this.prisma);
     const [departments, rows] = await Promise.all([
       this.prisma.departments.findMany({
         select: { id: true, name: true, code: true },
       }),
-      this.prisma.faculty_publications.findMany({
-        select: {
-          citation_count: true,
-          faculty: { select: { department_id: true } },
-        },
-      }),
+      this.prisma.$queryRawUnsafe<
+        { department_id: number | null; citation_count: number }[]
+      >(
+        `SELECT f.department_id, p.citation_count
+         FROM ${table} p
+         LEFT JOIN faculty f ON f.id = p.faculty_id`,
+      ),
     ]);
 
     const byDept = new Map<number, { papers: number; citations: number }>();
     for (const r of rows) {
-      const deptId = r.faculty?.department_id;
+      const deptId = r.department_id;
       if (deptId == null) continue;
       const entry = byDept.get(deptId) ?? { papers: 0, citations: 0 };
       entry.papers += 1;
@@ -577,33 +556,63 @@ export class PrincipalFacultyService {
    * leadingPublicationVenues() above buckets those under the display label
    * "Unspecified venue" — match that sentinel back to the real null/blank
    * rows here so the drill-through isn't a dead end for that bucket.
+   *
+   * This method's single-`author` shape stays as-is deliberately — the
+   * IQAC module's own venuePublicationsWithContributors() (see
+   * IqacFacultyDevelopmentService) is the one place the new multi-
+   * contributor shape is exposed, so this shared method's real remaining
+   * consumers (this Principal route, though not currently wired up in the
+   * Principal controller) aren't affected by that redesign.
    */
   async venuePublications(venue: string) {
-    const where =
+    const table = await getPublicationsTable(this.prisma);
+    const rows =
       venue === 'Unspecified venue'
-        ? { OR: [{ venue: null }, { venue: '' }] }
-        : { venue };
-
-    const rows = await this.prisma.faculty_publications.findMany({
-      where,
-      orderBy: { year: 'desc' },
-      select: {
-        id: true,
-        title: true,
-        type: true,
-        year: true,
-        doi: true,
-        citation_count: true,
-        faculty: {
-          select: {
-            id: true,
-            first_name: true,
-            last_name: true,
-            departments: { select: { code: true } },
-          },
-        },
-      },
-    });
+        ? await this.prisma.$queryRawUnsafe<
+            {
+              id: number;
+              title: string;
+              type: string;
+              year: number | null;
+              doi: string | null;
+              citation_count: number;
+              faculty_id: number;
+              first_name: string;
+              last_name: string;
+              dept_code: string | null;
+            }[]
+          >(
+            `SELECT p.id, p.title, p.type, p.year, p.doi, p.citation_count,
+                    f.id AS faculty_id, f.first_name, f.last_name, d.code AS dept_code
+             FROM ${table} p
+             JOIN faculty f ON f.id = p.faculty_id
+             LEFT JOIN departments d ON d.id = f.department_id
+             WHERE p.venue IS NULL OR p.venue = ''
+             ORDER BY p.year DESC NULLS LAST`,
+          )
+        : await this.prisma.$queryRawUnsafe<
+            {
+              id: number;
+              title: string;
+              type: string;
+              year: number | null;
+              doi: string | null;
+              citation_count: number;
+              faculty_id: number;
+              first_name: string;
+              last_name: string;
+              dept_code: string | null;
+            }[]
+          >(
+            `SELECT p.id, p.title, p.type, p.year, p.doi, p.citation_count,
+                    f.id AS faculty_id, f.first_name, f.last_name, d.code AS dept_code
+             FROM ${table} p
+             JOIN faculty f ON f.id = p.faculty_id
+             LEFT JOIN departments d ON d.id = f.department_id
+             WHERE p.venue = $1
+             ORDER BY p.year DESC NULLS LAST`,
+            venue,
+          );
 
     return rows.map((r) => ({
       id: r.id,
@@ -613,9 +622,9 @@ export class PrincipalFacultyService {
       doi: r.doi,
       citation_count: r.citation_count,
       author: {
-        faculty_id: r.faculty.id,
-        name: `${r.faculty.first_name} ${r.faculty.last_name}`,
-        department_code: r.faculty.departments?.code ?? null,
+        faculty_id: r.faculty_id,
+        name: `${r.first_name} ${r.last_name}`,
+        department_code: r.dept_code,
       },
     }));
   }

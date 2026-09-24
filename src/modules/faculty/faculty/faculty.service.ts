@@ -7,12 +7,15 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import crypto from 'node:crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
+import {
+  hashPassword,
+  generateTemporaryPassword,
+} from 'src/common/utils/credentials.util';
 import type {
   faculty_employment_status_enum,
   faculty_employment_type_enum,
@@ -24,10 +27,6 @@ import { ListFacultyQueryDto } from './dto/list-faculty-query.dto';
 import type { FacultyExtendedFieldsDto } from './dto/faculty-extended-fields.dto';
 import type { NotifyEntityDto } from 'src/common/dto/notify-entity.dto';
 import { NotificationsService } from '../../notifications/notifications/notifications.service';
-
-/** Characters used for generated temporary passwords — excludes visually ambiguous chars (0/O, 1/l/I). */
-const TEMP_PASSWORD_CHARSET =
-  'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -162,8 +161,8 @@ export class FacultyService {
       throw new InternalServerErrorException('Faculty role is not configured');
     }
 
-    const temporaryPassword = this.generateTemporaryPassword();
-    const passwordHash = this.hashPassword(temporaryPassword);
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = hashPassword(temporaryPassword);
 
     let faculty: {
       id: number;
@@ -247,7 +246,10 @@ export class FacultyService {
 
   /** GET /faculty (Admin/HoD/Secretary) — paginated list, filterable by department_id, status, designation, joining year, and a name/email search. Secretary is always forced to her own department, ignoring any client-supplied department_id. */
   async findAll(query: ListFacultyQueryDto, user: JwtPayload) {
-    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, query.department_id);
+    const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(
+      user,
+      query.department_id,
+    );
     // Each word must independently match first/last name (order-
     // independent — "Malar Sekar" and "Sekar Malar" both match
     // first_name="Malar", last_name="Sekar"); email/staff_code/designation
@@ -752,16 +754,4 @@ export class FacultyService {
   }
 
   /** Same one-way SHA-256 hashing scheme used by AuthService's login check. */
-  private hashPassword(plain: string): string {
-    return crypto.createHash('sha256').update(plain).digest('hex');
-  }
-
-  private generateTemporaryPassword(): string {
-    const bytes = crypto.randomBytes(10);
-    let password = '';
-    for (const byte of bytes) {
-      password += TEMP_PASSWORD_CHARSET[byte % TEMP_PASSWORD_CHARSET.length];
-    }
-    return `${password}@1`;
-  }
 }

@@ -80,13 +80,25 @@ export class HodDepartmentController {
     return this.studentProfile.getProfile(user, id);
   }
 
+  /**
+   * `semester` lets the HoD view a past year of this same class (e.g. Year I
+   * of a batch that's now in Year III) — the class_id never changes across
+   * years, only which semester's academic standing is being read. Omit it
+   * to see the class's current semester (existing behaviour, unchanged).
+   */
   @Get('class-records/:classId')
   @Roles(ROLES.HOD)
   getClassDetail(
     @CurrentUser() user: JwtPayload,
     @Param('classId', ParseIntPipe) classId: number,
+    @Query('semester') semester?: string,
   ) {
-    return this.classRecords.getClassDetail(user, classId);
+    const parsedSemester = semester ? Number(semester) : undefined;
+    return this.classRecords.getClassDetail(
+      user,
+      classId,
+      Number.isFinite(parsedSemester) ? parsedSemester : undefined,
+    );
   }
 
   @Get('faculty-staff/overview')

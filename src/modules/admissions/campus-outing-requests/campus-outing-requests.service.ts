@@ -8,6 +8,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ListCampusOutingRequestsQueryDto } from './dto/list-campus-outing-requests-query.dto';
 import { FacultyApproveOutingRequestDto } from './dto/faculty-approve-outing-request.dto';
@@ -215,6 +216,10 @@ export class CampusOutingRequestsService {
       select: OUTING_REQUEST_SELECT,
     });
 
+    if (dto.decision === 'rejected' && dto.remarks) {
+      await this.trySetRemarks(id, dto.remarks);
+    }
+
     this.logger.log(
       `Campus outing request ${id} ${dto.decision === 'rejected' ? 'rejected' : 'faculty-approved'} by faculty=${faculty.id}`,
     );
@@ -261,10 +266,30 @@ export class CampusOutingRequestsService {
       select: OUTING_REQUEST_SELECT,
     });
 
+    if (dto.decision === 'rejected' && dto.remarks) {
+      await this.trySetRemarks(id, dto.remarks);
+    }
+
     this.logger.log(
       `Campus outing request ${id} ${dto.decision === 'rejected' ? 'rejected' : 'hod-approved'} by hod user=${hodUserId}`,
     );
     return toResponse(updated);
+  }
+
+  /**
+   * Real once campus_outing_requests.remarks runs (see
+   * decision_reason_columns.query.md) — silently no-ops pre-migration so
+   * rejection keeps working exactly as before, without persisting the
+   * reason, until the column exists.
+   */
+  private async trySetRemarks(id: number, remarks: string) {
+    try {
+      await this.prisma.$executeRaw`
+        UPDATE campus_outing_requests SET remarks = ${remarks} WHERE id = ${id}
+      `;
+    } catch (err) {
+      if (!isUndefinedColumnError(err, 'remarks')) throw err;
+    }
   }
 
   private async resolveFacultyByUserId(userId: number) {

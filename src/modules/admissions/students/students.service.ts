@@ -8,13 +8,16 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import crypto from 'node:crypto';
 import { Prisma, address_type_enum } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/common/storage/storage.service';
 import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
+import {
+  hashPassword,
+  generateTemporaryPassword,
+} from 'src/common/utils/credentials.util';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { AdminUpdateStudentDto } from './dto/admin-update-student.dto';
 import { AdminAttendanceSummaryQueryDto } from './dto/admin-attendance-summary-query.dto';
@@ -30,9 +33,6 @@ import { UpdateStudentIdentityMarksDto } from './dto/update-student-identity-mar
 const PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const VALID_ADDRESS_TYPES = Object.values(address_type_enum);
 
-/** Same charset faculty.service.ts's generateTemporaryPassword() uses — excludes visually ambiguous chars (0/O, 1/l/I). */
-const TEMP_PASSWORD_CHARSET =
-  'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 const PHOTO_MAX_BYTES = 5 * 1024 * 1024; // 5 MB — same limit as the soa-applications pre-admission photo upload
 
 function prismaErrorCode(err: unknown): string | undefined {
@@ -218,16 +218,25 @@ export class StudentsService {
       _count: { _all: true },
     });
 
-    const totalsByStudent = new Map<number, { total: number; present: number }>();
+    const totalsByStudent = new Map<
+      number,
+      { total: number; present: number }
+    >();
     for (const row of grouped) {
-      const entry = totalsByStudent.get(row.student_id) ?? { total: 0, present: 0 };
+      const entry = totalsByStudent.get(row.student_id) ?? {
+        total: 0,
+        present: 0,
+      };
       entry.total += row._count._all;
       if (row.status === 'present') entry.present += row._count._all;
       totalsByStudent.set(row.student_id, entry);
     }
 
     const ids = [...totalsByStudent.entries()]
-      .filter(([, { total, present }]) => total > 0 && (present / total) * 100 < threshold)
+      .filter(
+        ([, { total, present }]) =>
+          total > 0 && (present / total) * 100 < threshold,
+      )
       .map(([studentId]) => studentId);
 
     return { ids, threshold };
@@ -1611,10 +1620,7 @@ export class StudentsService {
       where: { id: adminUserId },
       select: { password_hash: true },
     });
-    if (
-      !admin ||
-      this.hashPassword(dto.adminPassword) !== admin.password_hash
-    ) {
+    if (!admin || hashPassword(dto.adminPassword) !== admin.password_hash) {
       throw new ForbiddenException({
         message: 'Incorrect password',
         errorCode: 'ADMIN_PASSWORD_INCORRECT',
@@ -1632,8 +1638,8 @@ export class StudentsService {
       });
     }
 
-    const newPassword = dto.password ?? this.generateTemporaryPassword();
-    const passwordHash = this.hashPassword(newPassword);
+    const newPassword = dto.password ?? generateTemporaryPassword();
+    const passwordHash = hashPassword(newPassword);
 
     await this.prisma.users.update({
       where: { id: student.user_id },
@@ -1641,21 +1647,6 @@ export class StudentsService {
     });
 
     return { password: newPassword };
-  }
-
-  /** Same one-way SHA-256 hashing scheme used by AuthService's login check and SoaApplicationsService's perfectEntry(). */
-  private hashPassword(plain: string): string {
-    return crypto.createHash('sha256').update(plain).digest('hex');
-  }
-
-  /** Same generator faculty.service.ts uses for its own temporary passwords. */
-  private generateTemporaryPassword(): string {
-    const bytes = crypto.randomBytes(10);
-    let password = '';
-    for (const byte of bytes) {
-      password += TEMP_PASSWORD_CHARSET[byte % TEMP_PASSWORD_CHARSET.length];
-    }
-    return `${password}@1`;
   }
 
   async update(id: number, dto: AdminUpdateStudentDto) {

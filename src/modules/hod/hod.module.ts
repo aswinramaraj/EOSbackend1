@@ -14,6 +14,7 @@ import { ServiceRequestsModule } from 'src/modules/procurement/service-requests/
 import { TimetableModule } from 'src/modules/faculty/timetable/timetable.module';
 import { LibrarySettingsModule } from 'src/modules/library/settings/settings.module';
 import { ExamResultsGridModule } from 'src/modules/academic-structure/exam-results/exam-results-grid.module';
+import { ClassesModule } from 'src/modules/academic-structure/classes/classes.module';
 import { FeedbackModule } from 'src/modules/feedback/feedback/feedback.module';
 import { MeProfileModule } from 'src/modules/admissions/students/me-profile/me-profile.module';
 
@@ -73,6 +74,7 @@ import { HodStudentFeedbackService } from './hod-student-feedback.service';
     TimetableModule,
     LibrarySettingsModule,
     ExamResultsGridModule,
+    ClassesModule,
     FeedbackModule,
     MeProfileModule,
   ],

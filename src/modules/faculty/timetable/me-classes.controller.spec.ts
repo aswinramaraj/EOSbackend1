@@ -7,6 +7,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { MeClassesController } from './me-classes.controller';
 import { TimetableService } from './timetable.service';
+import { TimetablePeriodRequestsService } from './timetable-period-requests.service';
 
 describe('MeClassesController', () => {
   let controller: MeClassesController;
@@ -16,6 +17,16 @@ describe('MeClassesController', () => {
       controllers: [MeClassesController],
       providers: [
         TimetableService,
+        {
+          // No accepted takeover/swap requests in any of this file's existing
+          // tests — an empty overlay keeps their original assertions exactly
+          // as they were before this feature existed.
+          provide: TimetablePeriodRequestsService,
+          useValue: {
+            getAcceptedOverridesForFacultyDate: jest.fn().mockResolvedValue([]),
+            getAcceptedOverridesForClassDate: jest.fn().mockResolvedValue([]),
+          },
+        },
         {
           provide: PrismaService,
           useValue: {

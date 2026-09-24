@@ -16,6 +16,8 @@ import { MentorQueryDto } from './dto/mentor-query.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ApiResponse, ROLES } from 'src/common';
 
 @Controller('classes')
@@ -25,8 +27,14 @@ export class ClassesController {
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
-  async create(@Body() createClassDto: CreateClassDto) {
-    const classRecord = await this.classesService.create(createClassDto);
+  async create(
+    @Body() createClassDto: CreateClassDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const classRecord = await this.classesService.create(
+      createClassDto,
+      user.sub,
+    );
     return ApiResponse.created(classRecord, 'Class created successfully');
   }
 
@@ -57,14 +65,18 @@ export class ClassesController {
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
-  update(@Param('id') id: string, @Body() updateClassDto: UpdateClassDto) {
-    return this.classesService.update(+id, updateClassDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateClassDto: UpdateClassDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classesService.update(+id, updateClassDto, user.sub);
   }
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
-  remove(@Param('id') id: string) {
-    return this.classesService.remove(+id);
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.classesService.remove(+id, user.sub);
   }
 }

@@ -1,4 +1,6 @@
 import {
+  ArrayMinSize,
+  IsArray,
   IsDateString,
   IsIn,
   IsInt,
@@ -6,21 +8,14 @@ import {
   IsString,
   Min,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { PublicationContributorDto } from './publication-contributor.dto';
 
-const AUTHOR_ROLES = [
-  'first_author',
-  'co_author',
-  'corresponding_author',
-] as const;
-const STATUSES = [
-  'published',
-  'accepted',
-  'under_review',
-  'submitted',
-] as const;
+const STATUSES = ['published', 'accepted', 'under_review', 'submitted'] as const;
 
-/** faculty_id can't be reassigned here — delete + re-add for that, same convention as UpdateAchievementDto. */
+/** `contributors`, when provided, fully replaces the existing contributor list — omit it to leave contributors untouched while editing the other fields. */
 export class UpdatePublicationEntryDto {
   @IsOptional()
   @IsString()
@@ -31,10 +26,6 @@ export class UpdatePublicationEntryDto {
   @IsString()
   @MaxLength(255)
   venue?: string;
-
-  @IsOptional()
-  @IsIn(AUTHOR_ROLES)
-  author_role?: (typeof AUTHOR_ROLES)[number];
 
   @IsOptional()
   @IsString()
@@ -53,4 +44,11 @@ export class UpdatePublicationEntryDto {
   @IsInt()
   @Min(0)
   citation_count?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => PublicationContributorDto)
+  contributors?: PublicationContributorDto[];
 }

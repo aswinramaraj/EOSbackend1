@@ -50,13 +50,34 @@ export class MeExamScheduleService {
       });
     }
 
-    if (student.class_id === null) {
+    return this.computeExamSchedule(student.id, student.class_id);
+  }
+
+  /**
+   * Same computation as getMyExamSchedule, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService
+   * once it has verified (via parent_student_mapping) that the caller is
+   * actually this student's parent.
+   */
+  async getExamScheduleForStudentId(studentId: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { id: true, class_id: true },
+    });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    return this.computeExamSchedule(student.id, student.class_id);
+  }
+
+  private async computeExamSchedule(studentId: number, classId: number | null) {
+    if (classId === null) {
       return [];
     }
 
     const [rows, seatingByKey] = await Promise.all([
-      this.fetchSchedule(userId, student.class_id),
-      this.fetchSeatingByExamDate(userId, student.id),
+      this.fetchSchedule(studentId, classId),
+      this.fetchSeatingByExamDate(studentId, studentId),
     ]);
 
     return rows.map((row) => {

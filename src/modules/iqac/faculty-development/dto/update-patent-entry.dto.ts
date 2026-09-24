@@ -9,6 +9,7 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PATENT_ROLES } from './patent-contributor.dto';
 
 const STAGES = ['filed', 'published', 'granted'] as const;
 
@@ -20,9 +21,8 @@ const STAGES = ['filed', 'published', 'granted'] as const;
  */
 export class UpdatePatentEntryDto {
   @IsOptional()
-  @IsString()
-  @MaxLength(30)
-  role?: string;
+  @IsIn(PATENT_ROLES)
+  role?: (typeof PATENT_ROLES)[number];
 
   @IsOptional()
   @IsString()

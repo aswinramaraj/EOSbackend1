@@ -187,12 +187,33 @@ export class MeHostelOutingsService {
       });
     }
 
+    return this.computeHostelOutings(student.id, dto);
+  }
+
+  /**
+   * Same computation as getMyHostelOutings, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService
+   * once it has verified (via parent_student_mapping) that the caller is
+   * actually this student's parent. Read-only: there is no
+   * createOutingForStudentId, a parent never files an outing on a child's
+   * behalf.
+   */
+  async getHostelOutingsForStudentId(
+    studentId: number,
+    dto: GetHostelOutingsDto,
+  ) {
+    return this.computeHostelOutings(studentId, dto);
+  }
+
+  private async computeHostelOutings(
+    studentId: number,
+    dto: GetHostelOutingsDto,
+  ) {
     const page = dto.page ?? 1;
     const pageSize = dto.page_size ?? 20;
 
     const [total, rows] = await this.fetchOutings(
-      userId,
-      student.id,
+      studentId,
       dto.status,
       page,
       pageSize,
@@ -219,7 +240,6 @@ export class MeHostelOutingsService {
   }
 
   private async fetchOutings(
-    userId: number,
     studentId: number,
     status: GetHostelOutingsDto['status'],
     page: number,
@@ -260,7 +280,7 @@ export class MeHostelOutingsService {
       ]);
     } catch (err) {
       this.logger.error(
-        `Failed to fetch hostel outings for user ${userId}`,
+        `Failed to fetch hostel outings for student ${studentId}`,
         err,
       );
       throw new InternalServerErrorException({

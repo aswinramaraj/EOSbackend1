@@ -24,9 +24,27 @@ import { ProfileService } from 'src/modules/profile/profile.service';
 import { CanteenOrderingService } from 'src/modules/canteen-ordering/canteen-ordering.service';
 import { StationeryService } from 'src/modules/stationery/stationery.service';
 import { StationaryService } from 'src/modules/stationary/stationary.service';
-import { MedicalAppointmentsService } from 'src/modules/medical-centre/medical-appointments.service';
 import { BorrowRecordsService } from 'src/modules/library/borrow-records/borrow-records.service';
+import { GetMyBorrowRecordsDto } from 'src/modules/library/borrow-records/dto/get-my-borrow-records.dto';
 import { SearchBorrowRecordsDto } from 'src/modules/library/borrow-records/dto/search-borrow-records.dto';
+import { MedicalAppointmentsService } from 'src/modules/medical-centre/medical-appointments.service';
+import { MeExamScheduleService } from 'src/modules/admissions/students/me-profile/me-exam-schedule.service';
+import { MeCareerPathService } from 'src/modules/admissions/students/me-profile/me-career-path.service';
+import { MeLeavesListService } from 'src/modules/admissions/students/me-profile/me-leaves-list.service';
+import { GetLeavesDto } from 'src/modules/admissions/students/me-profile/dto/get-leaves.dto';
+import { MeOdRequestsListService } from 'src/modules/admissions/students/me-profile/me-od-requests-list.service';
+import { GetOdRequestsDto } from 'src/modules/admissions/students/me-profile/dto/get-od-requests.dto';
+import { MeBonafideRequestsService } from 'src/modules/admissions/students/me-profile/me-bonafide-requests.service';
+import { GetBonafideRequestsDto } from 'src/modules/admissions/students/me-profile/dto/get-bonafide-requests.dto';
+import { MeHostelOutingsService } from 'src/modules/admissions/students/me-profile/me-hostel-outings.service';
+import { GetHostelOutingsDto } from 'src/modules/admissions/students/me-profile/dto/get-hostel-outings.dto';
+import { MeCampusOutingsService } from 'src/modules/admissions/students/me-profile/me-campus-outings.service';
+import { GetCampusOutingsDto } from 'src/modules/admissions/students/me-profile/dto/get-campus-outings.dto';
+import { HallTicketClearanceService } from 'src/modules/hall-ticket-clearance/hall-ticket-clearance.service';
+import { ListClearanceQueryDto } from 'src/modules/hall-ticket-clearance/dto/list-clearance-query.dto';
+import { LmsService } from 'src/modules/lms/lms.service';
+import { StudentHigherEducationService } from 'src/modules/student-higher-education/student-higher-education.service';
+import { StudentEntrepreneurshipService } from 'src/modules/student-entrepreneurship/student-entrepreneurship.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
 interface ChildRow {
@@ -95,8 +113,19 @@ export class ParentsService {
     private readonly canteenOrderingService: CanteenOrderingService,
     private readonly stationeryService: StationeryService,
     private readonly stationaryService: StationaryService,
-    private readonly medicalAppointmentsService: MedicalAppointmentsService,
     private readonly borrowRecordsService: BorrowRecordsService,
+    private readonly medicalAppointmentsService: MedicalAppointmentsService,
+    private readonly meExamScheduleService: MeExamScheduleService,
+    private readonly meCareerPathService: MeCareerPathService,
+    private readonly meLeavesListService: MeLeavesListService,
+    private readonly meOdRequestsListService: MeOdRequestsListService,
+    private readonly meBonafideRequestsService: MeBonafideRequestsService,
+    private readonly meHostelOutingsService: MeHostelOutingsService,
+    private readonly meCampusOutingsService: MeCampusOutingsService,
+    private readonly hallTicketClearanceService: HallTicketClearanceService,
+    private readonly lmsService: LmsService,
+    private readonly studentHigherEducationService: StudentHigherEducationService,
+    private readonly studentEntrepreneurshipService: StudentEntrepreneurshipService,
   ) {}
 
   /** GET /me/children (Parent only). One row per linked child, however many there are. */
@@ -245,7 +274,9 @@ export class ParentsService {
   /** GET /me/children/:studentId/academic-calendar (Parent only). */
   async getChildAcademicCalendar(parentUserId: number, studentId: number) {
     await this.assertOwnChild(parentUserId, studentId);
-    return this.meAcademicCalendarService.getAcademicCalendarForStudentId(studentId);
+    return this.meAcademicCalendarService.getAcademicCalendarForStudentId(
+      studentId,
+    );
   }
 
   /**
@@ -267,7 +298,11 @@ export class ParentsService {
     query: GetHostelNightAttendanceDto,
   ) {
     await this.assertOwnChild(parentUserId, studentId);
-    return this.meHostelNightAttendanceService.getNightAttendanceForStudentId(studentId, parentUserId, query);
+    return this.meHostelNightAttendanceService.getNightAttendanceForStudentId(
+      studentId,
+      parentUserId,
+      query,
+    );
   }
 
   /**
@@ -305,42 +340,107 @@ export class ParentsService {
   }
 
   /**
-   * GET /me/children/:studentId/leaves (Parent only, own child). Both the
-   * Progress tab's Leave requests AND the Hostel tab's Leave requests come
-   * back here - they're the same underlying student_leaves table (see
-   * StudentLeavesService/LeaveRequestsService's own doc comments),
-   * distinguished only by `kind`, derived from routed_to_warden. This is
-   * the single feed the Parent's "Acknowledge" page's Leave section reads.
+   * GET /me/children/:studentId/canteen-orders (Parent only). Reuses
+   * CanteenOrderingService.listMyOrders as-is — canteen orders have no
+   * student_id column at all (only placed_by_user_id), so there's no
+   * "ForStudentId" variant to add, just the child's own user_id. Same scope
+   * as the student's own view: today's orders plus anything still active
+   * from before midnight, not full lifetime history (see that method's own
+   * doc comment) - the frontend labels this "Recent orders" accordingly.
+   * See getChildCraveoOrders below for the full-history variant.
    */
-  async getChildLeaves(parentUserId: number, studentId: number) {
+  async getChildCanteenOrders(parentUserId: number, studentId: number) {
+    const childUserId = await this.assertOwnChildUserId(
+      parentUserId,
+      studentId,
+    );
+    return this.canteenOrderingService.listMyOrders(childUserId);
+  }
+
+  /** GET /me/children/:studentId/library-records (Parent only). See getChildLibraryHistory below for the full-history variant. */
+  async getChildLibraryRecords(
+    parentUserId: number,
+    studentId: number,
+    dto: GetMyBorrowRecordsDto,
+  ) {
     await this.assertOwnChild(parentUserId, studentId);
-    const rows = await this.prisma.student_leaves.findMany({
-      where: { student_id: studentId },
-      orderBy: { created_at: 'desc' },
-      select: {
-        id: true,
-        from_date: true,
-        to_date: true,
-        reason: true,
-        status: true,
-        routed_to_warden: true,
-        created_at: true,
-        leave_parent_acknowledgements: {
-          where: { parent_user_id: parentUserId },
-          select: { acknowledged_at: true },
+    return this.borrowRecordsService.findBorrowRecordsForStudentId(
+      studentId,
+      dto,
+    );
+  }
+
+  /**
+   * GET /me/children/:studentId/medical-appointments (Parent only). History
+   * only - booking an appointment on a child's behalf stays blocked (see
+   * MedicalAppointmentsController's BOOKING_ROLES), same as every other
+   * read-only child route this service exposes. Filtered by the
+   * `student_id` column directly (see
+   * MedicalAppointmentsService.listForStudentId's own doc comment) rather
+   * than by booker user id, so it also catches appointments staff booked on
+   * the child's behalf.
+   */
+  async getChildMedicalAppointments(parentUserId: number, studentId: number) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.medicalAppointmentsService.listForStudentId(studentId);
+  }
+
+  /** GET /me/children/:studentId/exam-schedule (Parent only, own child). */
+  async getChildExamSchedule(parentUserId: number, studentId: number) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.meExamScheduleService.getExamScheduleForStudentId(studentId);
+  }
+
+  /**
+   * GET /me/children/:studentId/career-path (Parent only, own child) — used
+   * to gate the same career-path-tagged nav items (Placements/My
+   * Venture/Higher Studies) the student's own sidebar gates, but by the
+   * child's declared path instead of the caller's.
+   */
+  async getChildCareerPath(parentUserId: number, studentId: number) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.meCareerPathService.getCareerPathForStudentId(studentId);
+  }
+
+  /**
+   * GET /me/children/:studentId/leaves (Parent only, own child). Read-only:
+   * no create. Reuses MeLeavesListService's own paginated/filtered shape
+   * (status/routed_to_warden/page/page_size query params, resolved approver
+   * names - see that service's own doc comment for the base fields) and
+   * layers on `kind` (derived from routed_to_warden) plus this parent's own
+   * `acknowledged_at` per row - both the Progress tab's Leave requests AND
+   * the Hostel tab's Leave requests come back here, and this is the single
+   * feed the Parent's "Acknowledge" page's Leave section reads.
+   */
+  async getChildLeaves(
+    parentUserId: number,
+    studentId: number,
+    dto: GetLeavesDto,
+  ) {
+    await this.assertOwnChild(parentUserId, studentId);
+    const result = await this.meLeavesListService.getLeavesForStudentId(
+      studentId,
+      dto,
+    );
+    const acknowledgements =
+      await this.prisma.leave_parent_acknowledgements.findMany({
+        where: {
+          parent_user_id: parentUserId,
+          leave_id: { in: result.data.map((row) => row.id) },
         },
-      },
-    });
-    return rows.map((r) => ({
-      id: r.id,
-      kind: r.routed_to_warden ? 'hostel_leave' : 'leave',
-      from_date: r.from_date,
-      to_date: r.to_date,
-      reason: r.reason,
-      status: r.status,
-      created_at: r.created_at,
-      acknowledged_at: r.leave_parent_acknowledgements[0]?.acknowledged_at ?? null,
-    }));
+        select: { leave_id: true, acknowledged_at: true },
+      });
+    const acknowledgedAtByLeaveId = new Map(
+      acknowledgements.map((a) => [a.leave_id, a.acknowledged_at]),
+    );
+    return {
+      ...result,
+      data: result.data.map((row) => ({
+        ...row,
+        kind: row.routed_to_warden ? 'hostel_leave' : 'leave',
+        acknowledged_at: acknowledgedAtByLeaveId.get(row.id) ?? null,
+      })),
+    };
   }
 
   /**
@@ -366,9 +466,16 @@ export class ParentsService {
     }
     const ack = await this.prisma.leave_parent_acknowledgements.upsert({
       where: {
-        leave_id_parent_user_id: { leave_id: leaveId, parent_user_id: parentUserId },
+        leave_id_parent_user_id: {
+          leave_id: leaveId,
+          parent_user_id: parentUserId,
+        },
       },
-      create: { leave_id: leaveId, parent_user_id: parentUserId, acknowledged_at: new Date() },
+      create: {
+        leave_id: leaveId,
+        parent_user_id: parentUserId,
+        acknowledged_at: new Date(),
+      },
       update: { acknowledged_at: new Date() },
     });
     return { leave_id: leaveId, acknowledged_at: ack.acknowledged_at };
@@ -376,47 +483,39 @@ export class ParentsService {
 
   /**
    * GET /me/children/:studentId/od-requests (Parent only, own child).
-   * Includes every OD request where this child is either the team creator
-   * or a joined member - the Parent's Acknowledge page's OD section.
+   * Read-only status list — no team creation/join/leave, no full team
+   * roster (see MeOdRequestsListService.getOdRequestsForStudentId's own doc
+   * comment). Layers on this parent's own `acknowledged_at` per row - the
+   * Parent's "Acknowledge" page's OD section.
    */
-  async getChildOdRequests(parentUserId: number, studentId: number) {
+  async getChildOdRequests(
+    parentUserId: number,
+    studentId: number,
+    dto: GetOdRequestsDto,
+  ) {
     await this.assertOwnChild(parentUserId, studentId);
-    const rows = await this.prisma.od_requests.findMany({
-      where: {
-        od_teams: {
-          OR: [
-            { created_by_student_id: studentId },
-            { od_team_members: { some: { student_id: studentId } } },
-          ],
+    const result = await this.meOdRequestsListService.getOdRequestsForStudentId(
+      studentId,
+      dto,
+    );
+    const acknowledgements =
+      await this.prisma.od_request_parent_acknowledgements.findMany({
+        where: {
+          parent_user_id: parentUserId,
+          od_request_id: { in: result.data.map((row) => row.id) },
         },
-      },
-      orderBy: { created_at: 'desc' },
-      select: {
-        id: true,
-        from_date: true,
-        to_date: true,
-        reason: true,
-        mentor_approval_status: true,
-        created_at: true,
-        od_teams: { select: { unique_code: true, team_name: true } },
-        od_request_parent_acknowledgements: {
-          where: { parent_user_id: parentUserId },
-          select: { acknowledged_at: true },
-        },
-      },
-    });
-    return rows.map((r) => ({
-      id: r.id,
-      unique_code: r.od_teams.unique_code,
-      team_name: r.od_teams.team_name,
-      from_date: r.from_date,
-      to_date: r.to_date,
-      reason: r.reason,
-      status: r.mentor_approval_status,
-      created_at: r.created_at,
-      acknowledged_at:
-        r.od_request_parent_acknowledgements[0]?.acknowledged_at ?? null,
-    }));
+        select: { od_request_id: true, acknowledged_at: true },
+      });
+    const acknowledgedAtByRequestId = new Map(
+      acknowledgements.map((a) => [a.od_request_id, a.acknowledged_at]),
+    );
+    return {
+      ...result,
+      data: result.data.map((row) => ({
+        ...row,
+        acknowledged_at: acknowledgedAtByRequestId.get(row.id) ?? null,
+      })),
+    };
   }
 
   /**
@@ -464,6 +563,89 @@ export class ParentsService {
     return { od_request_id: odRequestId, acknowledged_at: ack.acknowledged_at };
   }
 
+  /** GET /me/children/:studentId/bonafide-requests (Parent only, own child). Read-only: no create. */
+  async getChildBonafideRequests(
+    parentUserId: number,
+    studentId: number,
+    dto: GetBonafideRequestsDto,
+  ) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.meBonafideRequestsService.getBonafideRequestsForStudentId(
+      studentId,
+      dto,
+    );
+  }
+
+  /** GET /me/children/:studentId/clearance-requests (Parent only, own child) — the "No-due" tab. Read-only: no create. */
+  async getChildClearanceRequests(
+    parentUserId: number,
+    studentId: number,
+    dto: ListClearanceQueryDto,
+  ) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.hallTicketClearanceService.findForStudentId(studentId, dto);
+  }
+
+  /** GET /me/children/:studentId/hostel-outings (Parent only, own child). Read-only: no create. */
+  async getChildHostelOutings(
+    parentUserId: number,
+    studentId: number,
+    dto: GetHostelOutingsDto,
+  ) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.meHostelOutingsService.getHostelOutingsForStudentId(
+      studentId,
+      dto,
+    );
+  }
+
+  /**
+   * GET /me/children/:studentId/campus-outings (Parent only, own child) —
+   * the "In / out request" tab. Read-only: no create. Not gated by hosteller
+   * status (unlike hostel-outings above) - MeCampusOutingsService's own doc
+   * comment confirms this gate pass is open to every student regardless of
+   * residency, despite the student nav item's misleading hostellerOnly flag.
+   */
+  async getChildCampusOutings(
+    parentUserId: number,
+    studentId: number,
+    dto: GetCampusOutingsDto,
+  ) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.meCampusOutingsService.getCampusOutingsForStudentId(
+      studentId,
+      dto,
+    );
+  }
+
+  /** GET /me/children/:studentId/higher-education (Parent only, own child) — staff-entered, read-only for the student too. */
+  async getChildHigherEducation(parentUserId: number, studentId: number) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.studentHigherEducationService.findForStudentId(studentId);
+  }
+
+  /** GET /me/children/:studentId/entrepreneurship (Parent only, own child) — "My Venture", staff-entered, read-only for the student too. */
+  async getChildEntrepreneurship(parentUserId: number, studentId: number) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.studentEntrepreneurshipService.findForStudentId(studentId);
+  }
+
+  /** GET /me/children/:studentId/lms/subjects (Parent only, own child). */
+  async getChildLmsSubjects(parentUserId: number, studentId: number) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.lmsService.getSubjectsForStudentId(studentId);
+  }
+
+  /** GET /me/children/:studentId/lms/subjects/:subjectId/tasks (Parent only, own child). Read-only: no submit. */
+  async getChildLmsTasks(
+    parentUserId: number,
+    studentId: number,
+    subjectId: number,
+  ) {
+    await this.assertOwnChild(parentUserId, studentId);
+    return this.lmsService.getTasksForStudentId(subjectId, studentId);
+  }
+
   /**
    * GET /me/children/:studentId/craveo-orders (Parent only, own child).
    * Read-only order history - a parent never orders on the child's
@@ -473,7 +655,9 @@ export class ParentsService {
   async getChildCraveoOrders(parentUserId: number, studentId: number) {
     await this.assertOwnChild(parentUserId, studentId);
     const studentUserId = await this.resolveStudentUserId(studentId);
-    return this.canteenOrderingService.listOrdersForStudentUserId(studentUserId);
+    return this.canteenOrderingService.listOrdersForStudentUserId(
+      studentUserId,
+    );
   }
 
   /** GET /me/children/:studentId/library-history (Parent only, own child). */
@@ -489,14 +673,13 @@ export class ParentsService {
     query.student_id = studentId;
     query.page = 1;
     query.page_size = 100;
-    const callerAsJwt: JwtPayload = { sub: parentUserId, role: 'parent', email: '', roleId: 0 };
+    const callerAsJwt: JwtPayload = {
+      sub: parentUserId,
+      role: 'parent',
+      email: '',
+      roleId: 0,
+    };
     return this.borrowRecordsService.findAll(query, callerAsJwt);
-  }
-
-  /** GET /me/children/:studentId/medical-appointments (Parent only, own child). */
-  async getChildMedicalAppointments(parentUserId: number, studentId: number) {
-    await this.assertOwnChild(parentUserId, studentId);
-    return this.medicalAppointmentsService.listForStudentId(studentId);
   }
 
   /** GET /me/children/:studentId/stationery-orders (Parent only, own child). */
@@ -527,15 +710,31 @@ export class ParentsService {
   ) {
     await this.assertOwnChild(parentUserId, studentId);
     const row = await this.prisma.parent_feedback.create({
-      data: { parent_user_id: parentUserId, student_id: studentId, category: 'about_student', message, rating },
+      data: {
+        parent_user_id: parentUserId,
+        student_id: studentId,
+        category: 'about_student',
+        message,
+        rating,
+      },
     });
     return { id: row.id, created_at: row.created_at };
   }
 
   /** POST /me/feedback/college (Parent only) - free-text feedback about the college in general, not tied to any one child. */
-  async submitCollegeFeedback(parentUserId: number, message: string, rating?: number) {
+  async submitCollegeFeedback(
+    parentUserId: number,
+    message: string,
+    rating?: number,
+  ) {
     const row = await this.prisma.parent_feedback.create({
-      data: { parent_user_id: parentUserId, student_id: null, category: 'about_college', message, rating },
+      data: {
+        parent_user_id: parentUserId,
+        student_id: null,
+        category: 'about_college',
+        message,
+        rating,
+      },
     });
     return { id: row.id, created_at: row.created_at };
   }
@@ -560,9 +759,27 @@ export class ParentsService {
     });
     if (!mapping) {
       throw new ForbiddenException({
-        message: 'You may only view your own children\'s records',
+        message: "You may only view your own children's records",
         errorCode: 'NOT_THIS_PARENT',
       });
     }
+  }
+
+  /** Same ownership check as assertOwnChild, but also returns the child's own user_id — needed by the canteen/medical wrappers above, which are keyed by user_id rather than student_id. */
+  private async assertOwnChildUserId(
+    parentUserId: number,
+    studentId: number,
+  ): Promise<number> {
+    const mapping = await this.prisma.parent_student_mapping.findFirst({
+      where: { parent_user_id: parentUserId, student_id: studentId },
+      select: { students: { select: { user_id: true } } },
+    });
+    if (!mapping) {
+      throw new ForbiddenException({
+        message: "You may only view your own children's records",
+        errorCode: 'NOT_THIS_PARENT',
+      });
+    }
+    return mapping.students.user_id;
   }
 }

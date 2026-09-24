@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { getPublicationsTable } from 'src/common/db/publications-table.util';
 
 /** Same Odd/Even convention duplicated per-service elsewhere in this module (see principal/departments/departments.service.ts, principal/faculty/faculty.service.ts) — kept local rather than shared, matching that existing precedent. */
 function currentTermRange(today: Date): { start: Date; end: Date } {
@@ -385,11 +386,13 @@ export class RoleAllocationService {
     facultyIds: number[],
   ): Promise<Map<number, number>> {
     if (facultyIds.length === 0) return new Map();
-    const rows = await this.prisma.faculty_publications.groupBy({
-      by: ['faculty_id'],
-      where: { faculty_id: { in: facultyIds } },
-      _count: { _all: true },
-    });
-    return new Map(rows.map((r) => [r.faculty_id, r._count._all]));
+    const table = await getPublicationsTable(this.prisma);
+    const rows = await this.prisma.$queryRawUnsafe<
+      { faculty_id: number; count: number }[]
+    >(
+      `SELECT faculty_id, count(*)::int AS count FROM ${table} WHERE faculty_id = ANY($1) GROUP BY faculty_id`,
+      facultyIds,
+    );
+    return new Map(rows.map((r) => [r.faculty_id, r.count]));
   }
 }

@@ -40,9 +40,13 @@ export class PurchaseOrdersService {
           proposal_id: dto.proposal_id,
           po_number: dto.po_number,
           approved_by_user_id: dto.approved_by_user_id,
-          approved_at: dto.approved_at,
+          approved_at: dto.approved_at
+            ? new Date(dto.approved_at)
+            : dto.approved_at,
           file_url: dto.file_url,
-          sent_to_vendor_at: dto.sent_to_vendor_at,
+          sent_to_vendor_at: dto.sent_to_vendor_at
+            ? new Date(dto.sent_to_vendor_at)
+            : dto.sent_to_vendor_at,
         },
       });
     } catch (err) {
@@ -139,9 +143,13 @@ export class PurchaseOrdersService {
           proposal_id: dto.proposal_id,
           po_number: dto.po_number,
           approved_by_user_id: dto.approved_by_user_id,
-          approved_at: dto.approved_at,
+          approved_at: dto.approved_at
+            ? new Date(dto.approved_at)
+            : dto.approved_at,
           file_url: dto.file_url,
-          sent_to_vendor_at: dto.sent_to_vendor_at,
+          sent_to_vendor_at: dto.sent_to_vendor_at
+            ? new Date(dto.sent_to_vendor_at)
+            : dto.sent_to_vendor_at,
         },
       });
     } catch (err) {

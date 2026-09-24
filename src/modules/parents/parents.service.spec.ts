@@ -12,6 +12,9 @@ import { MeAcademicCalendarService } from 'src/modules/admissions/students/me-pr
 import { TimetableService } from 'src/modules/faculty/timetable/timetable.service';
 import { DrivesService } from 'src/modules/placement/drives/drives.service';
 import { FeePaymentService } from 'src/modules/fees-billing/fee-payments/fee-payment.service';
+import { CanteenOrderingService } from 'src/modules/canteen-ordering/canteen-ordering.service';
+import { BorrowRecordsService } from 'src/modules/library/borrow-records/borrow-records.service';
+import { MedicalAppointmentsService } from 'src/modules/medical-centre/medical-appointments.service';
 import { ParentsService } from './parents.service';
 
 describe('ParentsService', () => {
@@ -24,6 +27,9 @@ describe('ParentsService', () => {
   let timetableService: { getTimetableForStudentId: jest.Mock };
   let drivesService: { getUpcomingForStudentId: jest.Mock; getPlacementHistoryForStudentId: jest.Mock };
   let feePaymentService: { createGatewayOrderForChild: jest.Mock; verifyGatewayPayment: jest.Mock };
+  let canteenOrderingService: { listMyOrders: jest.Mock };
+  let borrowRecordsService: { findBorrowRecordsForStudentId: jest.Mock };
+  let medicalAppointmentsService: { listMine: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -36,6 +42,9 @@ describe('ParentsService', () => {
     timetableService = { getTimetableForStudentId: jest.fn() };
     drivesService = { getUpcomingForStudentId: jest.fn(), getPlacementHistoryForStudentId: jest.fn() };
     feePaymentService = { createGatewayOrderForChild: jest.fn(), verifyGatewayPayment: jest.fn() };
+    canteenOrderingService = { listMyOrders: jest.fn() };
+    borrowRecordsService = { findBorrowRecordsForStudentId: jest.fn() };
+    medicalAppointmentsService = { listMine: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -48,6 +57,9 @@ describe('ParentsService', () => {
         { provide: TimetableService, useValue: timetableService },
         { provide: DrivesService, useValue: drivesService },
         { provide: FeePaymentService, useValue: feePaymentService },
+        { provide: CanteenOrderingService, useValue: canteenOrderingService },
+        { provide: BorrowRecordsService, useValue: borrowRecordsService },
+        { provide: MedicalAppointmentsService, useValue: medicalAppointmentsService },
       ],
     }).compile();
 
@@ -244,6 +256,42 @@ describe('ParentsService', () => {
       await service.verifyChildFeePayment(100, 5, dto as any);
 
       expect(feePaymentService.verifyGatewayPayment).toHaveBeenCalledWith(100, dto);
+    });
+
+    it('throws 403 NOT_THIS_PARENT before fetching canteen orders for an unlinked student', async () => {
+      prisma.parent_student_mapping.findFirst.mockResolvedValue(null);
+
+      await expect(service.getChildCanteenOrders(100, 999)).rejects.toMatchObject({
+        response: { errorCode: 'NOT_THIS_PARENT' },
+      });
+      expect(canteenOrderingService.listMyOrders).not.toHaveBeenCalled();
+    });
+
+    it('delegates canteen orders to CanteenOrderingService keyed by the child\'s own user_id', async () => {
+      prisma.parent_student_mapping.findFirst.mockResolvedValue({ students: { user_id: 555 } });
+      canteenOrderingService.listMyOrders.mockResolvedValue([]);
+
+      await service.getChildCanteenOrders(100, 5);
+
+      expect(canteenOrderingService.listMyOrders).toHaveBeenCalledWith(555);
+    });
+
+    it('delegates library records to BorrowRecordsService.findBorrowRecordsForStudentId once ownership is confirmed', async () => {
+      prisma.parent_student_mapping.findFirst.mockResolvedValue({ id: 1 });
+      borrowRecordsService.findBorrowRecordsForStudentId.mockResolvedValue({ success: true, message: 'ok', data: [] });
+
+      await service.getChildLibraryRecords(100, 5, {} as any);
+
+      expect(borrowRecordsService.findBorrowRecordsForStudentId).toHaveBeenCalledWith(5, {});
+    });
+
+    it('delegates medical appointments to MedicalAppointmentsService.listMine keyed by the child\'s own user_id', async () => {
+      prisma.parent_student_mapping.findFirst.mockResolvedValue({ students: { user_id: 555 } });
+      medicalAppointmentsService.listMine.mockResolvedValue([]);
+
+      await service.getChildMedicalAppointments(100, 5);
+
+      expect(medicalAppointmentsService.listMine).toHaveBeenCalledWith(555);
     });
   });
 });

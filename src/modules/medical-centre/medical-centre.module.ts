@@ -71,8 +71,10 @@ import { MedicalAppointmentsService } from './medical-appointments.service';
     MedicalCentreAppointmentsService,
     MedicalAppointmentsService,
   ],
-  // MedicalAppointmentsService exported so ParentsModule can reuse
-  // listForStudentId for a parent's read-only appointment history view.
+  // MedicalAppointmentsService.listMine/listForStudentId are reused by
+  // ParentsService for a child's own appointment history (read-only) —
+  // booking itself stays blocked for parents (see
+  // MedicalAppointmentsController's BOOKING_ROLES).
   exports: [MedicalAppointmentsService],
 })
 export class MedicalCentreModule {}

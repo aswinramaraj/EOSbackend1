@@ -125,12 +125,31 @@ export class MeCampusOutingsService {
       });
     }
 
+    return this.computeCampusOutings(student.id, dto);
+  }
+
+  /**
+   * Same computation as getMyCampusOutings, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService.
+   * Read-only: no createCampusOutingForStudentId, a parent never files this
+   * on a child's behalf.
+   */
+  async getCampusOutingsForStudentId(
+    studentId: number,
+    dto: GetCampusOutingsDto,
+  ) {
+    return this.computeCampusOutings(studentId, dto);
+  }
+
+  private async computeCampusOutings(
+    studentId: number,
+    dto: GetCampusOutingsDto,
+  ) {
     const page = dto.page ?? 1;
     const pageSize = dto.page_size ?? 20;
 
     const [total, rows] = await this.fetchOutings(
-      userId,
-      student.id,
+      studentId,
       dto.status,
       page,
       pageSize,
@@ -158,7 +177,6 @@ export class MeCampusOutingsService {
   }
 
   private async fetchOutings(
-    userId: number,
     studentId: number,
     status: GetCampusOutingsDto['status'],
     page: number,
@@ -193,7 +211,7 @@ export class MeCampusOutingsService {
       ]);
     } catch (err) {
       this.logger.error(
-        `Failed to fetch campus outings for user ${userId}`,
+        `Failed to fetch campus outings for student ${studentId}`,
         err,
       );
       throw new InternalServerErrorException({
