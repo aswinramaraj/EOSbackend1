@@ -7,7 +7,7 @@ import { PrincipalFinanceService } from './principal-finance.service';
 
 @Controller('principal-finance')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
 export class PrincipalFinanceController {
   constructor(private readonly service: PrincipalFinanceService) {}
 

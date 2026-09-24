@@ -200,9 +200,11 @@ export class CreateAnnouncementDto {
   scheduled_at?: string;
 
   // ── social post details ───────────────────────────────────────────────────
-  // Stored in `social_post_details` (keyed 1:1 on announcement_id), which the
-  // Media Room's publishing screen writes. The table already existed but
-  // nothing wrote to it, so these fields were silently dropped on every post.
+  // Stored in `social_post_details` (keyed 1:1 on announcement_id) - presence
+  // of any of these five fields is what makes a post a "social" post (shows
+  // in the mobile Home tab feed) rather than a plain notice (Announcements
+  // carousel only) - see AnnouncementsService.create and the mobile app's
+  // HomeFeedScreen.tsx buildFeed(), which filters on `social != null`.
 
   /** Free text on purpose — the publishing tab's own format list, not an enum. */
   @IsOptional()

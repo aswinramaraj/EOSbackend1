@@ -29,6 +29,8 @@ export interface MessagingPusher {
   ): void;
   /** Forces every open socket of this user to join the conversation's room — used when a conversation becomes visible to them for the first time (their first-ever message in it), so subsequent live pushes reach them without waiting for their next reconnect. */
   joinUserToConversation(userId: number, conversationId: number): void;
+  /** Inverse of joinUserToConversation — used when a faculty removes a member from a group, so their still-open sockets stop receiving live messages for a room the server no longer considers them part of, without waiting for their next reconnect. */
+  leaveUserFromConversation(userId: number, conversationId: number): void;
 }
 
 export const MESSAGING_PUSHER = Symbol('MESSAGING_PUSHER');

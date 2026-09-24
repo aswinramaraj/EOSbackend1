@@ -97,4 +97,24 @@ export class CreateDriveDto {
   @IsString()
   @MaxLength(200)
   result_declaration_note?: string;
+
+  // drive_type/stipend_amount/duration_months are real once
+  // internship_drive_type.query.md runs — until then accepted but silently
+  // dropped by the $queryRaw fallback in the service (same convention as
+  // mode/backlogs_allowed/etc. above). Omitted defaults to 'full_time',
+  // matching the column's own DB default, so existing full-time drive
+  // creation is unaffected.
+  @IsOptional()
+  @IsIn(['full_time', 'internship'])
+  drive_type?: 'full_time' | 'internship';
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  stipend_amount?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  duration_months?: number;
 }

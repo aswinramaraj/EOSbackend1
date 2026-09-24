@@ -52,6 +52,8 @@ const MAPPING_SELECT = {
       id: true,
       academic_year: true,
       semester: true,
+      start_date: true,
+      end_date: true,
       exam_types: { select: { id: true, name: true, category: true } },
     },
   },
@@ -72,6 +74,8 @@ type MappingRow = {
     id: number;
     academic_year: string;
     semester: number;
+    start_date: Date | null;
+    end_date: Date | null;
     exam_types: { id: number; name: string; category: 'internal' | 'external' };
   };
 };
@@ -94,6 +98,8 @@ function toSummary(mapping: MappingRow, enteredCount: number) {
       category: mapping.exams.exam_types.category,
       academic_year: mapping.exams.academic_year,
       semester: mapping.exams.semester,
+      start_date: mapping.exams.start_date?.toISOString().slice(0, 10) ?? null,
+      end_date: mapping.exams.end_date?.toISOString().slice(0, 10) ?? null,
     },
     is_published: mapping.is_published,
     published_at: mapping.published_at,
@@ -116,12 +122,11 @@ export class SubjectRecordsService {
   async findMappings(userId: number) {
     const faculty = await this.resolveFacultyByUserId(userId);
 
-    const taughtMappings = await this.prisma.faculty_subject_class_mapping.findMany(
-      {
+    const taughtMappings =
+      await this.prisma.faculty_subject_class_mapping.findMany({
         where: { faculty_id: faculty.id },
         select: { subject_id: true, class_id: true },
-      },
-    );
+      });
     if (taughtMappings.length === 0) {
       return [];
     }
@@ -165,6 +170,38 @@ export class SubjectRecordsService {
       mapping.classes.id,
     );
 
+    return this.computeMappingDetail(mapping);
+  }
+
+  /**
+   * GET /me/mentee-classes/:class_id/subject-records — called by
+   * ClassMentorsService.findAllForClassMentor, AFTER that method's own
+   * class_mentors mentor check. Deliberately skips assertMappedToTeach:
+   * a class mentor is very often not personally assigned to teach any
+   * subject in the class they mentor (that's the whole gap this closes),
+   * so every exam_subject_mapping row for the class is returned — every
+   * subject, every exam — not filtered to ones the caller teaches. Each
+   * row is shaped exactly like findOne's return value, via the same
+   * computeMappingDetail helper, so the mobile frontend can reuse its
+   * existing single-mapping card rendering, just looped over the array.
+   */
+  async findAllForClass(classId: number) {
+    const mappings = await this.prisma.exam_subject_mapping.findMany({
+      where: { class_id: classId },
+      orderBy: { id: 'desc' },
+      select: MAPPING_SELECT,
+    });
+
+    return Promise.all(mappings.map((m) => this.computeMappingDetail(m)));
+  }
+
+  /**
+   * Shared grade-distribution/toppers computation behind both findOne
+   * (personally-teaching faculty) and findAllForClass (class mentor,
+   * every subject) — kept in one place so the Anna University grading
+   * bands above are never duplicated.
+   */
+  private async computeMappingDetail(mapping: MappingRow) {
     const roster = await this.prisma.students.findMany({
       where: { class_id: mapping.classes.id },
       select: { id: true },
@@ -172,7 +209,7 @@ export class SubjectRecordsService {
 
     const marks = await this.prisma.exam_marks.findMany({
       where: {
-        exam_subject_mapping_id: examSubjectMappingId,
+        exam_subject_mapping_id: mapping.id,
         marks_obtained: { not: null },
       },
       select: {

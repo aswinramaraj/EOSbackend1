@@ -40,8 +40,8 @@ export class HodAppraisalController {
   decide(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { decision: 'approved' | 'rejected' },
+    @Body() body: { decision: 'approved' | 'rejected'; remarks?: string },
   ) {
-    return this.hodAppraisal.decide(user, id, body.decision);
+    return this.hodAppraisal.decide(user, id, body.decision, body.remarks);
   }
 }

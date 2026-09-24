@@ -61,6 +61,26 @@ export class HodDepartment2Controller {
     return this.placements.getHistory(user);
   }
 
+  @Get('internships/drives')
+  @Roles(ROLES.HOD)
+  getInternshipDrives() {
+    return this.placements.getInternshipDrives();
+  }
+
+  @Get('internships/students')
+  @Roles(ROLES.HOD)
+  getInternshipStudents(
+    @CurrentUser() user: JwtPayload,
+    @Query('search') search?: string,
+    @Query('class_id') classId?: string,
+  ) {
+    return this.placements.getInternshipStudents(
+      user,
+      search,
+      classId ? Number(classId) : undefined,
+    );
+  }
+
   @Get('higher-education')
   @Roles(ROLES.HOD)
   getHigherEducation(
@@ -68,12 +88,14 @@ export class HodDepartment2Controller {
     @Query('search') search?: string,
     @Query('batch_id') batchId?: string,
     @Query('programme') programme?: string,
+    @Query('class_id') classId?: string,
   ) {
     return this.higherEducation.getOverview(
       user,
       search,
       batchId ? Number(batchId) : undefined,
       programme,
+      classId ? Number(classId) : undefined,
     );
   }
 
@@ -93,12 +115,14 @@ export class HodDepartment2Controller {
     @Query('search') search?: string,
     @Query('batch_id') batchId?: string,
     @Query('department_id') departmentId?: string,
+    @Query('class_id') classId?: string,
   ) {
     return this.edc.getOverview(
       user,
       search,
       batchId ? Number(batchId) : undefined,
       departmentId ? Number(departmentId) : undefined,
+      classId ? Number(classId) : undefined,
     );
   }
 

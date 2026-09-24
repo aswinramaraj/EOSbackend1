@@ -43,6 +43,14 @@ export class PrismaService
       connectionString,
       max: POOL_SIZE,
       idleTimeoutMillis: 0,
+      // Without this, a query that can't get a connection at all (e.g. every
+      // pooled connection has gone stale/dead and the pooler itself is slow
+      // or unreachable) queues forever instead of failing — reproduced live
+      // during this session's performance baseline work: a single request
+      // hung 90+ seconds with zero response before a restart resolved it.
+      // 20s is generous relative to $transaction's own 10s maxWait below, so
+      // this only fires for a genuinely stuck pool, not routine contention.
+      connectionTimeoutMillis: 20_000,
     });
 
     const adapter = new PrismaPg(pool);

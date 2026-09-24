@@ -11,8 +11,30 @@
 | 3 | `od_teams.team_name/reason/venue/from_date/to_date/from_time/to_time/faculty_guide_id` | OD team detail fields | ✅ applied |
 | 4 | `student_leaves.also_on_hostel_leave/routed_to_warden/approved_by_warden_user_id` + `warden_approved` status value | hostel-tab leave routing | ✅ applied |
 | 5 | `campus_outing_requests` table | campus gate pass (all students, Advisor → HoD) | ⬜ **pending — run this** |
+| 6 | `faculty.dayscholar_mode` | Faculty bottom-nav tab (Bus/Hostel/neither), same enum as `students.dayscholar_mode` | ⬜ **pending — run this** |
 
-Sections 1–4 are already live and the application code for them is already built and shipped. Only **section 5** below is new and needs running.
+Sections 1–4 are already live and the application code for them is already built and shipped. Sections 5 and 6 are new and need running.
+
+## Section 6 — Faculty bottom-nav tab, in plain terms
+
+The mobile app's 5th bottom-nav tab already changes per-student ("My Bus" / "Hostel" / hidden) based on `students.student_type` + `students.dayscholar_mode`. You asked for the same for Faculty accounts.
+
+Faculty hostel residency is already real data — a row in `faculty_hostel_mapping` (mirrors `student_hostel_mapping`, `faculty_id` is `@unique`) means that faculty member is a hostel resident. No schema change needed for that half.
+
+Commute mode (college bus vs. own vehicle) has no backing data anywhere for faculty, so this adds **one nullable column** — reusing the *existing* `dayscholar_mode_enum` (`transport`/`own_vehicle`) already used by `students.dayscholar_mode`, not a new enum.
+
+```sql
+-- ============================================================
+-- 6. faculty.dayscholar_mode — Faculty bottom-nav tab (Bus/Hostel/neither),
+--    reuses the existing dayscholar_mode_enum from students.dayscholar_mode.
+--    Hostel residency itself is NOT duplicated here — it's already derived
+--    live from faculty_hostel_mapping's existence, same as the application
+--    code does.
+-- ============================================================
+ALTER TABLE "faculty" ADD COLUMN "dayscholar_mode" "dayscholar_mode_enum";
+```
+
+Once you confirm this has run, `schema.prisma` (`faculty.dayscholar_mode dayscholar_mode_enum?`) and `profile.service.ts`'s `getFacultyProfile` (returning `student_type`/`dayscholar_mode` on the faculty branch, mirroring the student branch's field names exactly) are already updated to match — regenerate the Prisma client (`npx prisma generate`) after the column exists.
 
 ## Section 5 — campus gate pass, in plain terms
 

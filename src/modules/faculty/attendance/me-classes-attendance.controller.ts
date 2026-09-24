@@ -39,7 +39,15 @@ class PublishClassAttendanceDto {
 }
 
 /**
- * POST /api/v1/me/classes/:class_id/attendance — Faculty only.
+ * POST /api/v1/me/classes/:class_id/attendance — Faculty/HoD.
+ *
+ * HOD included alongside FACULTY — every method resolves the caller via
+ * their own faculty.user_id (see AttendanceService.resolveFacultyByUserId)
+ * regardless of JWT role, and a HOD who also personally teaches a class
+ * (faculty_subject_class_mapping) needs the exact same draft/publish
+ * workflow as any other faculty member for that class — same precedent as
+ * GET /me/classes/today (MeClassesController) and the attendance-recognize
+ * roster endpoint (AttendanceCvController).
  *
  * A separate controller (not AttendanceController) because the required
  * path is /me/classes/:class_id/attendance, not /attendance — Nest always
@@ -54,7 +62,7 @@ export class MeClassesAttendanceController {
   constructor(private readonly attendanceService: AttendanceService) {}
 
   @Post(':class_id/attendance')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   @HttpCode(HttpStatus.CREATED)
   markAttendance(
     @Param('class_id', ParseIntPipe) classId: number,
@@ -64,9 +72,9 @@ export class MeClassesAttendanceController {
     return this.attendanceService.markForClass(classId, dto, user.sub);
   }
 
-  /** GET /api/v1/me/classes/:class_id/roster — Faculty / Secretary. */
+  /** GET /api/v1/me/classes/:class_id/roster — Faculty / HoD / Secretary. */
   @Get(':class_id/roster')
-  @Roles(ROLES.FACULTY, ROLES.SECRETARY)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.SECRETARY)
   getRoster(@Param('class_id', ParseIntPipe) classId: number) {
     return this.attendanceService.getClassRoster(classId);
   }
@@ -77,7 +85,7 @@ export class MeClassesAttendanceController {
    * batch so the marking screen can be reopened before Publish.
    */
   @Get(':class_id/attendance/draft')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   getDraft(
     @Param('class_id', ParseIntPipe) classId: number,
     @Query() query: AttendanceDraftQueryDto,
@@ -97,7 +105,7 @@ export class MeClassesAttendanceController {
    * POST /me/subject-records/:id/publish.
    */
   @Post(':class_id/attendance/publish')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   @HttpCode(HttpStatus.OK)
   publish(
     @Param('class_id', ParseIntPipe) classId: number,

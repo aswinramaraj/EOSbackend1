@@ -1,8 +1,10 @@
 import {
+  Body,
   Controller,
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -61,9 +63,15 @@ export class ClassMentorsController {
     );
   }
 
-  /** GET /api/v1/me/mentees/:student_id/profile — Faculty only (the mentee's class mentor). */
+  /**
+   * GET /api/v1/me/mentees/:student_id/profile — Faculty/HoD (the mentee's
+   * class mentor). HOD included so an HoD who also mentors a class (Switch
+   * Account's "Class Advisor" mode) gets the same mentee drill-down as any
+   * other mentor, same precedent as getMenteeClasses/getMenteeClassResult
+   * above.
+   */
   @Get('mentees/:student_id/profile')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   getMenteeProfile(
     @Param('student_id', ParseIntPipe) studentId: number,
     @CurrentUser() user: JwtPayload,
@@ -72,12 +80,12 @@ export class ClassMentorsController {
   }
 
   /**
-   * GET /api/v1/me/mentees/:student_id/report — Faculty only (the mentee's
-   * class mentor). Sensitive — includes Aadhar/PAN, deliberately separate
-   * from /profile.
+   * GET /api/v1/me/mentees/:student_id/report — Faculty or HoD (the
+   * mentee's class mentor). Sensitive — includes Aadhar/PAN, deliberately
+   * separate from /profile.
    */
   @Get('mentees/:student_id/report')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   getMenteeReport(
     @Param('student_id', ParseIntPipe) studentId: number,
     @CurrentUser() user: JwtPayload,
@@ -86,14 +94,14 @@ export class ClassMentorsController {
   }
 
   /**
-   * GET /api/v1/me/mentees/:student_id/documents — Faculty only (the
+   * GET /api/v1/me/mentees/:student_id/documents — Faculty or HoD (the
    * mentee's class mentor). Real `student_certificates` rows (admin-set
    * is_available/file_url/verified_at, one per certificate_types entry) —
    * this table existed in the schema with zero endpoints anywhere reading
-   * it before this; same mentor-only auth pattern as /profile and /report.
+   * it before this; same mentor-scoped auth pattern as /profile and /report.
    */
   @Get('mentees/:student_id/documents')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   getMenteeDocuments(
     @Param('student_id', ParseIntPipe) studentId: number,
     @CurrentUser() user: JwtPayload,
@@ -101,9 +109,9 @@ export class ClassMentorsController {
     return this.classMentorsService.getMenteeDocuments(studentId, user.sub);
   }
 
-  /** GET /api/v1/me/mentees/:student_id/placements — Faculty only (the mentee's class mentor). */
+  /** GET /api/v1/me/mentees/:student_id/placements — Faculty or HoD (the mentee's class mentor). */
   @Get('mentees/:student_id/placements')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   getMenteePlacements(
     @Param('student_id', ParseIntPipe) studentId: number,
     @CurrentUser() user: JwtPayload,
@@ -112,20 +120,113 @@ export class ClassMentorsController {
   }
 
   /**
-   * GET /api/v1/me/mentees/:student_id/academic-record — Faculty only (the
-   * mentee's class mentor). Semester-wise GPA, monthly attendance and
+   * GET /api/v1/me/mentees/:student_id/academic-record — Faculty or HoD
+   * (the mentee's class mentor). Semester-wise GPA, monthly attendance and
    * per-subject internal/end-sem/grade/attendance — see
    * getMenteeAcademicRecord's doc comment for exactly what is and isn't
    * derived here.
    */
   @Get('mentees/:student_id/academic-record')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   getMenteeAcademicRecord(
     @Param('student_id', ParseIntPipe) studentId: number,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.classMentorsService.getMenteeAcademicRecord(
       studentId,
+      user.sub,
+    );
+  }
+
+  /**
+   * GET /api/v1/me/mentee-classes/:class_id/subject-records — Faculty or HoD
+   * (mentor of this class). Every exam_subject_mapping row for the class —
+   * every subject, every exam — not just ones the caller personally teaches;
+   * see ClassMentorsService.findAllForClassMentor's doc comment.
+   */
+  @Get('mentee-classes/:class_id/subject-records')
+  @Roles(ROLES.FACULTY, ROLES.HOD)
+  getMenteeClassSubjectRecords(
+    @Param('class_id', ParseIntPipe) classId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classMentorsService.findAllForClassMentor(classId, user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/mentee-classes/:class_id/no-due — Faculty or HoD (mentor
+   * of this class). Class-mentor-scoped sibling of GET /hod/no-due — same
+   * live fee/library/academics dues computation, scoped to one mentored
+   * class instead of a whole department.
+   */
+  @Get('mentee-classes/:class_id/no-due')
+  @Roles(ROLES.FACULTY, ROLES.HOD)
+  getMenteeClassNoDue(
+    @Param('class_id', ParseIntPipe) classId: number,
+    @Query('search') search: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classMentorsService.getNoDueForClassMentor(
+      classId,
+      user.sub,
+      search,
+    );
+  }
+
+  /**
+   * PATCH /api/v1/me/mentee-classes/:class_id/no-due/:student_id — Faculty
+   * or HoD (mentor of this class). Only `{ issue: true }` does anything real
+   * (approves the no-due override) — see ClassMentorsService.
+   * patchNoDueForClassMentor's doc comment.
+   */
+  @Patch('mentee-classes/:class_id/no-due/:student_id')
+  @Roles(ROLES.FACULTY, ROLES.HOD)
+  patchMenteeClassNoDue(
+    @Param('class_id', ParseIntPipe) classId: number,
+    @Param('student_id', ParseIntPipe) studentId: number,
+    @Body() body: { issue?: boolean },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classMentorsService.patchNoDueForClassMentor(
+      classId,
+      studentId,
+      user.sub,
+      body,
+    );
+  }
+
+  /**
+   * GET /api/v1/me/mentee-classes/:class_id/higher-education — Faculty or
+   * HoD (mentor of this class). Which students in this mentee class have
+   * registered a student_higher_education row — the Advisor's own view,
+   * distinct from the generic student-facing opt-in screens.
+   */
+  @Get('mentee-classes/:class_id/higher-education')
+  @Roles(ROLES.FACULTY, ROLES.HOD)
+  getMenteeClassHigherEducation(
+    @Param('class_id', ParseIntPipe) classId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classMentorsService.findHigherEducationForClassMentor(
+      classId,
+      user.sub,
+    );
+  }
+
+  /**
+   * GET /api/v1/me/mentee-classes/:class_id/entrepreneurship — Faculty or
+   * HoD (mentor of this class). Which students in this mentee class have
+   * registered a student_entrepreneurship row — the Advisor's own view,
+   * distinct from the generic EDC/Coordinator-facing screens.
+   */
+  @Get('mentee-classes/:class_id/entrepreneurship')
+  @Roles(ROLES.FACULTY, ROLES.HOD)
+  getMenteeClassEntrepreneurship(
+    @Param('class_id', ParseIntPipe) classId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classMentorsService.findEntrepreneurshipForClassMentor(
+      classId,
       user.sub,
     );
   }

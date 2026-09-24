@@ -7,7 +7,7 @@ import { PrincipalTransportService } from './principal-transport.service';
 
 @Controller('principal-transport')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
 export class PrincipalTransportController {
   constructor(private readonly service: PrincipalTransportService) {}
 

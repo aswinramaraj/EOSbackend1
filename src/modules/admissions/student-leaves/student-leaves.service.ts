@@ -25,6 +25,7 @@ const STUDENT_LEAVE_SELECT = {
   approved_by_faculty_id: true,
   approved_by_hod_user_id: true,
   created_at: true,
+  leave_parent_acknowledgements: { select: { acknowledged_at: true } },
   students: {
     select: {
       id: true,
@@ -52,6 +53,7 @@ interface StudentLeaveRow {
   approved_by_faculty_id: number | null;
   approved_by_hod_user_id: number | null;
   created_at: Date;
+  leave_parent_acknowledgements: { acknowledged_at: Date | null }[];
   students: {
     id: number;
     student_id_no: string;
@@ -94,6 +96,12 @@ function toResponse(leave: StudentLeaveRow) {
     approved_by_faculty_id: leave.approved_by_faculty_id,
     approved_by_hod_user_id: leave.approved_by_hod_user_id,
     created_at: leave.created_at,
+    // True once ANY linked parent (father/mother/guardian) has acknowledged
+    // - the review card shows one badge for the whole request, not a
+    // per-parent breakdown.
+    parent_acknowledged: leave.leave_parent_acknowledgements.some(
+      (a) => a.acknowledged_at !== null,
+    ),
   };
 }
 

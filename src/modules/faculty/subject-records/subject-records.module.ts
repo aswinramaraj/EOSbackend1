@@ -7,5 +7,6 @@ import { SubjectRecordsController } from './subject-records.controller';
   imports: [PrismaModule],
   controllers: [SubjectRecordsController],
   providers: [SubjectRecordsService],
+  exports: [SubjectRecordsService],
 })
 export class SubjectRecordsModule {}

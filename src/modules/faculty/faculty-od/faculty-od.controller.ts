@@ -48,13 +48,16 @@ export class FacultyOdController {
     // the service branches on whether a faculty row exists, not on role.
     ROLES.HR_PAYROLL,
     ROLES.WARDEN,
+    // Principal has no faculty row either - same staff_user_id-keyed path
+    // as HR Payroll/Secretary/Warden above (see FacultyOdService.create).
+    ROLES.PRINCIPAL,
   )
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateFacultyOdDto, @CurrentUser() user: JwtPayload) {
     return this.facultyOdService.create(dto, user);
   }
 
-  /** GET /api/v1/me/faculty-od — Faculty (own only)/HoD/HR Payroll/IQAC. Paginated, filterable. */
+  /** GET /api/v1/me/faculty-od — Faculty (own only)/HoD/HR Payroll/IQAC/Principal (own only)/Correspondent (review queue). Paginated, filterable. */
   @Get('faculty-od')
   @Roles(
     ROLES.FACULTY,
@@ -62,6 +65,8 @@ export class FacultyOdController {
     ROLES.HR_PAYROLL,
     ROLES.IQAC,
     ROLES.SECRETARY,
+    ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
   )
   findAll(
     @Query() query: ListFacultyOdQueryDto,
@@ -70,9 +75,16 @@ export class FacultyOdController {
     return this.facultyOdService.findAll(query, user);
   }
 
-  /** PATCH /api/v1/me/faculty-od/:id — HoD (hod_approval_status) or HR Payroll (hr_approval_status, after HoD) only. */
+  /**
+   * PATCH /api/v1/me/faculty-od/:id — HoD (hod_approval_status), HR
+   * Payroll (hr_approval_status, after HoD), or Correspondent
+   * (correspondent_approval_status — Principal's OD Approval, an
+   * independent stage, never gated on hod/hr). Principal is deliberately
+   * NOT included here — only ever a CREATE role on this table, same as
+   * faculty-leaves.
+   */
   @Patch('faculty-od/:id')
-  @Roles(ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.HOD, ROLES.HR_PAYROLL, ROLES.CORRESPONDENT)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateFacultyOdDto,

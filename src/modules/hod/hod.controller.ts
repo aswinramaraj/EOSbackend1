@@ -27,10 +27,15 @@ export class HodController {
     return this.hodService.getDashboard(user, query.scope ?? 'today');
   }
 
+  /** from/to (YYYY-MM-DD) are optional — omitted keeps the original unfiltered "current semester" figures. */
   @Get('reports/summary')
   @Roles(ROLES.HOD)
-  getReportsSummary(@CurrentUser() user: JwtPayload) {
-    return this.hodReportsService.getSummary(user);
+  getReportsSummary(
+    @CurrentUser() user: JwtPayload,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.hodReportsService.getSummary(user, from, to);
   }
 
   @Get('reports/classes')
@@ -39,12 +44,21 @@ export class HodController {
     @CurrentUser() user: JwtPayload,
     @Query() query: QueryHodClassPassRatesDto,
   ) {
-    return this.hodReportsService.getClassPassRates(user, query.year ?? null);
+    return this.hodReportsService.getClassPassRates(
+      user,
+      query.year ?? null,
+      query.from,
+      query.to,
+    );
   }
 
   @Get('reports/subjects')
   @Roles(ROLES.HOD)
-  getReportsSubjects(@CurrentUser() user: JwtPayload) {
-    return this.hodReportsService.getSubjectResults(user);
+  getReportsSubjects(
+    @CurrentUser() user: JwtPayload,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.hodReportsService.getSubjectResults(user, from, to);
   }
 }

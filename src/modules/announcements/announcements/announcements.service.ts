@@ -24,6 +24,7 @@ import {
 } from '../../../../generated/prisma/client';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
+import { CreateAnnouncementCommentDto } from './dto/create-announcement-comment.dto';
 
 /**
  * "No restriction" for a role with institution-wide visibility (Admin,
@@ -576,19 +577,8 @@ export class AnnouncementsService {
           })),
         });
 
-        // Same transaction as the post itself, so a published social post
-        // always carries the format/link/pin settings it went out with.
+        await this.maybeCreateSocialPostDetails(tx, created.id, dto);
         if (hasSocialDetails(dto)) {
-          await tx.social_post_details.create({
-            data: {
-              announcement_id: created.id,
-              format: dto.format ?? null,
-              link_url: dto.link_url ?? null,
-              expires_at: dto.expires_at ? new Date(dto.expires_at) : null,
-              is_pinned: dto.is_pinned ?? false,
-              allow_comments: dto.allow_comments ?? true,
-            },
-          });
           // Carousel media, written in the same transaction as the post so a
           // post can never appear without the photos it was published with.
           await insertAnnouncementMedia(tx, created.id, dto.media ?? []);
@@ -637,6 +627,7 @@ export class AnnouncementsService {
         class_id,
         classes: null,
       })),
+      social: this.socialFromDto(dto),
     });
   }
 
@@ -770,6 +761,9 @@ export class AnnouncementsService {
     if (
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
+      // Correspondent has the same institution-wide standing as Principal
+      // throughout this service (see resolveUserContext/buildRoleVisibilityQuery).
+      context.role === ROLES.CORRESPONDENT ||
       context.role === ROLES.SECRETARY ||
       context.role === ROLES.BILLING ||
       // IQAC posts institution-wide at the same oversight tier as Admin/
@@ -780,7 +774,11 @@ export class AnnouncementsService {
       // HR & Payroll is the same shape — institution-wide, no department
       // linkage of its own (appraisal/payroll circulars go to every
       // faculty account, not one department).
-      context.role === ROLES.HR_PAYROLL
+      context.role === ROLES.HR_PAYROLL ||
+      // Stationary Portal's "Staff"/"All users" announcement audiences
+      // (see stationary/api/announcements.ts) — same institution-wide, no-
+      // department-of-its-own posture as Billing/IQAC/HR_PAYROLL above.
+      context.role === ROLES.STATIONARY
     ) {
       if (requestedDepartmentId === undefined) {
         return null;
@@ -842,7 +840,7 @@ export class AnnouncementsService {
           batch.map((userId) =>
             this.notifications.notify({
               user_id: userId,
-              title: 'New announcement',
+              title: 'New notice',
               message: title,
               type: 'announcement_new',
               related_entity_type: 'announcement',
@@ -964,7 +962,9 @@ export class AnnouncementsService {
 
     // One batched query for every post's carousel, attached in memory. A
     // per-post lookup here would turn one feed request into N+1 round trips
-    // against a pooled connection.
+    // against a pooled connection. (social_post_details itself doesn't need
+    // a separate fetch here - it's already in ANNOUNCEMENT_RESPONSE_INCLUDE
+    // above, which toResponseShape reads directly.)
     const mediaByAnnouncement = await loadAnnouncementMedia(
       this.prisma,
       this.storage,
@@ -1275,6 +1275,188 @@ export class AnnouncementsService {
     }
   }
 
+  // ── Comments (manual-SQL announcement_comments table) ────────────────────
+  //
+  // Same table/DTO the mobile Home feed's AnnouncementPostCard already
+  // called (GET/POST /announcements/:id/comments) - only the controller
+  // routes never existed, so every request 404'd. commenter_name is
+  // resolved the same way toResponseShape resolves posted_by: real
+  // faculty/student name, falling back to their account email.
+
+  /**
+   * GET /announcements/:id/comments — oldest first (a comment thread reads
+   * top-to-bottom), open to any role that can see the post itself.
+   */
+  async getComments(announcementId: number, user: JwtPayload) {
+    const context = await this.resolveUserContext(user);
+    const where = this.buildVisibilityQuery(context);
+    const visible = await this.prisma.announcements.findFirst({
+      where: { AND: [{ id: announcementId }, where] },
+      select: { id: true },
+    });
+    if (!visible) {
+      throw new NotFoundException({
+        message: 'Announcement not found',
+        errorCode: 'ANNOUNCEMENT_NOT_FOUND',
+      });
+    }
+
+    const rows = await this.prisma.$queryRaw<
+      {
+        id: number;
+        announcement_id: number;
+        commented_by_user_id: number;
+        comment_text: string;
+        parent_comment_id: number | null;
+        created_at: Date;
+      }[]
+    >(Prisma.sql`
+      SELECT id, announcement_id, commented_by_user_id, comment_text, parent_comment_id, created_at
+      FROM announcement_comments
+      WHERE announcement_id = ${announcementId}
+      ORDER BY created_at ASC
+    `);
+
+    const names = await this.resolveCommenterNames(
+      rows.map((r) => r.commented_by_user_id),
+    );
+
+    return rows.map((row) => ({
+      ...row,
+      commenter_name: names.get(row.commented_by_user_id) ?? null,
+    }));
+  }
+
+  /**
+   * POST /announcements/:id/comments — blocked with 403 when the post's own
+   * social_post_details.allow_comments is false (the Media Room composer's
+   * own toggle, see socialFromDto/CreateAnnouncementDto's doc comment) - a
+   * plain announcement (no social_post_details row at all) has nothing to
+   * disable, so it stays commentable by default, same as it always was
+   * before allow_comments existed.
+   */
+  async addComment(
+    announcementId: number,
+    dto: CreateAnnouncementCommentDto,
+    user: JwtPayload,
+  ) {
+    const context = await this.resolveUserContext(user);
+    const where = this.buildVisibilityQuery(context);
+    const visible = await this.prisma.announcements.findFirst({
+      where: { AND: [{ id: announcementId }, where] },
+      select: { id: true },
+    });
+    if (!visible) {
+      throw new NotFoundException({
+        message: 'Announcement not found',
+        errorCode: 'ANNOUNCEMENT_NOT_FOUND',
+      });
+    }
+
+    const social = await this.prisma.$queryRaw<{ allow_comments: boolean | null }[]>(
+      Prisma.sql`SELECT allow_comments FROM social_post_details WHERE announcement_id = ${announcementId}`,
+    );
+    if (social[0] && social[0].allow_comments === false) {
+      throw new ForbiddenException({
+        message: 'Comments are turned off for this post',
+        errorCode: 'COMMENTS_DISABLED',
+      });
+    }
+
+    if (dto.parent_comment_id !== undefined) {
+      const parent = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`
+        SELECT id FROM announcement_comments WHERE id = ${dto.parent_comment_id} AND announcement_id = ${announcementId}
+      `);
+      if (parent.length === 0) {
+        throw new NotFoundException({
+          message: 'The comment you are replying to no longer exists',
+          errorCode: 'PARENT_COMMENT_NOT_FOUND',
+        });
+      }
+    }
+
+    const [row] = await this.prisma.$queryRaw<
+      {
+        id: number;
+        announcement_id: number;
+        commented_by_user_id: number;
+        comment_text: string;
+        parent_comment_id: number | null;
+        created_at: Date;
+      }[]
+    >(Prisma.sql`
+      INSERT INTO announcement_comments (announcement_id, commented_by_user_id, comment_text, parent_comment_id, created_at)
+      VALUES (${announcementId}, ${user.sub}, ${dto.comment_text}, ${dto.parent_comment_id ?? null}, now())
+      RETURNING id, announcement_id, commented_by_user_id, comment_text, parent_comment_id, created_at
+    `);
+
+    const names = await this.resolveCommenterNames([user.sub]);
+    return { ...row, commenter_name: names.get(user.sub) ?? null };
+  }
+
+  /** DELETE /announcements/:id/comments/:commentId — own comment, or the post's own author moderating. */
+  async removeComment(announcementId: number, commentId: number, user: JwtPayload) {
+    const rows = await this.prisma.$queryRaw<
+      { id: number; commented_by_user_id: number }[]
+    >(Prisma.sql`
+      SELECT id, commented_by_user_id FROM announcement_comments
+      WHERE id = ${commentId} AND announcement_id = ${announcementId}
+    `);
+    const comment = rows[0];
+    if (!comment) {
+      throw new NotFoundException({
+        message: 'Comment not found',
+        errorCode: 'COMMENT_NOT_FOUND',
+      });
+    }
+
+    if (comment.commented_by_user_id !== user.sub) {
+      const announcement = await this.prisma.announcements.findUnique({
+        where: { id: announcementId },
+        select: { posted_by_user_id: true },
+      });
+      if (announcement?.posted_by_user_id !== user.sub) {
+        throw new ForbiddenException({
+          message: 'You may only remove your own comment',
+          errorCode: 'NOT_OWNER',
+        });
+      }
+    }
+
+    await this.prisma.$executeRaw(
+      Prisma.sql`DELETE FROM announcement_comments WHERE id = ${commentId}`,
+    );
+    return { id: commentId };
+  }
+
+  private async resolveCommenterNames(userIds: number[]): Promise<Map<number, string>> {
+    const uniqueIds = [...new Set(userIds)];
+    if (uniqueIds.length === 0) return new Map();
+
+    const users = await this.prisma.users.findMany({
+      where: { id: { in: uniqueIds } },
+      select: {
+        id: true,
+        email: true,
+        faculty: { select: { first_name: true, last_name: true } },
+        students: {
+          select: { soa_applications: { select: { first_name: true, last_name: true } } },
+        },
+      },
+    });
+
+    const map = new Map<number, string>();
+    for (const u of users) {
+      const name = u.faculty
+        ? `${u.faculty.first_name} ${u.faculty.last_name}`.trim()
+        : u.students?.soa_applications
+          ? `${u.students.soa_applications.first_name} ${u.students.soa_applications.last_name ?? ''}`.trim()
+          : u.email;
+      map.set(u.id, name);
+    }
+    return map;
+  }
+
   // ── Relationship resolution ──────────────────────────────────────────────
 
   private async resolveUserContext(user: JwtPayload): Promise<UserContext> {
@@ -1284,6 +1466,17 @@ export class AnnouncementsService {
 
       case ROLES.PRINCIPAL:
         return { role: ROLES.PRINCIPAL, userId: user.sub, roleId: user.roleId };
+
+      // Same institution-wide standing as Principal throughout this service
+      // (see buildRoleVisibilityQuery's UNRESTRICTED case, and the
+      // Correspondent Switch Account feature's own requirement that
+      // Correspondent has every Principal capability plus Leave Approval).
+      case ROLES.CORRESPONDENT:
+        return {
+          role: ROLES.CORRESPONDENT,
+          userId: user.sub,
+          roleId: user.roleId,
+        };
 
       case ROLES.EDC_COORDINATOR:
         return {
@@ -1478,6 +1671,10 @@ export class AnnouncementsService {
       // Admin, sees everything (subject to the draft rule in
       // buildVisibilityQuery above).
       case ROLES.PRINCIPAL:
+      // Correspondent has every Principal capability plus Leave Approval
+      // (see the Switch Account / Correspondent role feature) — same
+      // broadcast tier here too.
+      case ROLES.CORRESPONDENT:
         return UNRESTRICTED;
 
       // Department-scoped, mirroring HOD's own clause exactly (own posts +
@@ -1489,6 +1686,7 @@ export class AnnouncementsService {
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
             { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { users: { roles: { name: ROLES.CORRESPONDENT } } },
             { target_audience: 'teachers', department_id: null },
             roleTargeted,
           ],
@@ -1507,6 +1705,13 @@ export class AnnouncementsService {
       case ROLES.IQAC:
         return UNRESTRICTED;
 
+      // IQAC is an institution-wide quality/audit function — it needs to
+      // see every announcement for oversight purposes, same broadcast tier
+      // as Admin/Principal/Secretary/Billing, not a narrower "own posts
+      // only" scope like Media Room/Higher Education.
+      case ROLES.IQAC:
+        return {};
+
       // EDC coordinator has no recipient list to resolve (no "founders"
       // user table exists yet) - sees only what they authored themselves,
       // plus anything explicitly role-targeted at edc_coordinator via the
@@ -1523,6 +1728,7 @@ export class AnnouncementsService {
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
             { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { users: { roles: { name: ROLES.CORRESPONDENT } } },
             // Admin's org-wide faculty broadcasts (department_id: null) —
             // an HOD is also faculty and should see those.
             { target_audience: 'teachers', department_id: null },
@@ -1538,6 +1744,7 @@ export class AnnouncementsService {
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
             { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { users: { roles: { name: ROLES.CORRESPONDENT } } },
             {
               AND: [
                 { users: { roles: { name: ROLES.HOD } } },
@@ -1621,6 +1828,7 @@ export class AnnouncementsService {
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
             { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { users: { roles: { name: ROLES.CORRESPONDENT } } },
             roleTargeted,
           ],
         };
@@ -1636,6 +1844,7 @@ export class AnnouncementsService {
             { posted_by_user_id: context.userId },
             { users: { roles: { name: ROLES.ADMIN } } },
             { users: { roles: { name: ROLES.PRINCIPAL } } },
+            { users: { roles: { name: ROLES.CORRESPONDENT } } },
           ],
         };
 
@@ -1718,13 +1927,18 @@ export class AnnouncementsService {
     if (
       context.role === ROLES.ADMIN ||
       context.role === ROLES.PRINCIPAL ||
+      context.role === ROLES.CORRESPONDENT ||
       context.role === ROLES.PLACEMENT ||
       context.role === ROLES.HIGHER_EDUCATION ||
       context.role === ROLES.MEDICAL_CENTRE ||
       context.role === ROLES.SECRETARY ||
       context.role === ROLES.BILLING ||
       context.role === ROLES.IQAC ||
-      context.role === ROLES.MEDIA_ROOM
+      context.role === ROLES.MEDIA_ROOM ||
+      // Stationary Portal's "Students"/"All users" announcement audiences
+      // (see stationary/api/announcements.ts) — institution-wide, same
+      // unrestricted class selection as Billing/IQAC/Media Room above.
+      context.role === ROLES.STATIONARY
     ) {
       return;
     }
@@ -1741,6 +1955,7 @@ export class AnnouncementsService {
     if (
       context.role !== ROLES.ADMIN &&
       context.role !== ROLES.PRINCIPAL &&
+      context.role !== ROLES.CORRESPONDENT &&
       // Billing's real "All HoDs" audience option (fee-due escalation
       // notices to department heads) needs role targeting too.
       context.role !== ROLES.BILLING &&
@@ -2233,6 +2448,90 @@ export class AnnouncementsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  /**
+   * A post is "social" (belongs in the mobile Home tab feed, not just the
+   * Announcements carousel) purely by having a social_post_details row -
+   * i.e. by the caller having sent at least one of these five fields. Any
+   * other target_audience (roles/teachers/EDC broadcasts) never goes
+   * through the Media Room composer, so this is only wired into the
+   * 'students' branch of create() above.
+   */
+  private socialFromDto(dto: CreateAnnouncementDto) {
+    if (
+      dto.format === undefined &&
+      dto.link_url === undefined &&
+      dto.expires_at === undefined &&
+      dto.is_pinned === undefined &&
+      dto.allow_comments === undefined
+    ) {
+      return undefined;
+    }
+    return {
+      format: dto.format ?? null,
+      link_url: dto.link_url ?? null,
+      expires_at: dto.expires_at ?? null,
+      is_pinned: dto.is_pinned ?? false,
+      allow_comments: dto.allow_comments ?? true,
+    };
+  }
+
+  private async maybeCreateSocialPostDetails(
+    tx: Prisma.TransactionClient,
+    announcementId: number,
+    dto: CreateAnnouncementDto,
+  ) {
+    const social = this.socialFromDto(dto);
+    if (!social) return;
+    await tx.$executeRaw(Prisma.sql`
+      INSERT INTO social_post_details (announcement_id, format, link_url, expires_at, is_pinned, allow_comments, updated_at)
+      VALUES (${announcementId}, ${social.format}, ${social.link_url}, ${social.expires_at ? new Date(social.expires_at) : null}, ${social.is_pinned}, ${social.allow_comments}, now())
+    `);
+  }
+
+  /**
+   * Batch-attaches social_post_details onto already-shaped response rows
+   * (findAll/findOne) - a plain LEFT JOIN isn't possible through Prisma's
+   * query builder since social_post_details isn't a declared relation
+   * (manual-SQL table, see the DTO's doc comment on the social fields), so
+   * this is a second raw query keyed on the ids already fetched.
+   */
+  private async attachSocialDetails<T extends { id: number }>(
+    rows: T[],
+  ): Promise<(T & { social?: Record<string, unknown> })[]> {
+    if (rows.length === 0) return rows;
+    const ids = rows.map((r) => r.id);
+    const socialRows = await this.prisma.$queryRaw<
+      {
+        announcement_id: number;
+        format: string | null;
+        link_url: string | null;
+        expires_at: Date | null;
+        is_pinned: boolean | null;
+        allow_comments: boolean | null;
+      }[]
+    >(Prisma.sql`
+      SELECT announcement_id, format, link_url, expires_at, is_pinned, allow_comments
+      FROM social_post_details
+      WHERE announcement_id IN (${Prisma.join(ids)})
+    `);
+    const byId = new Map(socialRows.map((r) => [r.announcement_id, r]));
+    return rows.map((row) => {
+      const social = byId.get(row.id);
+      return social
+        ? {
+            ...row,
+            social: {
+              format: social.format,
+              link_url: social.link_url,
+              expires_at: social.expires_at,
+              is_pinned: social.is_pinned ?? false,
+              allow_comments: social.allow_comments ?? true,
+            },
+          }
+        : row;
+    });
   }
 
   private toResponseShape(

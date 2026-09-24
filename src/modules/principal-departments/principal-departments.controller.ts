@@ -12,7 +12,7 @@ import { PrincipalDepartmentsService } from './principal-departments.service';
 // Secretary added — forced to her own department (via
 // non_teaching_staff.department_id) inside the service, same pattern as
 // HOD; Principal/Admin stay institution-wide.
-@Roles(ROLES.PRINCIPAL, ROLES.SECRETARY)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT, ROLES.SECRETARY)
 export class PrincipalDepartmentsController {
   constructor(private readonly service: PrincipalDepartmentsService) {}
 

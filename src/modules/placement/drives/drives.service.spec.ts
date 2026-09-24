@@ -25,6 +25,8 @@ describe('DrivesService', () => {
     class_mentors: { findMany: jest.Mock; findFirst: jest.Mock };
     classes: { findMany: jest.Mock; findUnique: jest.Mock };
     placement_drives: { findMany: jest.Mock; findUnique: jest.Mock };
+    batches: { findUnique: jest.Mock };
+    $queryRaw: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -39,6 +41,8 @@ describe('DrivesService', () => {
       class_mentors: { findMany: jest.fn(), findFirst: jest.fn() },
       classes: { findMany: jest.fn(), findUnique: jest.fn() },
       placement_drives: { findMany: jest.fn(), findUnique: jest.fn() },
+      batches: { findUnique: jest.fn() },
+      $queryRaw: jest.fn().mockResolvedValue([]),
     };
     notifications = { notify: jest.fn() };
 
@@ -801,6 +805,47 @@ describe('DrivesService', () => {
           last_cleared_round: 3,
         },
       ]);
+    });
+  });
+
+  describe('buildStudentReportTable', () => {
+    function student(id: number) {
+      return {
+        id,
+        student_id_no: `S${id}`,
+        roll_no: id,
+        register_no: `R${id}`,
+        classes: {
+          section: 'A',
+          current_semester: 7,
+          departments: { name: 'CSE', code: 'CS' },
+        },
+        soa_applications: { first_name: `Student${id}`, last_name: null },
+        users: { email: `student${id}@eos.test` },
+      };
+    }
+
+    it('rejects an institution-wide export (no batch_id/class) above the row cap instead of rendering it', async () => {
+      const students = Array.from({ length: 2001 }, (_, i) => student(i + 1));
+      prisma.students.findMany.mockResolvedValue(students);
+      prisma.student_drive_applications.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.buildStudentReportTable(undefined, undefined),
+      ).rejects.toMatchObject({
+        response: { errorCode: 'EXPORT_TOO_LARGE' },
+      });
+    });
+
+    it('still builds the table normally when the (possibly filtered) row count is within the cap', async () => {
+      prisma.students.findMany.mockResolvedValue([student(1), student(2)]);
+      prisma.student_drive_applications.findMany.mockResolvedValue([]);
+      prisma.batches.findUnique.mockResolvedValue({ name: '2026' });
+
+      const table = await service.buildStudentReportTable(5, undefined);
+
+      expect(table.rows).toHaveLength(2);
+      expect(table.subtitle).toBe('Batch 2026');
     });
   });
 });

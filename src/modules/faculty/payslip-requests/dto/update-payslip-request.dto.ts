@@ -1,4 +1,5 @@
 import { IsIn, IsOptional, IsUrl, MaxLength } from 'class-validator';
+import { OptionalRemarks } from 'src/common/dto/decision-reason.dto';
 
 /**
  * PATCH /payslip-requests/:id (HR Payroll only).
@@ -20,4 +21,8 @@ export class UpdatePayslipRequestDto {
   @IsUrl({}, { message: 'file_url must be a valid URL' })
   @MaxLength(500)
   file_url?: string;
+
+  /** Real once decision_reason_columns.query.md's payslip_requests.rejection_reason runs — accepted but silently dropped by the service's $executeRaw fallback until then. */
+  @OptionalRemarks()
+  rejection_reason?: string;
 }

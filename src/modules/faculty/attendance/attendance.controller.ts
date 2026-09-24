@@ -112,17 +112,18 @@ export class AttendanceController {
   }
 
   /**
-   * GET /api/v1/me/staff-attendance?year=&month= — Faculty/HoD/HR Payroll.
-   * Self-scoped, best-effort staff attendance derived from approved leaves
-   * and holiday-slot opt-ins (see MeStaffAttendanceService for details).
-   * HoD and HR Payroll staff also have their own faculty row (same table,
-   * same faculty_daily_attendance source) - resolveFacultyByUserId() 404s
-   * with FACULTY_NOT_FOUND for any of these three roles if that row doesn't
-   * exist, so widening the roles here never fabricates data for an account
-   * that has none.
+   * GET /api/v1/me/staff-attendance?year=&month= — Faculty/HoD/HR Payroll/
+   * Principal. Self-scoped, best-effort staff attendance derived from
+   * approved leaves and holiday-slot opt-ins (see MeStaffAttendanceService
+   * for details). HoD and HR Payroll staff also have their own faculty row
+   * (same table, same faculty_daily_attendance source); Principal has none
+   * (see MeStaffAttendanceService.getMyStaffAttendance's own faculty-row
+   * branch) and falls back to the staff_user_id-keyed source instead, same
+   * as any other non-teaching account - no 404 either way, so widening the
+   * roles here never fabricates data for an account that has none.
    */
   @Get('staff-attendance')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.PRINCIPAL)
   getStaffAttendance(
     @Query() query: GetStaffAttendanceDto,
     @CurrentUser() user: JwtPayload,
@@ -137,8 +138,11 @@ export class AttendanceController {
    */
   @Get('staff-attendance-review')
   @Roles(ROLES.HOD, ROLES.HR_PAYROLL)
-  listStaffAttendanceForReview(@Query() query: GetStaffAttendanceDto) {
-    return this.meStaffAttendanceService.listStaffAttendanceForReview(query);
+  listStaffAttendanceForReview(
+    @Query() query: GetStaffAttendanceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.meStaffAttendanceService.listStaffAttendanceForReview(query, user);
   }
 
   /**
@@ -151,10 +155,12 @@ export class AttendanceController {
   getStaffAttendanceForFaculty(
     @Param('facultyId', ParseIntPipe) facultyId: number,
     @Query() query: GetStaffAttendanceDto,
+    @CurrentUser() user: JwtPayload,
   ) {
     return this.meStaffAttendanceService.getStaffAttendanceForFacultyId(
       facultyId,
       query,
+      user,
     );
   }
 }

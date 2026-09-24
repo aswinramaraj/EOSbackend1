@@ -56,8 +56,14 @@ export class HodClassRecordsService {
     try {
       const classes = await this.prisma.classes.findMany({
         where: { department_id: departmentId },
-        select: { id: true, section: true, current_semester: true },
-        orderBy: [{ current_semester: 'asc' }, { section: 'asc' }],
+        select: {
+          id: true,
+          section: true,
+          current_semester: true,
+          batch_id: true,
+          batches: { select: { id: true, name: true } },
+        },
+        orderBy: [{ batch_id: 'asc' }, { current_semester: 'asc' }, { section: 'asc' }],
       });
 
       // One groupBy for every class's student count instead of one count()
@@ -76,10 +82,71 @@ export class HodClassRecordsService {
         year: yearLabel(cl.current_semester) ?? '—',
         semester: cl.current_semester ?? 0,
         student_count: countByClassId.get(cl.id) ?? 0,
+        batch_id: cl.batch_id,
+        batch_name: cl.batches.name,
       }));
     } catch (err) {
       if (err instanceof NotFoundException) throw err;
       this.logger.error('DB error listing HoD class records', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * GET /hod/attendance-overview — department-wide, every class at once,
+   * mean attendance % per class (attendance_records.class_id is a direct
+   * column, so this is one groupBy across the whole department rather than
+   * the per-student query getClassDetail below runs for a single class).
+   * Drill-down into one class's per-student attendance still goes through
+   * the existing getClassDetail (its `students[].attendance_percent` /
+   * `stats.mean_attendance` fields) - this endpoint only adds the missing
+   * "which class am I looking at" summary list, it doesn't duplicate that
+   * per-student computation.
+   */
+  async getAttendanceOverview(user: JwtPayload) {
+    const departmentId = await this.resolveDepartmentId(user);
+    try {
+      const classes = await this.prisma.classes.findMany({
+        where: { department_id: departmentId },
+        select: { id: true, section: true, current_semester: true },
+        orderBy: [{ current_semester: 'asc' }, { section: 'asc' }],
+      });
+      const classIds = classes.map((cl) => cl.id);
+
+      const counts = await this.prisma.students.groupBy({
+        by: ['class_id'],
+        where: { class_id: { in: classIds }, status: 'active' },
+        _count: { _all: true },
+      });
+      const countByClassId = new Map(counts.map((c) => [c.class_id, c._count._all]));
+
+      const attendanceRows = classIds.length
+        ? await this.prisma.$queryRaw<{ class_id: number; pct: string | null }[]>(Prisma.sql`
+            SELECT class_id,
+              (COUNT(*) FILTER (WHERE status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
+            FROM attendance_records
+            WHERE class_id IN (${Prisma.join(classIds)})
+            GROUP BY class_id
+          `)
+        : [];
+      const attendanceByClassId = new Map(
+        attendanceRows.map((r) => [r.class_id, r.pct != null ? Math.round(Number(r.pct) * 10) / 10 : null]),
+      );
+
+      return classes.map((cl) => ({
+        class_id: cl.id,
+        section: cl.section,
+        year: yearLabel(cl.current_semester) ?? '—',
+        semester: cl.current_semester ?? 0,
+        student_count: countByClassId.get(cl.id) ?? 0,
+        mean_attendance: attendanceByClassId.get(cl.id) ?? null,
+      }));
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      this.logger.error('DB error computing HoD attendance overview', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

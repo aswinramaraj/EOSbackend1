@@ -174,7 +174,7 @@ export class StudentAssignmentStatusService {
       is_submitted: query.is_submitted,
     };
 
-    if (currentUser.role === ROLES.FACULTY) {
+    if (currentUser.role === ROLES.FACULTY || currentUser.role === ROLES.HOD) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.assignments = { faculty_id: faculty.id };
     } else if (currentUser.role === ROLES.STUDENT) {
@@ -213,7 +213,7 @@ export class StudentAssignmentStatusService {
       throw new NotFoundException('Status record not found');
     }
 
-    if (currentUser.role === ROLES.FACULTY) {
+    if (currentUser.role === ROLES.FACULTY || currentUser.role === ROLES.HOD) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       const assignment = await this.prisma.assignments.findUnique({
         where: { id: status.assignments.id },

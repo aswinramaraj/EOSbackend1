@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
 import { WORKLOAD_THRESHOLD_HOURS } from 'src/common/constants/workload.constant';
 import { TtlCache } from 'src/common/utils/ttl-cache.util';
 
@@ -52,6 +53,22 @@ function getPeriodRange(
 @Injectable()
 export class PrincipalDashboardService {
   constructor(private readonly prisma: PrismaService) {}
+
+  // Institution-wide (no department/tenant scoping needed, so a plain
+  // single-value TtlCache is safe here — see PERFORMANCE_CACHE_STRATEGY.md).
+  // 60s matches the existing feesOutstandingCache/overviewCache convention
+  // in this same file/module.
+  private readonly departmentAttendanceFlagsCache = new TtlCache<
+    { type: 'attendance'; title: string; description: string }[]
+  >(60_000);
+  private readonly facultyWorkloadFlagsCache = new TtlCache<{
+    type: 'workload';
+    title: string;
+    description: string;
+  } | null>(60_000);
+  private readonly courseCompletionFlagsCache = new TtlCache<
+    { type: 'course_completion'; title: string; description: string }[]
+  >(60_000);
 
   /**
    * GET /me/principal/dashboard/summary
@@ -175,6 +192,13 @@ export class PrincipalDashboardService {
     const today = startOfToday();
     const { start, end, label } = getPeriodRange(period, today);
 
+    // Was: fetch every attendance_records row for the whole period into Node
+    // and aggregate in JS — self-flagged in a prior review as "fine at
+    // current data volume, but would want a DB-side GROUP BY if attendance
+    // history grows into the millions of rows" (docs/production/DATABASE_AUDIT.md
+    // §3). Pushed into one grouped SQL query instead — same result, no
+    // unbounded row fetch regardless of how large the period's attendance
+    // history gets.
     const [
       studentsTotalActive,
       newAdmissions,
@@ -182,7 +206,7 @@ export class PrincipalDashboardService {
       newHires,
       nonTeachingStaffTotalActive,
       departmentsTotal,
-      attendanceRows,
+      [attendanceSummary],
     ] = await this.prisma.$transaction([
       this.prisma.students.count({ where: { status: 'active' } }),
       this.prisma.students.count({
@@ -194,55 +218,47 @@ export class PrincipalDashboardService {
       }),
       this.prisma.non_teaching_staff.count({ where: { status: 'active' } }),
       this.prisma.departments.count(),
-      this.prisma.attendance_records.findMany({
-        where: { attendance_date: { gte: start, lte: end } },
-        select: { status: true, attendance_date: true, student_id: true },
-      }),
+      this.prisma.$queryRaw<
+        {
+          total: bigint;
+          present: bigint;
+          students_below_threshold: bigint;
+          best_month_key: string | null;
+        }[]
+      >(Prisma.sql`
+        WITH period_attendance AS (
+          SELECT student_id, status, attendance_date
+          FROM attendance_records
+          WHERE attendance_date BETWEEN ${start} AND ${end}
+        ),
+        student_pct AS (
+          SELECT student_id,
+            (COUNT(*) FILTER (WHERE status = 'present')::numeric / COUNT(*) * 100) AS pct
+          FROM period_attendance
+          GROUP BY student_id
+        ),
+        month_pct AS (
+          SELECT to_char(attendance_date, 'YYYY-MM') AS month_key,
+            (COUNT(*) FILTER (WHERE status = 'present')::numeric / COUNT(*) * 100) AS pct
+          FROM period_attendance
+          GROUP BY month_key
+        )
+        SELECT
+          (SELECT COUNT(*) FROM period_attendance)::bigint AS total,
+          (SELECT COUNT(*) FILTER (WHERE status = 'present') FROM period_attendance)::bigint AS present,
+          (SELECT COUNT(*) FROM student_pct WHERE pct < 75)::bigint AS students_below_threshold,
+          (SELECT month_key FROM month_pct ORDER BY pct DESC LIMIT 1) AS best_month_key
+      `),
     ]);
 
-    const ATTENDANCE_THRESHOLD_PERCENT = 75;
-    const presentTotal = attendanceRows.filter(
-      (r) => r.status === 'present',
-    ).length;
+    const total = Number(attendanceSummary?.total ?? 0);
+    const present = Number(attendanceSummary?.present ?? 0);
     const meanPercentage =
-      attendanceRows.length > 0
-        ? Math.round((presentTotal / attendanceRows.length) * 1000) / 10
-        : null;
-
-    const byStudent = new Map<number, { present: number; total: number }>();
-    const byMonth = new Map<string, { present: number; total: number }>();
-    for (const r of attendanceRows) {
-      const s = byStudent.get(r.student_id) ?? { present: 0, total: 0 };
-      s.total += 1;
-      if (r.status === 'present') s.present += 1;
-      byStudent.set(r.student_id, s);
-
-      const monthKey = r.attendance_date.toISOString().slice(0, 7);
-      const m = byMonth.get(monthKey) ?? { present: 0, total: 0 };
-      m.total += 1;
-      if (r.status === 'present') m.present += 1;
-      byMonth.set(monthKey, m);
-    }
-
-    let studentsBelowThreshold = 0;
-    for (const s of byStudent.values()) {
-      if (
-        s.total > 0 &&
-        (s.present / s.total) * 100 < ATTENDANCE_THRESHOLD_PERCENT
-      )
-        studentsBelowThreshold += 1;
-    }
-
-    let bestMonthKey: string | null = null;
-    let bestMonthPct = -1;
-    for (const [key, v] of byMonth.entries()) {
-      if (v.total === 0) continue;
-      const pct = (v.present / v.total) * 100;
-      if (pct > bestMonthPct) {
-        bestMonthPct = pct;
-        bestMonthKey = key;
-      }
-    }
+      total > 0 ? Math.round((present / total) * 1000) / 10 : null;
+    const studentsBelowThreshold = Number(
+      attendanceSummary?.students_below_threshold ?? 0,
+    );
+    const bestMonthKey = attendanceSummary?.best_month_key ?? null;
     const bestMonthLabel = bestMonthKey
       ? new Date(`${bestMonthKey}-01T00:00:00Z`).toLocaleDateString('en-IN', {
           month: 'long',
@@ -388,28 +404,52 @@ export class PrincipalDashboardService {
     }
   }
 
+  /**
+   * `drive_type` is real once internship_drive_type.query.md runs — the
+   * raw query returns no rows (no filtering) until then, so this
+   * full-time-placement summary is unaffected either way.
+   */
+  private async internshipDriveIds(): Promise<Set<number>> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM placement_drives WHERE drive_type = 'internship'
+      `;
+      return new Set(rows.map((r) => r.id));
+    } catch {
+      return new Set();
+    }
+  }
+
   private async placementSummary() {
     const today = startOfToday();
     const weekFromNow = new Date(today);
     weekFromNow.setDate(weekFromNow.getDate() + 7);
 
-    const [drives, applications, registeredStudentIds] = await Promise.all([
-      this.prisma.placement_drives.findMany({
-        select: {
-          id: true,
-          company_id: true,
-          status: true,
-          scheduled_date: true,
-        },
-      }),
-      this.prisma.student_drive_applications.findMany({
-        select: { status: true, offered_package: true },
-      }),
-      this.prisma.student_drive_applications.findMany({
-        select: { student_id: true },
-        distinct: ['student_id'],
-      }),
-    ]);
+    const [allDrives, allApplications, registeredStudentIds, internshipIds] =
+      await Promise.all([
+        this.prisma.placement_drives.findMany({
+          select: {
+            id: true,
+            company_id: true,
+            status: true,
+            scheduled_date: true,
+          },
+        }),
+        this.prisma.student_drive_applications.findMany({
+          select: { drive_id: true, status: true, offered_package: true },
+        }),
+        this.prisma.student_drive_applications.findMany({
+          select: { student_id: true },
+          distinct: ['student_id'],
+        }),
+        this.internshipDriveIds(),
+      ]);
+    // Full-time-placement summary — excludes internship drives (see
+    // internship_drive_type.query.md; Internships get their own view).
+    const drives = allDrives.filter((d) => !internshipIds.has(d.id));
+    const applications = allApplications.filter(
+      (a) => !internshipIds.has(a.drive_id),
+    );
 
     const companiesVisited = new Set(drives.map((d) => d.company_id)).size;
     const drivesThisWeek = drives.filter(
@@ -446,53 +486,49 @@ export class PrincipalDashboardService {
     };
   }
 
-  /** Department attendance below ATTENDANCE_THRESHOLD_PERCENT (75%, this codebase's existing student-attendance condonation threshold), over the last 7 days. */
+  /**
+   * Department attendance below ATTENDANCE_THRESHOLD_PERCENT (75%, this
+   * codebase's existing student-attendance condonation threshold), over the
+   * last 7 days. Was: fetch every attendance_records row for the last 7 days
+   * institution-wide and aggregate per-department in JS
+   * (docs/production/PERFORMANCE_AUDIT.md §3) — now a single grouped SQL
+   * query, one row per department instead of one row per attendance record.
+   */
   private async departmentAttendanceFlags() {
-    const ATTENDANCE_THRESHOLD_PERCENT = 75;
-    const today = startOfToday();
-    const sevenDaysAgo = new Date(today);
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    return this.departmentAttendanceFlagsCache.get(async () => {
+      const ATTENDANCE_THRESHOLD_PERCENT = 75;
+      const today = startOfToday();
+      const sevenDaysAgo = new Date(today);
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
 
-    const records = await this.prisma.attendance_records.findMany({
-      where: { attendance_date: { gte: sevenDaysAgo, lte: today } },
-      select: {
-        status: true,
-        classes: {
-          select: { departments: { select: { name: true, code: true } } },
-        },
-      },
+      const rows = await this.prisma.$queryRaw<
+        { code: string; name: string; present: bigint; total: bigint }[]
+      >(Prisma.sql`
+        SELECT d.code, d.name,
+          COUNT(*) FILTER (WHERE ar.status = 'present')::bigint AS present,
+          COUNT(*)::bigint AS total
+        FROM attendance_records ar
+        JOIN classes cl ON cl.id = ar.class_id
+        JOIN departments d ON d.id = cl.department_id
+        WHERE ar.attendance_date BETWEEN ${sevenDaysAgo} AND ${today}
+        GROUP BY d.code, d.name
+      `);
+
+      return rows
+        .map((v) => ({
+          code: v.code,
+          name: v.name,
+          percentage:
+            Math.round((Number(v.present) / Number(v.total)) * 1000) / 10,
+        }))
+        .filter((d) => d.percentage < ATTENDANCE_THRESHOLD_PERCENT)
+        .sort((a, b) => a.percentage - b.percentage)
+        .map((d) => ({
+          type: 'attendance' as const,
+          title: `${d.code} attendance at ${d.percentage}%`,
+          description: `Below the ${ATTENDANCE_THRESHOLD_PERCENT}% threshold over the last 7 days`,
+        }));
     });
-
-    const byDept = new Map<
-      string,
-      { name: string; present: number; total: number }
-    >();
-    for (const r of records) {
-      const dept = r.classes.departments;
-      const entry = byDept.get(dept.code) ?? {
-        name: dept.name,
-        present: 0,
-        total: 0,
-      };
-      entry.total += 1;
-      if (r.status === 'present') entry.present += 1;
-      byDept.set(dept.code, entry);
-    }
-
-    return Array.from(byDept.entries())
-      .filter(([, v]) => v.total > 0)
-      .map(([code, v]) => ({
-        code,
-        name: v.name,
-        percentage: Math.round((v.present / v.total) * 1000) / 10,
-      }))
-      .filter((d) => d.percentage < ATTENDANCE_THRESHOLD_PERCENT)
-      .sort((a, b) => a.percentage - b.percentage)
-      .map((d) => ({
-        type: 'attendance' as const,
-        title: `${d.code} attendance at ${d.percentage}%`,
-        description: `Below the ${ATTENDANCE_THRESHOLD_PERCENT}% threshold over the last 7 days`,
-      }));
   }
 
   // 60s TTL — this aggregate is hit by both the dashboard insights and the
@@ -569,77 +605,87 @@ export class PrincipalDashboardService {
   }
 
   /** Faculty with a scheduled weekly teaching load above WORKLOAD_THRESHOLD_HOURS, from real timetable_slots durations. */
+  /**
+   * Was: fetch every timetable_slots row institution-wide (unbounded, no
+   * filter at all) and sum per-faculty hours in JS — same class of issue as
+   * departmentAttendanceFlags/courseCompletionFlags above, found while
+   * fixing those (docs/production/DATABASE_AUDIT.md §5 lists this alongside
+   * them as a caching/aggregation candidate). Now a single grouped SQL query.
+   */
   private async facultyWorkloadFlags() {
-    const slots = await this.prisma.timetable_slots.findMany({
-      select: {
-        faculty_id: true,
-        start_time: true,
-        end_time: true,
-        faculty: { select: { departments: { select: { code: true } } } },
-      },
-    });
+    return this.facultyWorkloadFlagsCache.get(async () => {
+      const [summary] = await this.prisma.$queryRaw<
+        { overloaded_count: bigint; dept_codes: string[] | null }[]
+      >(Prisma.sql`
+        WITH per_faculty AS (
+          SELECT ts.faculty_id, d.code,
+            SUM(EXTRACT(EPOCH FROM (ts.end_time - ts.start_time)) / 3600.0) AS hours
+          FROM timetable_slots ts
+          JOIN faculty f ON f.id = ts.faculty_id
+          JOIN departments d ON d.id = f.department_id
+          GROUP BY ts.faculty_id, d.code
+        )
+        SELECT COUNT(*)::bigint AS overloaded_count,
+          ARRAY_AGG(DISTINCT code ORDER BY code) AS dept_codes
+        FROM per_faculty
+        WHERE hours > ${WORKLOAD_THRESHOLD_HOURS}
+      `);
 
-    const byFaculty = new Map<number, { hours: number; deptCode: string }>();
-    for (const s of slots) {
-      const hours = (s.end_time.getTime() - s.start_time.getTime()) / 3_600_000;
-      const entry = byFaculty.get(s.faculty_id) ?? {
-        hours: 0,
-        deptCode: s.faculty.departments.code,
+      const overloadedCount = Number(summary?.overloaded_count ?? 0);
+      if (overloadedCount === 0) return null;
+
+      const deptCodes = summary?.dept_codes ?? [];
+      return {
+        type: 'workload' as const,
+        title: `Faculty workload above ${WORKLOAD_THRESHOLD_HOURS} hrs`,
+        description: `${overloadedCount} faculty across ${deptCodes.join(', ')}`,
       };
-      entry.hours += hours;
-      byFaculty.set(s.faculty_id, entry);
-    }
-
-    const overloaded = Array.from(byFaculty.values()).filter(
-      (f) => f.hours > WORKLOAD_THRESHOLD_HOURS,
-    );
-    if (overloaded.length === 0) return null;
-
-    const deptCodes = Array.from(
-      new Set(overloaded.map((f) => f.deptCode)),
-    ).sort();
-    return {
-      type: 'workload' as const,
-      title: `Faculty workload above ${WORKLOAD_THRESHOLD_HOURS} hrs`,
-      description: `${overloaded.length} faculty across ${deptCodes.join(', ')}`,
-    };
+    });
   }
 
-  /** Department course-completion rate below COMPLETION_THRESHOLD_PERCENT, from real lesson_plan_sessions.is_covered rows. */
+  /**
+   * Department course-completion rate below COMPLETION_THRESHOLD_PERCENT,
+   * from real lesson_plan_sessions.is_covered rows. Was: fetch every
+   * lesson_plan_sessions row institution-wide with no date/semester filter
+   * at all — the most severe of the 3 unbounded-findMany findings in
+   * docs/production/PERFORMANCE_AUDIT.md §3 ("grows unboundedly release over
+   * release"). Now a single grouped SQL query, one row per department.
+   * Note: this still has no semester/date bound (same behavior as before —
+   * all-time completion rate) — deliberately not changed here, since scoping
+   * this to "current semester" is a product-semantics decision (which
+   * semester counts as "current" can differ per department/batch), not a
+   * pure performance fix. Flagging as a follow-up, not silently deciding it.
+   */
   private async courseCompletionFlags() {
     const COMPLETION_THRESHOLD_PERCENT = 60;
-    const sessions = await this.prisma.lesson_plan_sessions.findMany({
-      select: {
-        is_covered: true,
-        lesson_plans: {
-          select: {
-            faculty: { select: { departments: { select: { code: true } } } },
-          },
-        },
-      },
+
+    return this.courseCompletionFlagsCache.get(async () => {
+      const rows = await this.prisma.$queryRaw<
+        { code: string; covered: bigint; total: bigint }[]
+      >(Prisma.sql`
+        SELECT d.code,
+          COUNT(*) FILTER (WHERE lps.is_covered)::bigint AS covered,
+          COUNT(*)::bigint AS total
+        FROM lesson_plan_sessions lps
+        JOIN lesson_plans lp ON lp.id = lps.lesson_plan_id
+        JOIN faculty f ON f.id = lp.faculty_id
+        JOIN departments d ON d.id = f.department_id
+        GROUP BY d.code
+      `);
+
+      return rows
+        .map((v) => ({
+          code: v.code,
+          percentage:
+            Math.round((Number(v.covered) / Number(v.total)) * 1000) / 10,
+        }))
+        .filter((d) => d.percentage < COMPLETION_THRESHOLD_PERCENT)
+        .map((d) => ({
+          type: 'course_completion' as const,
+          title: `Course completion behind in ${d.code}`,
+          description: `${d.percentage}% of planned sessions covered so far`,
+        }));
     });
-
-    const byDept = new Map<string, { covered: number; total: number }>();
-    for (const s of sessions) {
-      const code = s.lesson_plans.faculty.departments.code;
-      const entry = byDept.get(code) ?? { covered: 0, total: 0 };
-      entry.total += 1;
-      if (s.is_covered) entry.covered += 1;
-      byDept.set(code, entry);
-    }
-
-    return Array.from(byDept.entries())
-      .filter(([, v]) => v.total > 0)
-      .map(([code, v]) => ({
-        code,
-        percentage: Math.round((v.covered / v.total) * 1000) / 10,
-      }))
-      .filter((d) => d.percentage < COMPLETION_THRESHOLD_PERCENT)
-      .map((d) => ({
-        type: 'course_completion' as const,
-        title: `Course completion behind in ${d.code}`,
-        description: `${d.percentage}% of planned sessions covered so far`,
-      }));
   }
 
   /**

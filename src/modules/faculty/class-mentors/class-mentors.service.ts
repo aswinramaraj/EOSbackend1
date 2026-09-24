@@ -5,6 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { SubjectRecordsService } from 'src/modules/faculty/subject-records/subject-records.service';
+import { NoDueService } from 'src/modules/faculty/no-due/no-due.service';
+import { SubjectNoDueService } from 'src/modules/faculty/subject-no-due/subject-no-due.service';
+import type { ListNoDueStudentsQueryDto } from 'src/modules/faculty/no-due/dto/list-no-due-students-query.dto';
+import { StudentHigherEducationService } from 'src/modules/student-higher-education/student-higher-education.service';
+import { StudentEntrepreneurshipService } from 'src/modules/student-entrepreneurship/student-entrepreneurship.service';
 
 const MENTEE_PLACEMENT_SELECT = {
   id: true,
@@ -510,7 +516,14 @@ function resolveContact(student: ClassResultStudentRow): string | null {
 export class ClassMentorsService {
   private readonly logger = new Logger(ClassMentorsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly subjectRecords: SubjectRecordsService,
+    private readonly noDue: NoDueService,
+    private readonly subjectNoDue: SubjectNoDueService,
+    private readonly higherEducation: StudentHigherEducationService,
+    private readonly entrepreneurship: StudentEntrepreneurshipService,
+  ) {}
 
   /**
    * GET /me/mentee-classes (Faculty only).
@@ -1340,6 +1353,261 @@ export class ClassMentorsService {
         academic_year: mentorRow.academic_year,
       },
     };
+  }
+
+  /**
+   * GET /me/mentee-classes/:class_id/subject-records (Faculty/HoD — mentor
+   * of this class, via class_mentors).
+   *
+   * Unlike GET /me/subject-records (SubjectRecordsService.findMappings/
+   * findOne), which only shows subjects the calling faculty is personally
+   * assigned to teach (faculty_subject_class_mapping), a class mentor often
+   * teaches none of their mentee class's subjects at all — so this returns
+   * EVERY exam_subject_mapping row for the class (every subject, every
+   * exam), not just ones the caller teaches. The mentor check happens here;
+   * SubjectRecordsService.findAllForClass does no teaching-assignment check
+   * of its own, by design. Each array entry is shaped exactly like
+   * SubjectRecordsService.findOne's response (subject, exam, is_published,
+   * grade_distribution, toppers, total_students) via the same shared
+   * computeMappingDetail helper, so the mobile frontend can reuse its
+   * existing per-mapping card rendering, just looped over the array instead
+   * of picked via a dropdown.
+   */
+  async findAllForClassMentor(classId: number, userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mentorMapping = await this.prisma.class_mentors.findFirst({
+      where: { class_id: classId, faculty_id: faculty.id },
+    });
+    if (!mentorMapping) {
+      throw new ForbiddenException({
+        message: 'You are not the mentor for this class',
+        errorCode: 'NOT_THE_MENTOR',
+      });
+    }
+
+    return this.subjectRecords.findAllForClass(classId);
+  }
+
+  /**
+   * Same per-category "is anything actually owed in this keyword bucket"
+   * heuristic as HodNoDueService's private categoryCleared — duplicated
+   * here (it's not exported) rather than the real grading logic, which
+   * lives in one place only. See HodNoDueService's doc comment for why
+   * laboratory_cleared/hostel_cleared are keyword-matched against whatever
+   * demand_categories rows a student actually has, instead of a fixed list.
+   */
+  private categoryCleared(
+    fees: { category: string; cleared: boolean }[],
+    keyword: string,
+  ): boolean {
+    const match = fees.filter((f) =>
+      f.category.toLowerCase().includes(keyword),
+    );
+    if (match.length === 0) return true;
+    return match.every((f) => f.cleared);
+  }
+
+  /**
+   * GET /me/mentee-classes/:class_id/no-due (Faculty/HoD — mentor of this
+   * class, via class_mentors).
+   *
+   * A class-mentor-scoped sibling of HodNoDueService.getList: same real,
+   * live fee/library/academics dues computation (NoDueService.
+   * getStudentsForClass + SubjectNoDueService.getAcademicsClearedMap), just
+   * scoped to the one class this faculty is the registered mentor of
+   * instead of resolving a whole department. No `department` field in the
+   * response — unlike the HoD view, this isn't department-scoped, so there
+   * is no department to report.
+   *
+   * NoDueService.getStudentsForClass itself still re-checks that classId
+   * belongs to the caller's OWN department (department_id resolved from
+   * their own faculty row) before running the dues query — the same
+   * constraint HodNoDueService's getList already lives with. That's an
+   * existing, unmodified invariant of the shared service, not something
+   * introduced here.
+   */
+  async getNoDueForClassMentor(
+    classId: number,
+    userId: number,
+    search: string | undefined,
+  ) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mentorMapping = await this.prisma.class_mentors.findFirst({
+      where: { class_id: classId, faculty_id: faculty.id },
+    });
+    if (!mentorMapping) {
+      throw new ForbiddenException({
+        message: 'You are not the mentor for this class',
+        errorCode: 'NOT_THE_MENTOR',
+      });
+    }
+
+    const cls = await this.prisma.classes.findUnique({
+      where: { id: classId },
+      select: { id: true, section: true },
+    });
+    if (!cls) {
+      throw new NotFoundException({
+        message: 'Class not found',
+        errorCode: 'CLASS_NOT_FOUND',
+      });
+    }
+
+    // Sequential — same pooler-capacity discipline as HodNoDueService.getList,
+    // which this mirrors; the real service filters by status server-side, so
+    // both buckets need their own call to get a full picture.
+    const pending = await this.noDue.getStudentsForClass(
+      classId,
+      {
+        limit: 100,
+        page: 1,
+        skip: 0,
+        search,
+        status: 'pending',
+      } as unknown as ListNoDueStudentsQueryDto,
+      userId,
+    );
+    const cleared = await this.noDue.getStudentsForClass(
+      classId,
+      {
+        limit: 100,
+        page: 1,
+        skip: 0,
+        search,
+        status: 'cleared',
+      } as unknown as ListNoDueStudentsQueryDto,
+      userId,
+    );
+    const all = [...pending.data, ...cleared.data];
+
+    const academicsByStudent = await this.subjectNoDue.getAcademicsClearedMap(
+      classId,
+      all.map((s) => s.id),
+    );
+
+    const rows = all.map((s) => ({
+      student_id: s.id,
+      student_id_no: s.student_id_no,
+      name: s.name,
+      class_label: cls.section,
+      library_cleared: s.library.cleared,
+      laboratory_cleared: this.categoryCleared(s.fees, 'lab'),
+      fees_cleared: s.fees.every((f) => f.cleared),
+      hostel_cleared: this.categoryCleared(s.fees, 'hostel'),
+      academics_cleared: academicsByStudent.get(s.id) ?? false,
+      issued: s.override_approved,
+    }));
+
+    const issuedCount = rows.filter((r) => r.issued).length;
+    return {
+      class: { id: cls.id, label: cls.section },
+      counts: {
+        in_scope: rows.length,
+        issued: issuedCount,
+        pending: rows.length - issuedCount,
+      },
+      rows,
+    };
+  }
+
+  /**
+   * PATCH /me/mentee-classes/:class_id/no-due/:student_id (Faculty/HoD —
+   * mentor of this class, via class_mentors).
+   *
+   * Mirrors HodNoDueService.patch: only `issue` does anything real (calls
+   * NoDueService.approveOverride, the real "approve override" action) — the
+   * category booleans have no per-category override column anywhere in the
+   * schema, so a patch touching only those is a no-op, same as the HoD
+   * version. Re-verifies the mentor owns this class AND that the student is
+   * actually enrolled in it before approving anything, since :class_id and
+   * :student_id both come from the URL and could otherwise be mismatched.
+   */
+  async patchNoDueForClassMentor(
+    classId: number,
+    studentId: number,
+    userId: number,
+    body: { issue?: boolean },
+  ) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mentorMapping = await this.prisma.class_mentors.findFirst({
+      where: { class_id: classId, faculty_id: faculty.id },
+    });
+    if (!mentorMapping) {
+      throw new ForbiddenException({
+        message: 'You are not the mentor for this class',
+        errorCode: 'NOT_THE_MENTOR',
+      });
+    }
+
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { id: true, class_id: true },
+    });
+    if (!student || student.class_id !== classId) {
+      throw new NotFoundException({
+        message: 'Student not found in this class',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    if (body.issue) {
+      return this.noDue.approveOverride(studentId, userId);
+    }
+    return { student_id: studentId, updated: false };
+  }
+
+  /**
+   * GET /me/mentee-classes/:class_id/higher-education (Faculty/HoD — mentor
+   * of this class, via class_mentors).
+   *
+   * Distinct from the generic student-facing higher-education opt-in
+   * screens — this is the Class Advisor's own view of which students IN
+   * THEIR MENTORED CLASS have registered a student_higher_education row.
+   * The mentor check happens here; StudentHigherEducationService.
+   * findAllForClass does no auth check of its own, by design (same split as
+   * findAllForClassMentor/SubjectRecordsService.findAllForClass above).
+   */
+  async findHigherEducationForClassMentor(classId: number, userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mentorMapping = await this.prisma.class_mentors.findFirst({
+      where: { class_id: classId, faculty_id: faculty.id },
+    });
+    if (!mentorMapping) {
+      throw new ForbiddenException({
+        message: 'You are not the mentor for this class',
+        errorCode: 'NOT_THE_MENTOR',
+      });
+    }
+
+    return this.higherEducation.findAllForClass(classId);
+  }
+
+  /**
+   * GET /me/mentee-classes/:class_id/entrepreneurship (Faculty/HoD — mentor
+   * of this class, via class_mentors).
+   *
+   * Same idea as findHigherEducationForClassMentor above, for
+   * student_entrepreneurship — the Advisor's own mentee-class view of who
+   * has registered a venture, not the generic EDC/Coordinator-facing screens.
+   */
+  async findEntrepreneurshipForClassMentor(classId: number, userId: number) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const mentorMapping = await this.prisma.class_mentors.findFirst({
+      where: { class_id: classId, faculty_id: faculty.id },
+    });
+    if (!mentorMapping) {
+      throw new ForbiddenException({
+        message: 'You are not the mentor for this class',
+        errorCode: 'NOT_THE_MENTOR',
+      });
+    }
+
+    return this.entrepreneurship.findAllForClass(classId);
   }
 
   private async resolveFacultyByUserId(userId: number) {

@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { Prisma } from '../../../../generated/prisma/client';
 import { UpdateResultDto } from './dto/update-result.dto';
 import { ScheduleResultDto } from './dto/schedule-result.dto';
 
@@ -94,45 +95,101 @@ export class ResultsService {
   }
 
   /** Real department scope + candidate count for one exam — backs the Result Publication table's SCOPE column. Candidates come from exam_marks (works for every exam type) rather than exam_registrations, which only applies to University-registered exams and would read 0 for internal CIA cycles that still have real recorded marks. */
-  private async scopeForExam(examId: number) {
-    const [mappings, totalDepartments] = await Promise.all([
-      this.prisma.exam_subject_mapping.findMany({
-        where: { exam_id: examId },
-        select: { id: true, classes: { select: { departments: { select: { code: true } } } } },
-      }),
-      this.prisma.departments.count(),
-    ]);
-
-    const mappingIds = mappings.map((m) => m.id);
-    const candidateRows = mappingIds.length
-      ? await this.prisma.exam_marks.findMany({ where: { exam_subject_mapping_id: { in: mappingIds }, is_absent: false }, select: { student_id: true }, distinct: ['student_id'] })
-      : [];
-
-    const departmentCodes = [...new Set(mappings.map((m) => m.classes?.departments?.code).filter((c): c is string => !!c))].sort();
-    const label = departmentCodes.length === 0 ? '—' : departmentCodes.length >= totalDepartments ? 'All programmes' : departmentCodes.join(', ');
-
-    return { departments: departmentCodes, label, candidates: candidateRows.length };
-  }
-
-  /** Real withheld-from-publication count for one exam: candidates flagged for malpractice on this exam, plus candidates with unpaid exam fees — the same two reasons a COE actually withholds a result. */
-  private async withheldForExam(examId: number) {
-    const [malpracticeStudents, dues] = await Promise.all([
-      this.prisma.malpractice_incidents.findMany({ where: { exam_id: examId }, select: { student_id: true }, distinct: ['student_id'] }),
-      this.prisma.exam_registrations.count({ where: { exam_id: examId, fee_status: 'unpaid' } }),
-    ]);
-
-    const malpractice = malpracticeStudents.length;
-    return { malpractice, dues, total: malpractice + dues };
-  }
-
+  /**
+   * Batched replacement for the old per-row scopeForExam/withheldForExam
+   * N+1 (was ~5 queries per result_publications row — see
+   * docs/production/PERFORMANCE_AUDIT.md §2 row 1). Computes scope
+   * (departments/candidates) and withheld (malpractice/dues) for every
+   * distinct exam_id in `rows` with a fixed 5 queries total, regardless of
+   * row count.
+   */
   private async enrich<T extends { exam_id: number }>(rows: T[]) {
-    return Promise.all(
-      rows.map(async (r) => ({
-        ...r,
-        scope: await this.scopeForExam(r.exam_id),
-        withheld: await this.withheldForExam(r.exam_id),
-      })),
+    if (rows.length === 0) return [];
+    const examIds = [...new Set(rows.map((r) => r.exam_id))];
+
+    const [
+      totalDepartments,
+      mappings,
+      candidateRows,
+      malpracticeRows,
+      duesRows,
+    ] = await Promise.all([
+      this.prisma.departments.count(),
+      this.prisma.exam_subject_mapping.findMany({
+        where: { exam_id: { in: examIds } },
+        select: {
+          exam_id: true,
+          classes: { select: { departments: { select: { code: true } } } },
+        },
+      }),
+      this.prisma.$queryRaw<
+        { exam_id: number; candidates: bigint }[]
+      >(Prisma.sql`
+          SELECT esm.exam_id, COUNT(DISTINCT em.student_id)::bigint AS candidates
+          FROM exam_marks em
+          JOIN exam_subject_mapping esm ON esm.id = em.exam_subject_mapping_id
+          WHERE esm.exam_id IN (${Prisma.join(examIds)}) AND em.is_absent = false
+          GROUP BY esm.exam_id
+        `),
+      this.prisma.$queryRaw<
+        { exam_id: number; malpractice: bigint }[]
+      >(Prisma.sql`
+          SELECT exam_id, COUNT(DISTINCT student_id)::bigint AS malpractice
+          FROM malpractice_incidents
+          WHERE exam_id IN (${Prisma.join(examIds)})
+          GROUP BY exam_id
+        `),
+      this.prisma.$queryRaw<{ exam_id: number; dues: bigint }[]>(Prisma.sql`
+          SELECT exam_id, COUNT(*)::bigint AS dues
+          FROM exam_registrations
+          WHERE exam_id IN (${Prisma.join(examIds)}) AND fee_status = 'unpaid'
+          GROUP BY exam_id
+        `),
+    ]);
+
+    const mappingsByExam = new Map<number, typeof mappings>();
+    for (const m of mappings) {
+      const list = mappingsByExam.get(m.exam_id) ?? [];
+      list.push(m);
+      mappingsByExam.set(m.exam_id, list);
+    }
+    const candidatesByExam = new Map(
+      candidateRows.map((r) => [r.exam_id, Number(r.candidates)]),
     );
+    const malpracticeByExam = new Map(
+      malpracticeRows.map((r) => [r.exam_id, Number(r.malpractice)]),
+    );
+    const duesByExam = new Map(
+      duesRows.map((r) => [r.exam_id, Number(r.dues)]),
+    );
+
+    return rows.map((r) => {
+      const mappingsForExam = mappingsByExam.get(r.exam_id) ?? [];
+      const departmentCodes = [
+        ...new Set(
+          mappingsForExam
+            .map((m) => m.classes?.departments?.code)
+            .filter((c): c is string => !!c),
+        ),
+      ].sort();
+      const label =
+        departmentCodes.length === 0
+          ? '—'
+          : departmentCodes.length >= totalDepartments
+            ? 'All programmes'
+            : departmentCodes.join(', ');
+      const malpractice = malpracticeByExam.get(r.exam_id) ?? 0;
+      const dues = duesByExam.get(r.exam_id) ?? 0;
+      return {
+        ...r,
+        scope: {
+          departments: departmentCodes,
+          label,
+          candidates: candidatesByExam.get(r.exam_id) ?? 0,
+        },
+        withheld: { malpractice, dues, total: malpractice + dues },
+      };
+    });
   }
 
   async findAll() {
@@ -159,10 +216,17 @@ export class ResultsService {
       // windows, certificates) that make a straight rollback unsafe.
       const liveRowsDesc = enriched
         .filter((r) => r.state === 'live')
-        .sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+        .sort(
+          (a, b) =>
+            new Date(b.published_at).getTime() -
+            new Date(a.published_at).getTime(),
+        );
       const mostRecentLiveId = liveRowsDesc[0]?.id ?? null;
 
-      return enriched.map((r) => ({ ...r, can_rollback: r.state === 'live' && r.id === mostRecentLiveId }));
+      return enriched.map((r) => ({
+        ...r,
+        can_rollback: r.state === 'live' && r.id === mostRecentLiveId,
+      }));
     } catch (err: any) {
       this.logger.error('DB error while fetching results', err);
       throw new InternalServerErrorException({
@@ -189,7 +253,10 @@ export class ResultsService {
       under_embargo: embargo.length,
       nearest_embargo_release: nearestEmbargoRelease,
       withheld_total: rows.reduce((s, r) => s + r.withheld.total, 0),
-      withheld_malpractice: rows.reduce((s, r) => s + r.withheld.malpractice, 0),
+      withheld_malpractice: rows.reduce(
+        (s, r) => s + r.withheld.malpractice,
+        0,
+      ),
       withheld_dues: rows.reduce((s, r) => s + r.withheld.dues, 0),
       candidates_covered: live.reduce((s, r) => s + r.scope.candidates, 0),
       live_set_count: live.length,
@@ -233,15 +300,22 @@ export class ResultsService {
   }
 
   async schedule(id: number, dto: ScheduleResultDto) {
-    const existing = await this.prisma.result_publications.findUnique({ where: { id } });
+    const existing = await this.prisma.result_publications.findUnique({
+      where: { id },
+    });
     if (!existing) {
-      throw new NotFoundException({ message: 'Result not found.', errorCode: 'RESULT_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Result not found.',
+        errorCode: 'RESULT_NOT_FOUND',
+      });
     }
 
     return this.prisma.result_publications.update({
       where: { id },
       data: {
-        scheduled_release_at: dto.scheduled_release_at ? new Date(dto.scheduled_release_at) : undefined,
+        scheduled_release_at: dto.scheduled_release_at
+          ? new Date(dto.scheduled_release_at)
+          : undefined,
         channels: dto.channels,
         state: dto.state,
       },
@@ -257,9 +331,15 @@ export class ResultsService {
     });
     for (const r of due) {
       try {
-        await this.prisma.result_publications.update({ where: { id: r.id }, data: { state: 'live' } });
+        await this.prisma.result_publications.update({
+          where: { id: r.id },
+          data: { state: 'live' },
+        });
       } catch (err) {
-        this.logger.error(`Failed to auto-release result publication ${r.id}`, err);
+        this.logger.error(
+          `Failed to auto-release result publication ${r.id}`,
+          err,
+        );
       }
     }
   }

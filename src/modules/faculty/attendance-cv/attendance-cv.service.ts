@@ -61,7 +61,12 @@ export class AttendanceCvService {
   ) {}
 
   private getBaseUrl(): string {
-    return process.env.ATTENDANCE_CV_BASE_URL || 'http://127.0.0.1:5000';
+    // Trailing slash stripped - paths below start with "/api/", and a
+    // copied deploy URL like "https://x.onrender.com/" would otherwise
+    // produce "//api/mark".
+    return (
+      process.env.ATTENDANCE_CV_BASE_URL || 'http://127.0.0.1:5000'
+    ).replace(/\/+$/, '');
   }
 
   private getApiKey(): string {

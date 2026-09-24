@@ -42,7 +42,13 @@ export class HodApprovalsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: DecideHodApprovalDto,
   ) {
-    return this.approvals.decideLeaveRequest(user, kind, id, body.decision);
+    return this.approvals.decideLeaveRequest(
+      user,
+      kind,
+      id,
+      body.decision,
+      body.remarks,
+    );
   }
 
   @Get('od-requests')
@@ -62,6 +68,12 @@ export class HodApprovalsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: DecideHodApprovalDto,
   ) {
-    return this.approvals.decideOdRequest(user, kind, id, body.decision);
+    return this.approvals.decideOdRequest(
+      user,
+      kind,
+      id,
+      body.decision,
+      body.remarks,
+    );
   }
 }

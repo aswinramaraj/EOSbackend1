@@ -8,6 +8,13 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { FacultyAttendanceService } from '../faculty/faculty-attendance/faculty-attendance.service';
 
+const TEACHING_DESIGNATION_RANK: Record<string, number> = {
+  'Professor & Head': 0,
+  Professor: 1,
+  'Associate Professor': 2,
+  'Assistant Professor': 3,
+};
+
 /**
  * Same Odd/Even semester convention duplicated in every hod service file
  * (see HodService's own copy for the canonical comment on why it's
@@ -31,6 +38,19 @@ function currentTermRange(today: Date): { start: Date; end: Date } {
 function yearLabel(semester: number | null): string | null {
   if (semester == null) return null;
   return ['I', 'II', 'III', 'IV'][Math.ceil(semester / 2) - 1] ?? null;
+}
+
+/** Inclusive day-count of [from,to] clamped to [rangeStart,rangeEnd] — 0 if there's no overlap at all. */
+function clampedDayCount(
+  from: Date,
+  to: Date,
+  rangeStart: Date,
+  rangeEnd: Date,
+): number {
+  const start = from < rangeStart ? rangeStart : from;
+  const end = to > rangeEnd ? rangeEnd : to;
+  if (end < start) return 0;
+  return Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
 }
 
 /**
@@ -103,14 +123,27 @@ export class HodFacultyStaffService {
           select: { category: true },
           distinct: ['category'],
         });
-      const designations = [
-        ...new Set([
-          ...facultyDesignationRows.map((d) => d.designation),
-          ...nonTeachingCategoryRows.map((c) => c.category),
-        ]),
+      // Teaching designations sorted by academic seniority (matches
+      // src/modules/admin/lib/faculty-wizard-config.ts's DESIGNATION_OPTIONS
+      // order on the frontend), not alphabetically — "Professor" would
+      // otherwise sort after "Associate Professor". Non-teaching categories
+      // have no such hierarchy, so they stay alphabetical and are appended
+      // after every teaching designation.
+      const teachingDesignations = [
+        ...new Set(facultyDesignationRows.map((d) => d.designation)),
       ]
-        .filter((d): d is string => Boolean(d))
+        .filter((d): d is NonNullable<typeof d> => Boolean(d))
+        .sort(
+          (a, b) =>
+            (TEACHING_DESIGNATION_RANK[a] ?? 99) -
+            (TEACHING_DESIGNATION_RANK[b] ?? 99),
+        );
+      const nonTeachingCategories: string[] = [
+        ...new Set(nonTeachingCategoryRows.map((c) => c.category)),
+      ]
+        .filter((d): d is NonNullable<typeof d> => Boolean(d))
         .sort();
+      const designations = [...teachingDesignations, ...nonTeachingCategories];
 
       const leaveRequestsPending = await this.prisma.faculty_leaves.count({
         where: {
@@ -118,6 +151,53 @@ export class HodFacultyStaffService {
           faculty: { department_id: departmentId },
         },
       });
+
+      // Casual/Sick Leave breakdown by real leave_type_id — Today (live
+      // headcount, leave window includes today) and This Term (total days
+      // consumed this term, clamped to the term's own date range). LOP is
+      // deliberately excluded: it isn't a leave_types row at all in this
+      // schema (only a payroll salary_payments.lop_days deduction, which
+      // has no write path anywhere in the API — always empty, so showing it
+      // here would be a fabricated number, not real data).
+      const today = new Date();
+      const todayStart = new Date(
+        Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()),
+      );
+      const { start: termStart, end: termEnd } = currentTermRange(today);
+      const approvedLeaveRows = await this.prisma.faculty_leaves.findMany({
+        where: {
+          hod_approval_status: 'approved',
+          hr_approval_status: 'approved',
+          faculty: { department_id: departmentId },
+          leave_types: { name: { in: ['Casual Leave', 'Sick Leave'] } },
+          from_date: { lte: termEnd },
+          to_date: { gte: termStart },
+        },
+        select: {
+          from_date: true,
+          to_date: true,
+          leave_types: { select: { name: true } },
+        },
+      });
+      const leaveTypeBreakdown = (['Casual Leave', 'Sick Leave'] as const).map(
+        (name) => {
+          const rows = approvedLeaveRows.filter(
+            (r) => r.leave_types?.name === name,
+          );
+          return {
+            leave_type: name,
+            today_count: rows.filter(
+              (r) => r.from_date <= todayStart && r.to_date >= todayStart,
+            ).length,
+            term_days: rows.reduce(
+              (sum, r) =>
+                sum +
+                clampedDayCount(r.from_date, r.to_date, termStart, termEnd),
+              0,
+            ),
+          };
+        },
+      );
 
       const activeCycle = await this.prisma.appraisal_cycles.findFirst({
         where: { is_active: true },
@@ -143,6 +223,31 @@ export class HodFacultyStaffService {
         });
       }
 
+      // This-term aggregate for the Faculty & Staff page's Today/This Term
+      // toggle — summed across every faculty member's own real
+      // faculty_daily_attendance rows for the academic year (the same
+      // per-row stats getList() already computes, just rolled up
+      // department-wide here instead of shown per person). Only faculty
+      // with at least one real record count toward the percentage, same
+      // "nothing recorded yet isn't a real 0%" convention as everywhere
+      // else in this file.
+      const termRows = facultyOverview.rows.filter(
+        (r) => r.full_days + r.half_days + r.absent + r.on_leave > 0,
+      );
+      const termFull = termRows.reduce((sum, r) => sum + r.full_days, 0);
+      const termHalf = termRows.reduce((sum, r) => sum + r.half_days, 0);
+      const termAbsent = termRows.reduce((sum, r) => sum + r.absent, 0);
+      const termOnLeave = termRows.reduce((sum, r) => sum + r.on_leave, 0);
+      const termOnDuty = facultyOverview.rows.reduce(
+        (sum, r) => sum + r.on_duty,
+        0,
+      );
+      const termDenominator = termFull + termHalf + termAbsent + termOnLeave;
+      const termPercentage =
+        termDenominator > 0
+          ? Math.round(((termFull + termHalf * 0.5) / termDenominator) * 100)
+          : 0;
+
       return {
         department: {
           id: department.id,
@@ -160,11 +265,19 @@ export class HodFacultyStaffService {
           on_leave: facultyOverview.today.on_leave,
           on_duty: facultyOverview.today.on_duty,
         },
+        faculty_attendance_term: {
+          percentage: termPercentage,
+          faculty_with_records: termRows.length,
+          on_roll: teachingCount,
+          on_leave_days: termOnLeave,
+          on_duty_days: termOnDuty,
+        },
         on_duty_today: {
           count: facultyOverview.today.on_duty,
           on_approved_leave: facultyOverview.today.on_leave,
         },
         leave_requests_pending: leaveRequestsPending,
+        leave_type_breakdown: leaveTypeBreakdown,
         appraisal: {
           closed: appraisalClosed,
           total: appraisalTotal,
@@ -211,6 +324,11 @@ export class HodFacultyStaffService {
         attendance_percent: number | null;
         load_hours: number | null;
         status_label: string | null;
+        cl_days_this_term: number | null;
+        sl_days_this_term: number | null;
+        on_cl_today: boolean | null;
+        on_sl_today: boolean | null;
+        total_leave_available: number | null;
       }[] = [];
 
       // Fetched without `search` here (unlike before) because the search
@@ -253,6 +371,91 @@ export class HodFacultyStaffService {
             (loadHoursById.get(s.faculty_id) ?? 0) + hours,
           );
         }
+
+        // Per-person Casual/Sick Leave — same source and same LOP exclusion
+        // reasoning as getOverview()'s department-wide leave_type_breakdown
+        // (LOP has no real leave_types row, so it stays off this table too,
+        // not just the KPI cards).
+        const today = new Date();
+        const todayStart = new Date(
+          Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()),
+        );
+        const { start: termStart, end: termEnd } = currentTermRange(today);
+        const leaveRows =
+          facultyIds.length > 0
+            ? await this.prisma.faculty_leaves.findMany({
+                where: {
+                  faculty_id: { in: facultyIds },
+                  hod_approval_status: 'approved',
+                  hr_approval_status: 'approved',
+                  leave_types: { name: { in: ['Casual Leave', 'Sick Leave'] } },
+                  from_date: { lte: termEnd },
+                  to_date: { gte: termStart },
+                },
+                select: {
+                  faculty_id: true,
+                  from_date: true,
+                  to_date: true,
+                  leave_types: { select: { name: true } },
+                },
+              })
+            : [];
+        const clDaysById = new Map<number, number>();
+        const slDaysById = new Map<number, number>();
+        const onClTodayById = new Set<number>();
+        const onSlTodayById = new Set<number>();
+        for (const r of leaveRows) {
+          if (r.faculty_id == null) continue;
+          const name = r.leave_types?.name;
+          if (name !== 'Casual Leave' && name !== 'Sick Leave') continue;
+          const days = clampedDayCount(
+            r.from_date,
+            r.to_date,
+            termStart,
+            termEnd,
+          );
+          const daysById = name === 'Casual Leave' ? clDaysById : slDaysById;
+          daysById.set(r.faculty_id, (daysById.get(r.faculty_id) ?? 0) + days);
+          if (r.from_date <= todayStart && r.to_date >= todayStart) {
+            (name === 'Casual Leave' ? onClTodayById : onSlTodayById).add(
+              r.faculty_id,
+            );
+          }
+        }
+
+        // Total leave available (allocated - used, summed across every
+        // leave type) from the same real faculty_leave_balances table the
+        // individual profile page's balance tiles already use — each
+        // faculty's own latest academic_year only, same "most recent
+        // balance row wins" convention as getFacultyProfile().
+        const balanceRows =
+          facultyIds.length > 0
+            ? await this.prisma.faculty_leave_balances.findMany({
+                where: { faculty_id: { in: facultyIds } },
+                select: {
+                  faculty_id: true,
+                  academic_year: true,
+                  allocated: true,
+                  used: true,
+                },
+              })
+            : [];
+        const latestYearById = new Map<number, string>();
+        for (const b of balanceRows) {
+          const current = latestYearById.get(b.faculty_id);
+          if (!current || b.academic_year > current) {
+            latestYearById.set(b.faculty_id, b.academic_year);
+          }
+        }
+        const availableById = new Map<number, number>();
+        for (const b of balanceRows) {
+          if (latestYearById.get(b.faculty_id) !== b.academic_year) continue;
+          availableById.set(
+            b.faculty_id,
+            (availableById.get(b.faculty_id) ?? 0) + (b.allocated - b.used),
+          );
+        }
+
         for (const f of facultyOverview.rows) {
           // No attendance_records ever for this faculty member — a real
           // 0% would misleadingly read as "always absent" instead of
@@ -282,6 +485,11 @@ export class HodFacultyStaffService {
               ? Math.round(loadHoursById.get(f.faculty_id)! * 10) / 10
               : null,
             status_label: f.today_status,
+            cl_days_this_term: clDaysById.get(f.faculty_id) ?? 0,
+            sl_days_this_term: slDaysById.get(f.faculty_id) ?? 0,
+            on_cl_today: onClTodayById.has(f.faculty_id),
+            on_sl_today: onSlTodayById.has(f.faculty_id),
+            total_leave_available: availableById.get(f.faculty_id) ?? 0,
           });
         }
       }
@@ -320,9 +528,27 @@ export class HodFacultyStaffService {
             attendance_percent: null,
             load_hours: null,
             status_label: null,
+            cl_days_this_term: null,
+            sl_days_this_term: null,
+            on_cl_today: null,
+            on_sl_today: null,
+            total_leave_available: null,
           });
         }
       }
+
+      // Same seniority ordering as the designation filter above — faculty by
+      // rank (Professor & Head down to Assistant Professor), then
+      // non-teaching staff alphabetically by category, each group name-sorted
+      // within itself rather than left in arbitrary id order.
+      rows.sort((a, b) => {
+        const rankA = TEACHING_DESIGNATION_RANK[a.designation] ?? 99;
+        const rankB = TEACHING_DESIGNATION_RANK[b.designation] ?? 99;
+        if (rankA !== rankB) return rankA - rankB;
+        if (a.designation !== b.designation)
+          return a.designation.localeCompare(b.designation);
+        return a.name.localeCompare(b.name);
+      });
 
       return { department: { code: department.code }, rows };
     } catch (err) {
@@ -433,14 +659,19 @@ export class HodFacultyStaffService {
             where: {
               faculty_id: facultyId,
               academic_year: academicYear!,
-              subject_id: { in: [...new Set(mappings.map((m) => m.subject_id))] },
+              subject_id: {
+                in: [...new Set(mappings.map((m) => m.subject_id))],
+              },
               class_id: { in: [...new Set(mappings.map((m) => m.class_id))] },
             },
             _count: { _all: true },
           })
         : [];
       const periodsByPair = new Map(
-        periodCounts.map((c) => [`${c.subject_id}|${c.class_id}`, c._count._all]),
+        periodCounts.map((c) => [
+          `${c.subject_id}|${c.class_id}`,
+          c._count._all,
+        ]),
       );
 
       const subjects = mappings.map((m) => ({
@@ -451,7 +682,8 @@ export class HodFacultyStaffService {
         semester: m.classes.current_semester,
         year_label: yearLabel(m.classes.current_semester),
         section: m.classes.section,
-        periods_per_week: periodsByPair.get(`${m.subject_id}|${m.class_id}`) ?? 0,
+        periods_per_week:
+          periodsByPair.get(`${m.subject_id}|${m.class_id}`) ?? 0,
       }));
       const totalPeriodsPerWeek = subjects.reduce(
         (sum, s) => sum + s.periods_per_week,

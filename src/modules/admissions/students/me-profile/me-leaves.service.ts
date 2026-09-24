@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StorageService } from 'src/modules/storage/storage.service';
 import { CreateLeaveDto } from './dto/create-leave.dto';
 
 function toDateOnly(date: Date): string {
@@ -23,7 +24,10 @@ function startOfToday(): Date {
 export class MeLeavesService {
   private readonly logger = new Logger(MeLeavesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   /**
    * POST /me/leaves
@@ -112,7 +116,61 @@ export class MeLeavesService {
       approved_by_warden_user_id: leave.approved_by_warden_user_id,
       also_on_hostel_leave: leave.also_on_hostel_leave,
       routed_to_warden: leave.routed_to_warden,
+      attachment_url: leave.attachment_url,
     };
+  }
+
+  /**
+   * POST /me/leaves/:id/attachment — creator-only (unlike OD attachments,
+   * a leave request has no team to share it with). Overwrites any previous
+   * attachment_url on re-upload rather than keeping history, matching the
+   * OD certificate_url pattern (last upload wins).
+   */
+  async uploadAttachment(
+    leaveId: number,
+    userId: number,
+    file: Express.Multer.File | undefined,
+  ) {
+    if (!file) {
+      throw new UnprocessableEntityException({
+        message: 'No file was uploaded',
+        errorCode: 'NO_FILE_UPLOADED',
+      });
+    }
+
+    const student = await this.prisma.students.findUnique({
+      where: { user_id: userId },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student profile not found for this account',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const leave = await this.prisma.student_leaves.findUnique({
+      where: { id: leaveId },
+      select: { id: true, student_id: true },
+    });
+    if (!leave || leave.student_id !== student.id) {
+      throw new NotFoundException({
+        message: 'Leave request not found',
+        errorCode: 'LEAVE_NOT_FOUND',
+      });
+    }
+
+    const path = `student-leaves/${leaveId}/attachment-${Date.now()}-${file.originalname}`;
+    const { url } = await this.storage.upload(file.buffer, path, file.mimetype);
+
+    const updated = await this.prisma.student_leaves.update({
+      where: { id: leaveId },
+      data: { attachment_url: url },
+      select: { id: true, attachment_url: true },
+    });
+
+    this.logger.log(`Leave ${leaveId} attachment uploaded by student=${student.id}`);
+    return updated;
   }
 
   private async insertLeave(

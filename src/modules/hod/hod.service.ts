@@ -10,6 +10,7 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { FacultyAttendanceService } from '../faculty/faculty-attendance/faculty-attendance.service';
 import { AnnouncementsService } from '../announcements/announcements/announcements.service';
 import { HodSopPopService } from './hod-sop-pop.service';
+import { KeyedTtlCache } from 'src/common/utils/ttl-cache.util';
 
 /** Same threshold already used by PrincipalDashboardService/PrincipalStudentsService — reused, not reinvented. */
 const ATTENDANCE_THRESHOLD_PERCENT = 75;
@@ -17,9 +18,6 @@ const ATTENDANCE_THRESHOLD_PERCENT = 75;
 interface AttendanceTotalsRow {
   present: bigint;
   on_roll: bigint;
-}
-interface PctRow {
-  pct: string | null;
 }
 interface CgpaRow {
   avg_cgpa: string | null;
@@ -114,6 +112,14 @@ function cgpaCte(departmentId: number, semester?: number) {
 export class HodService {
   private readonly logger = new Logger(HodService.name);
 
+  // cgpaCte is a 6-table-join-plus-LATERAL aggregate over exam_marks, run up
+  // to 3x in one dashboard request (overall + current-semester + previous-
+  // semester, for the term-over-term delta). Cached per (departmentId,
+  // scope) — TTL-only for now (no results_published-triggered eager
+  // invalidation yet); 5 min is a conservative pick pending real tuning.
+  // See docs/production/DATABASE_AUDIT.md §5 for the original recommendation.
+  private readonly cgpaCache = new KeyedTtlCache<CgpaRow[]>(5 * 60_000);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly facultyAttendance: FacultyAttendanceService,
@@ -177,41 +183,50 @@ export class HodService {
       const attendancePercentage =
         onRoll > 0 ? Math.round((present / onRoll) * 1000) / 10 : 0;
 
-      const studentCount = await this.prisma.students.count({
-        where: { status: 'active', classes: { department_id: departmentId } },
-      });
-      const classCount = await this.prisma.classes.count({
-        where: { department_id: departmentId },
-      });
-
-      const classPctRows = await this.prisma.$queryRaw<
-        (PctRow & { class_id: number })[]
+      // Combined into one round trip — was two separate .count() calls.
+      const [countsRow] = await this.prisma.$queryRaw<
+        { student_count: bigint; class_count: bigint }[]
       >(Prisma.sql`
-        SELECT cl.id AS class_id,
-          (COUNT(*) FILTER (WHERE ar.status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
-        FROM attendance_records ar
-        JOIN students st ON st.id = ar.student_id
-        JOIN classes cl ON cl.id = st.class_id
-        WHERE cl.department_id = ${departmentId} AND ${dateFilter}
-        GROUP BY cl.id
+        SELECT
+          (SELECT COUNT(*) FROM students st JOIN classes cl ON cl.id = st.class_id
+            WHERE cl.department_id = ${departmentId} AND st.status = 'active')::bigint AS student_count,
+          (SELECT COUNT(*) FROM classes WHERE department_id = ${departmentId})::bigint AS class_count
       `);
-      const classesAboveThreshold = classPctRows.filter(
-        (r) => r.pct !== null && Number(r.pct) >= ATTENDANCE_THRESHOLD_PERCENT,
+      const studentCount = Number(countsRow?.student_count ?? 0);
+      const classCount = Number(countsRow?.class_count ?? 0);
+
+      // Class-level and student-level attendance % share the exact same
+      // base join, just a different GROUP BY — combined into one round trip
+      // via a shared CTE instead of scanning attendance_records twice.
+      const pctRows = await this.prisma.$queryRaw<
+        { level: 'class' | 'student'; id: number; pct: string | null }[]
+      >(Prisma.sql`
+        WITH base AS (
+          SELECT ar.student_id, cl.id AS class_id, ar.status
+          FROM attendance_records ar
+          JOIN students st ON st.id = ar.student_id
+          JOIN classes cl ON cl.id = st.class_id
+          WHERE cl.department_id = ${departmentId} AND ${dateFilter}
+        )
+        SELECT 'class' AS level, class_id AS id,
+          (COUNT(*) FILTER (WHERE status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
+        FROM base GROUP BY class_id
+        UNION ALL
+        SELECT 'student' AS level, student_id AS id,
+          (COUNT(*) FILTER (WHERE status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
+        FROM base GROUP BY student_id
+      `);
+      const classesAboveThreshold = pctRows.filter(
+        (r) =>
+          r.level === 'class' &&
+          r.pct !== null &&
+          Number(r.pct) >= ATTENDANCE_THRESHOLD_PERCENT,
       ).length;
-
-      const studentPctRows = await this.prisma.$queryRaw<
-        (PctRow & { student_id: number })[]
-      >(Prisma.sql`
-        SELECT ar.student_id,
-          (COUNT(*) FILTER (WHERE ar.status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
-        FROM attendance_records ar
-        JOIN students st ON st.id = ar.student_id
-        JOIN classes cl ON cl.id = st.class_id
-        WHERE cl.department_id = ${departmentId} AND ${dateFilter}
-        GROUP BY ar.student_id
-      `);
-      const belowThresholdStudentCount = studentPctRows.filter(
-        (r) => r.pct !== null && Number(r.pct) < ATTENDANCE_THRESHOLD_PERCENT,
+      const belowThresholdStudentCount = pctRows.filter(
+        (r) =>
+          r.level === 'student' &&
+          r.pct !== null &&
+          Number(r.pct) < ATTENDANCE_THRESHOLD_PERCENT,
       ).length;
 
       // Faculty attendance — real punch/leave/OD precedence logic already
@@ -274,8 +289,9 @@ export class HodService {
         facultyReported = Number(reportedRow?.reported ?? 0);
       }
 
-      const [cgpaRow] = await this.prisma.$queryRaw<CgpaRow[]>(
-        cgpaCte(departmentId),
+      const [cgpaRow] = await this.cgpaCache.get(
+        `${departmentId}:overall`,
+        () => this.prisma.$queryRaw<CgpaRow[]>(cgpaCte(departmentId)),
       );
       const averageCgpaValue =
         cgpaRow?.avg_cgpa != null
@@ -294,13 +310,20 @@ export class HodService {
         const [currentSem, previousSem] = recentSemesters.map(
           (r) => r.semester,
         );
-        // Sequential — same pooler-capacity reasoning as every other query
-        // in this file (Supabase's session-mode pool is capped at 15).
-        const currentRow = await this.prisma.$queryRaw<CgpaRow[]>(
-          cgpaCte(departmentId, currentSem),
+        // Sequential — same pool-safety discipline as every other query in
+        // this file. Each semester's figure is independently cached below,
+        // so a repeat request only pays for whichever of the two is stale.
+        const currentRow = await this.cgpaCache.get(
+          `${departmentId}:${currentSem}`,
+          () =>
+            this.prisma.$queryRaw<CgpaRow[]>(cgpaCte(departmentId, currentSem)),
         );
-        const previousRow = await this.prisma.$queryRaw<CgpaRow[]>(
-          cgpaCte(departmentId, previousSem),
+        const previousRow = await this.cgpaCache.get(
+          `${departmentId}:${previousSem}`,
+          () =>
+            this.prisma.$queryRaw<CgpaRow[]>(
+              cgpaCte(departmentId, previousSem),
+            ),
         );
         const currentCgpa = currentRow[0]?.avg_cgpa;
         const previousCgpa = previousRow[0]?.avg_cgpa;
@@ -355,38 +378,42 @@ export class HodService {
 
       // Pending approvals — leaves/ODs department-scoped via the faculty
       // relation; the other 3 are the real student-side "awaiting HOD"
-      // queues (campus outings, student leaves, OD-hod-approvals). Sequential,
-      // not Promise.all — same pooler-capacity reasoning as every other
-      // query in this file.
-      const pendingLeaves = await this.prisma.faculty_leaves.count({
-        where: {
-          hod_approval_status: 'pending',
-          faculty: { department_id: departmentId },
-        },
-      });
-      const pendingOds = await this.prisma.faculty_od_requests.count({
-        where: {
-          hod_approval_status: 'pending',
-          faculty: { department_id: departmentId },
-        },
-      });
-      const pendingCampusOutings =
-        await this.prisma.campus_outing_requests.count({
-          where: {
-            status: 'faculty_approved',
-            students: { classes: { department_id: departmentId } },
-          },
-        });
-      const pendingStudentLeaves = await this.prisma.student_leaves.count({
-        where: {
-          status: 'faculty_approved',
-          students: { classes: { department_id: departmentId } },
-        },
-      });
-      const pendingOdApprovals =
-        await this.prisma.od_request_hod_approvals.count({
-          where: { status: 'pending', department_id: departmentId },
-        });
+      // queues (campus outings, student leaves, OD-hod-approvals). Combined
+      // into one round trip (was 5 separate .count() calls) — each is an
+      // independent scalar subquery, so this stays just as pool-safe as the
+      // sequential version while cutting 4 round trips.
+      const [pendingRow] = await this.prisma.$queryRaw<
+        {
+          pending_leaves: bigint;
+          pending_ods: bigint;
+          pending_campus_outings: bigint;
+          pending_student_leaves: bigint;
+          pending_od_approvals: bigint;
+        }[]
+      >(Prisma.sql`
+        SELECT
+          (SELECT COUNT(*) FROM faculty_leaves fl JOIN faculty f ON f.id = fl.faculty_id
+            WHERE fl.hod_approval_status = 'pending' AND f.department_id = ${departmentId})::bigint AS pending_leaves,
+          (SELECT COUNT(*) FROM faculty_od_requests fo JOIN faculty f ON f.id = fo.faculty_id
+            WHERE fo.hod_approval_status = 'pending' AND f.department_id = ${departmentId})::bigint AS pending_ods,
+          (SELECT COUNT(*) FROM campus_outing_requests co
+            JOIN students st ON st.id = co.student_id JOIN classes cl ON cl.id = st.class_id
+            WHERE co.status = 'faculty_approved' AND cl.department_id = ${departmentId})::bigint AS pending_campus_outings,
+          (SELECT COUNT(*) FROM student_leaves sl
+            JOIN students st ON st.id = sl.student_id JOIN classes cl ON cl.id = st.class_id
+            WHERE sl.status = 'faculty_approved' AND cl.department_id = ${departmentId})::bigint AS pending_student_leaves,
+          (SELECT COUNT(*) FROM od_request_hod_approvals
+            WHERE status = 'pending' AND department_id = ${departmentId})::bigint AS pending_od_approvals
+      `);
+      const pendingLeaves = Number(pendingRow?.pending_leaves ?? 0);
+      const pendingOds = Number(pendingRow?.pending_ods ?? 0);
+      const pendingCampusOutings = Number(
+        pendingRow?.pending_campus_outings ?? 0,
+      );
+      const pendingStudentLeaves = Number(
+        pendingRow?.pending_student_leaves ?? 0,
+      );
+      const pendingOdApprovals = Number(pendingRow?.pending_od_approvals ?? 0);
       const pendingRequestsCount =
         pendingCampusOutings + pendingStudentLeaves + pendingOdApprovals;
 

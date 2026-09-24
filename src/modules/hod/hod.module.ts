@@ -6,7 +6,6 @@ import { AppraisalModule } from 'src/modules/faculty/appraisal/appraisal.module'
 import { FacultyLeavesModule } from 'src/modules/faculty/faculty-leaves/faculty-leaves.module';
 import { FacultyOdRequestsModule } from 'src/modules/faculty/faculty-od-requests/faculty-od-requests.module';
 import { FacultyOdModule } from 'src/modules/faculty/faculty-od/faculty-od.module';
-import { HrQueriesModule } from 'src/modules/faculty/hr-queries/hr-queries.module';
 import { NoDueModule } from 'src/modules/faculty/no-due/no-due.module';
 import { SubjectNoDueModule } from 'src/modules/faculty/subject-no-due/subject-no-due.module';
 import { PayslipRequestsModule } from 'src/modules/faculty/payslip-requests/payslip-requests.module';
@@ -15,6 +14,8 @@ import { ServiceRequestsModule } from 'src/modules/procurement/service-requests/
 import { TimetableModule } from 'src/modules/faculty/timetable/timetable.module';
 import { LibrarySettingsModule } from 'src/modules/library/settings/settings.module';
 import { ExamResultsGridModule } from 'src/modules/academic-structure/exam-results/exam-results-grid.module';
+import { FeedbackModule } from 'src/modules/feedback/feedback/feedback.module';
+import { MeProfileModule } from 'src/modules/admissions/students/me-profile/me-profile.module';
 
 import { HodController } from './hod.controller';
 import { HodService } from './hod.service';
@@ -50,6 +51,11 @@ import { HodEmployeeService } from './hod-employee.service';
 
 import { HodStudentProfileService } from './hod-student-profile.service';
 
+import { HodFacultyFeedbackController } from './hod-faculty-feedback.controller';
+import { HodFacultyFeedbackService } from './hod-faculty-feedback.service';
+import { HodStudentFeedbackController } from './hod-student-feedback.controller';
+import { HodStudentFeedbackService } from './hod-student-feedback.service';
+
 @Module({
   imports: [
     PrismaModule,
@@ -59,7 +65,6 @@ import { HodStudentProfileService } from './hod-student-profile.service';
     FacultyLeavesModule,
     FacultyOdRequestsModule,
     FacultyOdModule,
-    HrQueriesModule,
     NoDueModule,
     SubjectNoDueModule,
     PayslipRequestsModule,
@@ -68,6 +73,8 @@ import { HodStudentProfileService } from './hod-student-profile.service';
     TimetableModule,
     LibrarySettingsModule,
     ExamResultsGridModule,
+    FeedbackModule,
+    MeProfileModule,
   ],
   controllers: [
     HodController,
@@ -79,6 +86,8 @@ import { HodStudentProfileService } from './hod-student-profile.service';
     HodAppraisalController,
     HodMyClassController,
     HodEmployeeController,
+    HodFacultyFeedbackController,
+    HodStudentFeedbackController,
   ],
   providers: [
     HodService,
@@ -99,6 +108,8 @@ import { HodStudentProfileService } from './hod-student-profile.service';
     HodMyClassService,
     HodEmployeeService,
     HodStudentProfileService,
+    HodFacultyFeedbackService,
+    HodStudentFeedbackService,
   ],
 })
 export class HodModule {}

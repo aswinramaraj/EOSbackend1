@@ -30,9 +30,16 @@ export class StudentAssignmentStatusController {
     private readonly studentAssignmentStatusService: StudentAssignmentStatusService,
   ) {}
 
-  /** POST /api/v1/student-assignment-status — Faculty only. */
+  /**
+   * POST /api/v1/student-assignment-status — Faculty/HoD (own assignment).
+   * HOD included so an HoD mapped to teach a subject (Switch Account's
+   * "Subject Handling Faculty" mode) can mark submissions the same as any
+   * other faculty - the service resolves the caller via faculty.user_id and
+   * still requires assignments.faculty_id to match, so this never lets an
+   * HoD mark another faculty's assignment.
+   */
   @Post()
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   @HttpCode(HttpStatus.CREATED)
   create(
     @Body() dto: CreateStudentAssignmentStatusDto,
@@ -41,9 +48,9 @@ export class StudentAssignmentStatusController {
     return this.studentAssignmentStatusService.create(dto, user.sub);
   }
 
-  /** GET /api/v1/student-assignment-status — Faculty (own assignments) / Student (own records). */
+  /** GET /api/v1/student-assignment-status — Faculty/HoD (own assignments) / Student (own records). */
   @Get()
-  @Roles(ROLES.FACULTY, ROLES.STUDENT)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.STUDENT)
   findAll(
     @Query() query: ListStudentAssignmentStatusQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -51,9 +58,9 @@ export class StudentAssignmentStatusController {
     return this.studentAssignmentStatusService.findAll(query, user);
   }
 
-  /** GET /api/v1/student-assignment-status/:id — Faculty (own assignments) / Student (own record). */
+  /** GET /api/v1/student-assignment-status/:id — Faculty/HoD (own assignments) / Student (own record). */
   @Get(':id')
-  @Roles(ROLES.FACULTY, ROLES.STUDENT)
+  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.STUDENT)
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -61,9 +68,9 @@ export class StudentAssignmentStatusController {
     return this.studentAssignmentStatusService.findOne(id, user);
   }
 
-  /** PATCH /api/v1/student-assignment-status/:id — Faculty only (owner of the assignment). */
+  /** PATCH /api/v1/student-assignment-status/:id — Faculty/HoD (owner of the assignment). */
   @Patch(':id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateStudentAssignmentStatusDto,
@@ -72,9 +79,9 @@ export class StudentAssignmentStatusController {
     return this.studentAssignmentStatusService.update(id, dto, user.sub);
   }
 
-  /** DELETE /api/v1/student-assignment-status/:id — Faculty only (owner of the assignment). */
+  /** DELETE /api/v1/student-assignment-status/:id — Faculty/HoD (owner of the assignment). */
   @Delete(':id')
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,

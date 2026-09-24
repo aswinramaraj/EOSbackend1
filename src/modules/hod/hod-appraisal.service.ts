@@ -133,10 +133,14 @@ export class HodAppraisalService {
     user: JwtPayload,
     id: number,
     decision: 'approved' | 'rejected',
+    remarks?: string,
   ) {
     return this.appraisal.update(
       id,
-      { status: decision === 'approved' ? 'hod_reviewed' : 'rejected' },
+      {
+        status: decision === 'approved' ? 'hod_reviewed' : 'rejected',
+        remarks,
+      },
       user,
     );
   }

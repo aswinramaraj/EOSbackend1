@@ -24,6 +24,7 @@ const OD_REQUEST_SELECT = {
   reason: true,
   mentor_approval_status: true,
   created_at: true,
+  od_request_parent_acknowledgements: { select: { acknowledged_at: true } },
   faculty: { select: { first_name: true, last_name: true } },
   od_teams: {
     select: {
@@ -72,6 +73,7 @@ interface OdRequestRow {
   reason: string | null;
   mentor_approval_status: string;
   created_at: Date;
+  od_request_parent_acknowledgements: { acknowledged_at: Date | null }[];
   faculty: { first_name: string; last_name: string | null } | null;
   od_teams: {
     unique_code: string;
@@ -160,6 +162,12 @@ function toResponse(request: OdRequestRow, hodApprovalStatus?: string) {
     // hodApprove/findAll), not any other department's.
     hod_approval_status: hodApprovalStatus ?? null,
     created_at: request.created_at,
+    // True once ANY linked parent of ANY team member has acknowledged -
+    // one badge for the whole request, matching student-leaves' own
+    // toResponse convention.
+    parent_acknowledged: request.od_request_parent_acknowledgements.some(
+      (a) => a.acknowledged_at !== null,
+    ),
   };
 }
 

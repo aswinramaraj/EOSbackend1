@@ -14,7 +14,7 @@ import { ListPrincipalStudentsQueryDto } from './dto/list-principal-students-que
 // Secretary added alongside Principal — Secretary is forced to her own
 // department (via non_teaching_staff.department_id) inside the service,
 // same department-scoping pattern as HOD; Principal/Admin stay institution-wide.
-@Roles(ROLES.PRINCIPAL, ROLES.SECRETARY)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT, ROLES.SECRETARY)
 export class PrincipalStudentsController {
   constructor(private readonly service: PrincipalStudentsService) {}
 

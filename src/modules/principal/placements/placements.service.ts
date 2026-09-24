@@ -70,47 +70,73 @@ interface DepartmentPlacement {
 export class PrincipalPlacementsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * `drive_type` is real once internship_drive_type.query.md runs — returns
+   * an empty set (no filtering) until then. This entire service is the
+   * full-time Placements dashboard (Internships gets its own dedicated
+   * view), so every full-time-statistics query below excludes internship
+   * drives once this activates.
+   */
+  private async internshipDriveIds(): Promise<Set<number>> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM placement_drives WHERE drive_type = 'internship'
+      `;
+      return new Set(rows.map((r) => r.id));
+    } catch {
+      return new Set();
+    }
+  }
+
   private async loadApplications() {
-    return this.prisma.student_drive_applications.findMany({
-      select: {
-        student_id: true,
-        status: true,
-        offered_package: true,
-        offer_response: true,
-        updated_at: true,
-        students: {
-          select: {
-            id: true,
-            class_id: true,
-            student_id_no: true,
-            register_no: true,
-            classes: {
-              select: {
-                department_id: true,
-                current_semester: true,
-                departments: { select: { code: true } },
+    const [applications, internshipIds] = await Promise.all([
+      this.prisma.student_drive_applications.findMany({
+        select: {
+          student_id: true,
+          status: true,
+          offered_package: true,
+          offer_response: true,
+          updated_at: true,
+          students: {
+            select: {
+              id: true,
+              class_id: true,
+              student_id_no: true,
+              register_no: true,
+              classes: {
+                select: {
+                  department_id: true,
+                  current_semester: true,
+                  departments: { select: { code: true } },
+                },
               },
-            },
-            courses: {
-              select: {
-                department_id: true,
-                departments: { select: { code: true } },
+              courses: {
+                select: {
+                  department_id: true,
+                  departments: { select: { code: true } },
+                },
               },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
+              users: { select: { email: true } },
             },
-            soa_applications: { select: { first_name: true, last_name: true } },
-            users: { select: { email: true } },
+          },
+          placement_drives: {
+            select: {
+              id: true,
+              package_lpa: true,
+              job_role: true,
+              companies: { select: { id: true, name: true } },
+            },
           },
         },
-        placement_drives: {
-          select: {
-            id: true,
-            package_lpa: true,
-            job_role: true,
-            companies: { select: { id: true, name: true } },
-          },
-        },
-      },
-    });
+      }),
+      this.internshipDriveIds(),
+    ]);
+    return applications.filter(
+      (a) => !internshipIds.has(a.placement_drives.id),
+    );
   }
 
   private studentName(s: {
@@ -139,19 +165,22 @@ export class PrincipalPlacementsService {
    * GET /me/principal/placements/summary
    */
   async summary() {
-    const [applications, drives, eligibleCount] = await Promise.all([
-      this.loadApplications(),
-      this.prisma.placement_drives.findMany({
-        select: {
-          id: true,
-          company_id: true,
-          scheduled_date: true,
-          status: true,
-          companies: { select: { name: true } },
-        },
-      }),
-      this.prisma.students.count({ where: { status: 'active' } }),
-    ]);
+    const [applications, allDrives, eligibleCount, internshipIds] =
+      await Promise.all([
+        this.loadApplications(),
+        this.prisma.placement_drives.findMany({
+          select: {
+            id: true,
+            company_id: true,
+            scheduled_date: true,
+            status: true,
+            companies: { select: { name: true } },
+          },
+        }),
+        this.prisma.students.count({ where: { status: 'active' } }),
+        this.internshipDriveIds(),
+      ]);
+    const drives = allDrives.filter((d) => !internshipIds.has(d.id));
 
     const placedApps = applications.filter((a) => a.status === 'placed');
     const placedStudentIds = new Set(placedApps.map((a) => a.student_id));
@@ -414,17 +443,27 @@ export class PrincipalPlacementsService {
     });
 
     const classIds = classes.map((c) => c.id);
-    const placedApps = await this.prisma.student_drive_applications.findMany({
-      where: { status: 'placed', students: { class_id: { in: classIds } } },
-      select: {
-        student_id: true,
-        offered_package: true,
-        students: { select: { class_id: true } },
-        placement_drives: {
-          select: { package_lpa: true, companies: { select: { name: true } } },
+    const [rawPlacedApps, internshipIds] = await Promise.all([
+      this.prisma.student_drive_applications.findMany({
+        where: { status: 'placed', students: { class_id: { in: classIds } } },
+        select: {
+          student_id: true,
+          offered_package: true,
+          students: { select: { class_id: true } },
+          placement_drives: {
+            select: {
+              id: true,
+              package_lpa: true,
+              companies: { select: { name: true } },
+            },
+          },
         },
-      },
-    });
+      }),
+      this.internshipDriveIds(),
+    ]);
+    const placedApps = rawPlacedApps.filter(
+      (a) => !internshipIds.has(a.placement_drives.id),
+    );
 
     return classes.map((cls) => {
       const strength = cls.students.length;

@@ -66,9 +66,9 @@ export class DrivesController {
     return this.drivesService.findAll(query);
   }
 
-  /** GET /drives/for-calendar — Principal only, every real drive's date for the merged academic calendar. */
+  /** GET /drives/for-calendar — Principal/Correspondent, every real drive's date for the merged academic calendar. */
   @Get('for-calendar')
-  @Roles(ROLES.PRINCIPAL)
+  @Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
   getAllDrivesForCalendar() {
     return this.drivesService.getAllDrivesForCalendar();
   }
@@ -94,6 +94,66 @@ export class DrivesController {
     return this.drivesService.getHistoryForDepartment(departmentId);
   }
 
+  /**
+   * GET /drives/institution/upcoming?search=&batch_id=&department_id=&class_id=
+   * — Principal/Correspondent (this screen is shared verbatim by both - see
+   * EOS-mobileapp's CorrespondentDashboard.tsx routing to the exact same
+   * principal/placements screen). Institution-wide, every filter optional/
+   * combinable - the filter row (Batch/Department/Class with Section +
+   * name-or-roll-no search), replacing the old single "pick a department
+   * first" gate.
+   */
+  @Get('institution/upcoming')
+  @Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
+  searchUpcomingForPrincipal(
+    @Query('search') search?: string,
+    @Query('batch_id') batchId?: string,
+    @Query('department_id') departmentId?: string,
+    @Query('class_id') classId?: string,
+  ) {
+    return this.drivesService.searchUpcomingForPrincipal({
+      search,
+      batch_id: batchId ? Number(batchId) : undefined,
+      department_id: departmentId ? Number(departmentId) : undefined,
+      class_id: classId ? Number(classId) : undefined,
+    });
+  }
+
+  /** GET /drives/institution/history — same filters as .../institution/upcoming above, also Correspondent. */
+  @Get('institution/history')
+  @Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
+  searchHistoryForPrincipal(
+    @Query('search') search?: string,
+    @Query('batch_id') batchId?: string,
+    @Query('department_id') departmentId?: string,
+    @Query('class_id') classId?: string,
+  ) {
+    return this.drivesService.searchHistoryForPrincipal({
+      search,
+      batch_id: batchId ? Number(batchId) : undefined,
+      department_id: departmentId ? Number(departmentId) : undefined,
+      class_id: classId ? Number(classId) : undefined,
+    });
+  }
+
+  /**
+   * GET /drives/institution/classes?batch_id=&department_id= — Principal/
+   * Correspondent. The Class+Section dropdown for the filter row above,
+   * narrowed by whichever of batch_id/department_id is already picked
+   * (both optional).
+   */
+  @Get('institution/classes')
+  @Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
+  getClassesForPrincipal(
+    @Query('batch_id') batchId?: string,
+    @Query('department_id') departmentId?: string,
+  ) {
+    return this.drivesService.getClassesForPrincipal({
+      batch_id: batchId ? Number(batchId) : undefined,
+      department_id: departmentId ? Number(departmentId) : undefined,
+    });
+  }
+
   // Declared before ':id' — Nest/Express match routes in declaration order,
   // and these static paths would otherwise be swallowed by ':id'.
   @Get('placement-stats')
@@ -106,7 +166,9 @@ export class DrivesController {
     return this.drivesService.getOffers();
   }
 
+  /** Also Principal/Correspondent - the Batch filter's own dropdown data on the Placements/Feedback pages above. */
   @Get('batches')
+  @Roles(ROLES.PLACEMENT, ROLES.ADMIN, ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
   getBatches() {
     return this.drivesService.getBatches();
   }
@@ -119,6 +181,12 @@ export class DrivesController {
   @Get('report')
   getDriveReport() {
     return this.drivesService.getDriveReport();
+  }
+
+  /** GET /drives/internships/report — Internships get their own dedicated list, mirroring 'report' but drive_type='internship' only. */
+  @Get('internships/report')
+  getInternshipDriveReport() {
+    return this.drivesService.getInternshipDriveReport();
   }
 
   // Declared before 'student-report/:studentId' — otherwise "export" would

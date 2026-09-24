@@ -25,4 +25,9 @@ export class ListDrivesQueryDto extends PaginationDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   upcoming?: boolean;
+
+  /** Real once internship_drive_type.query.md runs. Omitted defaults to 'full_time' — Internships get their own dedicated list (GET /drives/internships/report), so this endpoint never mixes the two by accident. */
+  @IsOptional()
+  @IsIn(['full_time', 'internship'])
+  drive_type?: 'full_time' | 'internship';
 }

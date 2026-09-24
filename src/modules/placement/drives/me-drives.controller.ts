@@ -36,6 +36,13 @@ export class MeDrivesController {
     return this.drivesService.getUpcomingDrivesForFaculty();
   }
 
+  /** GET /me/upcoming-internship-drives — Internships get their own dedicated tile, mirroring 'upcoming-drives' but drive_type='internship' only. */
+  @Get('upcoming-internship-drives')
+  @Roles(ROLES.FACULTY, ROLES.HOD)
+  getUpcomingInternshipDrives() {
+    return this.drivesService.getUpcomingInternshipDrivesForFaculty();
+  }
+
   /** GET /me/upcoming-drives/:driveId/applications — real per-mentee
    * application status/round for this drive (student_drive_applications),
    * scoped to the caller's own mentee classes. */
@@ -61,6 +68,19 @@ export class MeDrivesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.drivesService.getStudentPlacementHistoryForMentor(
+      studentId,
+      user.sub,
+    );
+  }
+
+  /** GET /me/mentored-students/:studentId/internship-history — internship-only mirror of 'placement-history'. */
+  @Get('mentored-students/:studentId/internship-history')
+  @Roles(ROLES.FACULTY)
+  getStudentInternshipHistory(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.drivesService.getStudentInternshipHistoryForMentor(
       studentId,
       user.sub,
     );
@@ -97,5 +117,39 @@ export class MeDrivesController {
       studentId,
       user.sub,
     );
+  }
+
+  /**
+   * GET /me/department-drive-history (HoD only) — drive-centric department
+   * placement history: every concluded drive with at least one department
+   * applicant, each carrying the list of department students who
+   * applied/attended it. Distinct from department-students/:id/placement-
+   * history above (student-centric: pick a student, see their own drive
+   * history) - this is the other direction (pick a drive, see who from the
+   * department applied), scoped the same way (own department via faculty
+   * row) and optionally narrowed to one class via ?class_id=, same as
+   * department-students.
+   */
+  @Get('department-drive-history')
+  @Roles(ROLES.HOD)
+  getDepartmentDriveHistory(
+    @CurrentUser() user: JwtPayload,
+    @Query('class_id', new ParseIntPipe({ optional: true })) classId?: number,
+  ) {
+    return this.drivesService.getDriveHistoryForHod(user.sub, classId);
+  }
+
+  /**
+   * GET /me/department-students/:studentId/profile (HoD only — student's
+   * class must belong to the HoD's own department). Full profile — same
+   * shape as the Placement Cell's own student detail page.
+   */
+  @Get('department-students/:studentId/profile')
+  @Roles(ROLES.HOD)
+  getDepartmentStudentProfile(
+    @Param('studentId', ParseIntPipe) studentId: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.drivesService.getStudentProfileForHod(studentId, user.sub);
   }
 }

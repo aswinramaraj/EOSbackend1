@@ -469,13 +469,30 @@ export class PrincipalFacultyService {
    *  - next: nearest real upcoming invigilation_duties row (the only real
    *    "scheduled duty" concept in the schema) — null if none scheduled
    */
-  async getCoordination(user: JwtPayload, departmentId?: number) {
+  async getCoordination(user: JwtPayload, departmentId?: number, search?: string) {
     const effectiveDepartmentId = await this.resolveEffectiveDepartmentId(user, departmentId);
-    const faculty = await this.prisma.faculty.findMany({
+    const allFaculty = await this.prisma.faculty.findMany({
       where: { status: 'active', department_id: effectiveDepartmentId },
-      select: { id: true, first_name: true, last_name: true, designation: true, department_id: true, departments: { select: { code: true } } },
+      select: {
+        id: true,
+        first_name: true,
+        last_name: true,
+        designation: true,
+        department_id: true,
+        profile_url: true,
+        departments: { select: { code: true, name: true } },
+      },
       orderBy: { first_name: 'asc' },
     });
+    // Filtered in application code rather than a Prisma `OR` on
+    // first_name/last_name individually - a two-word query like "Uday
+    // Rajan" needs to match the CONCATENATED full name, not either half
+    // alone. Department-scoped faculty counts are small (tens, not
+    // thousands) so this is cheap.
+    const trimmedSearch = search?.trim().toLowerCase();
+    const faculty = trimmedSearch
+      ? allFaculty.filter((f) => `${f.first_name} ${f.last_name}`.toLowerCase().includes(trimmedSearch))
+      : allFaculty;
     const ids = faculty.map((f) => f.id);
     if (ids.length === 0) return [];
 
@@ -568,6 +585,10 @@ export class PrincipalFacultyService {
         name: `${f.first_name} ${f.last_name}`,
         designation: f.designation,
         department_code: f.departments?.code ?? null,
+        department_name: f.departments?.name ?? null,
+        // Same faculty.profile_url column getFacultyProfile exposes as
+        // photo_url (see this file's own comment there).
+        photo_url: f.profile_url,
         load_hrs: load,
         duties: dutiesByFaculty.get(f.id) ?? 0,
         mentees,

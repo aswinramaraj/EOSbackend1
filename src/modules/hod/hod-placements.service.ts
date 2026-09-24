@@ -7,6 +7,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { buildMultiWordNameSql } from 'src/common/utils/name-search.util';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
 function yearLabel(semester: number | null): string {
@@ -45,6 +46,32 @@ interface TopRecruiterRow {
   offers: bigint;
 }
 
+interface InternshipDriveRow {
+  id: number;
+  job_role: string | null;
+  stipend_amount: string | null;
+  duration_months: number | null;
+  scheduled_date: Date;
+  registration_start: Date | null;
+  registration_end: Date | null;
+  status: string;
+  company_name: string;
+}
+
+interface InternshipStudentRow {
+  student_id: number;
+  student_id_no: string;
+  first_name: string;
+  last_name: string | null;
+  class_id: number;
+  section: string;
+  current_semester: number | null;
+  status: string | null;
+  company_name: string | null;
+  stipend_amount: string | null;
+  offers: bigint;
+}
+
 /**
  * GET /hod/placements/drives|students|history — department-scoped
  * placement data, extending HodService's own dept-scoped placements query
@@ -73,14 +100,35 @@ export class HodPlacementsService {
     return faculty.department_id;
   }
 
+  /**
+   * `drive_type` is real once internship_drive_type.query.md runs — returns
+   * an empty set (no filtering) until then. Used to exclude internship
+   * drives from this full-time-placement view (Internships gets its own
+   * dedicated HoD view) via `id: { notIn: [...] }`, since `drive_type`
+   * itself isn't in the Prisma Client's generated types yet.
+   */
+  private async internshipDriveIds(): Promise<Set<number>> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM placement_drives WHERE drive_type = 'internship'
+      `;
+      return new Set(rows.map((r) => r.id));
+    } catch {
+      return new Set();
+    }
+  }
+
   /** Upcoming drives are institution-wide (a drive isn't department-specific — any eligible student from any department can apply), matching how placement_drives has no department_id column. */
   async getDrives() {
     try {
+      const internshipIds = await this.internshipDriveIds();
       const drives = await this.prisma.placement_drives.findMany({
         where: {
           scheduled_date: {
             gte: new Date(new Date().toISOString().slice(0, 10)),
           },
+          id:
+            internshipIds.size > 0 ? { notIn: [...internshipIds] } : undefined,
         },
         orderBy: { scheduled_date: 'asc' },
         select: {
@@ -109,6 +157,180 @@ export class HodPlacementsService {
       }));
     } catch (err) {
       this.logger.error('DB error listing HoD placement drives', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * GET /hod/internships/drives — institution-wide upcoming internship
+   * drives (same "not department-specific" reasoning as getDrives() above).
+   * Real once internship_drive_type.query.md runs; empty array until then.
+   */
+  async getInternshipDrives() {
+    try {
+      const rows = await this.prisma.$queryRaw<InternshipDriveRow[]>`
+        SELECT pd.id, pd.job_role, pd.stipend_amount::text AS stipend_amount, pd.duration_months,
+          pd.scheduled_date, pd.registration_start, pd.registration_end, pd.status,
+          c.name AS company_name
+        FROM placement_drives pd
+        JOIN companies c ON c.id = pd.company_id
+        WHERE pd.drive_type = 'internship' AND pd.scheduled_date >= CURRENT_DATE
+        ORDER BY pd.scheduled_date ASC
+      `;
+      return rows.map((d) => ({
+        id: d.id,
+        company_name: d.company_name,
+        job_role: d.job_role,
+        stipend_amount:
+          d.stipend_amount != null ? Number(d.stipend_amount) : null,
+        duration_months: d.duration_months,
+        scheduled_date: toDateOnly(d.scheduled_date)!,
+        registration_start: toDateOnly(d.registration_start),
+        registration_end: toDateOnly(d.registration_end),
+        status: d.status,
+      }));
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'drive_type')) return [];
+      this.logger.error('DB error listing HoD internship drives', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * GET /hod/internships/students — department-scoped internship roster,
+   * mirroring getStudents() but for drive_type='internship' only. Real
+   * once internship_drive_type.query.md runs; empty roster (not an error)
+   * until then.
+   */
+  async getInternshipStudents(
+    user: JwtPayload,
+    search?: string,
+    classId?: number,
+  ) {
+    const departmentId = await this.resolveDepartmentId(user);
+    try {
+      const department = await this.prisma.departments.findUnique({
+        where: { id: departmentId },
+        select: { id: true, name: true, code: true },
+      });
+      if (!department) {
+        throw new NotFoundException({
+          message: 'Department not found.',
+          errorCode: 'DEPARTMENT_NOT_FOUND',
+        });
+      }
+
+      const classes = await this.prisma.classes.findMany({
+        where: { department_id: departmentId },
+        select: { id: true, section: true, current_semester: true },
+        orderBy: [{ current_semester: 'asc' }, { section: 'asc' }],
+      });
+
+      const nameSql = buildMultiWordNameSql(
+        search,
+        Prisma.raw('soa.first_name'),
+        Prisma.raw('soa.last_name'),
+      );
+      const searchClause = !search
+        ? Prisma.empty
+        : nameSql === Prisma.empty
+          ? Prisma.sql`AND st.student_id_no ILIKE ${`%${search}%`}`
+          : Prisma.sql`AND (${nameSql} OR st.student_id_no ILIKE ${`%${search}%`})`;
+      const classClause = classId
+        ? Prisma.sql`AND st.class_id = ${classId}`
+        : Prisma.empty;
+
+      let rows: InternshipStudentRow[];
+      try {
+        rows = await this.prisma.$queryRaw<InternshipStudentRow[]>(Prisma.sql`
+          WITH best_app AS (
+            SELECT DISTINCT ON (sda.student_id) sda.student_id, sda.status,
+              pd.stipend_amount::text AS stipend_amount, c.name AS company_name
+            FROM student_drive_applications sda
+            JOIN placement_drives pd ON pd.id = sda.drive_id
+            JOIN companies c ON c.id = pd.company_id
+            WHERE pd.drive_type = 'internship'
+            ORDER BY sda.student_id, (sda.status = 'placed') DESC, sda.updated_at DESC
+          ),
+          offer_counts AS (
+            SELECT sda.student_id, COUNT(*) FILTER (WHERE sda.status = 'placed')::bigint AS offers
+            FROM student_drive_applications sda
+            JOIN placement_drives pd ON pd.id = sda.drive_id
+            WHERE pd.drive_type = 'internship'
+            GROUP BY sda.student_id
+          )
+          SELECT st.id AS student_id, st.student_id_no, soa.first_name, soa.last_name,
+            st.class_id, cl.section, cl.current_semester,
+            ba.status, ba.company_name, ba.stipend_amount,
+            COALESCE(oc.offers, 0)::bigint AS offers
+          FROM students st
+          JOIN classes cl ON cl.id = st.class_id
+          LEFT JOIN soa_applications soa ON soa.id = st.soa_application_id
+          LEFT JOIN best_app ba ON ba.student_id = st.id
+          LEFT JOIN offer_counts oc ON oc.student_id = st.id
+          WHERE cl.department_id = ${departmentId} AND st.status = 'active'
+          ${classClause} ${searchClause}
+          ORDER BY st.student_id_no ASC
+        `);
+      } catch (err) {
+        if (!isUndefinedColumnError(err, 'drive_type')) throw err;
+        rows = [];
+      }
+
+      let placed = 0;
+      let inProcess = 0;
+      let unplaced = 0;
+      const outRows = rows.map((r) => {
+        const status: 'placed' | 'in_process' | 'unplaced' =
+          r.status === 'placed'
+            ? 'placed'
+            : r.status != null && r.status !== 'rejected'
+              ? 'in_process'
+              : 'unplaced';
+        if (status === 'placed') placed++;
+        else if (status === 'in_process') inProcess++;
+        else unplaced++;
+        return {
+          student_id: r.student_id,
+          student_id_no: r.student_id_no,
+          name: `${r.first_name ?? ''} ${r.last_name ?? ''}`.trim() || null,
+          class_label: `${yearLabel(r.current_semester)}-${r.section}`,
+          company: r.company_name,
+          stipend_amount:
+            status === 'placed' && r.stipend_amount != null
+              ? Number(r.stipend_amount)
+              : null,
+          offers: Number(r.offers),
+          status,
+        };
+      });
+
+      return {
+        department: {
+          id: department.id,
+          name: department.name,
+          code: department.code,
+        },
+        classes: classes.map((c) => ({
+          class_id: c.id,
+          section: c.section,
+          semester: c.current_semester ?? 0,
+          year_label: yearLabel(c.current_semester),
+          class_label: `${yearLabel(c.current_semester)}-${c.section}`,
+        })),
+        selected_class_id: classId ?? null,
+        counts: { placed, in_process: inProcess, unplaced },
+        rows: outRows,
+      };
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      this.logger.error('DB error listing HoD internship students', err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -153,11 +375,17 @@ export class HodPlacementsService {
       const classClause = classId
         ? Prisma.sql`AND st.class_id = ${classId}`
         : Prisma.empty;
+      const internshipIds = await this.internshipDriveIds();
+      const internshipFilter =
+        internshipIds.size > 0
+          ? Prisma.sql`AND pd.id NOT IN (${Prisma.join([...internshipIds])})`
+          : Prisma.empty;
 
       // One row per student's BEST application (placed wins over anything
       // else; otherwise the most recently updated application) — a student
       // can apply to many drives, but the roster only needs one status per
-      // student.
+      // student. Full-time only — internship drives excluded once
+      // drive_type exists (Internships gets its own dedicated view).
       const rows = await this.prisma.$queryRaw<StudentRow[]>(Prisma.sql`
         WITH best_app AS (
           SELECT DISTINCT ON (sda.student_id) sda.student_id, sda.status, sda.offered_package,
@@ -165,12 +393,15 @@ export class HodPlacementsService {
           FROM student_drive_applications sda
           JOIN placement_drives pd ON pd.id = sda.drive_id
           JOIN companies c ON c.id = pd.company_id
+          WHERE 1=1 ${internshipFilter}
           ORDER BY sda.student_id, (sda.status = 'placed') DESC, sda.updated_at DESC
         ),
         offer_counts AS (
-          SELECT student_id, COUNT(*) FILTER (WHERE status = 'placed')::bigint AS offers
-          FROM student_drive_applications
-          GROUP BY student_id
+          SELECT sda.student_id, COUNT(*) FILTER (WHERE sda.status = 'placed')::bigint AS offers
+          FROM student_drive_applications sda
+          JOIN placement_drives pd ON pd.id = sda.drive_id
+          WHERE 1=1 ${internshipFilter}
+          GROUP BY sda.student_id
         )
         SELECT st.id AS student_id, st.student_id_no, soa.first_name, soa.last_name,
           st.class_id, cl.section, cl.current_semester,
@@ -268,7 +499,19 @@ export class HodPlacementsService {
         return { department: { code: department.code }, rows: [] };
       }
       const batchIds = batches.map((b) => b.id);
+      const internshipIds = await this.internshipDriveIds();
+      const internshipFilter =
+        internshipIds.size > 0
+          ? Prisma.sql`AND pd.id NOT IN (${Prisma.join([...internshipIds])})`
+          : Prisma.empty;
+      const placedInternshipFilter =
+        internshipIds.size > 0
+          ? Prisma.sql`AND sda.drive_id NOT IN (${Prisma.join([...internshipIds])})`
+          : Prisma.empty;
 
+      // Full-time placement history only — internship completions excluded
+      // from "placed"/avg_package once drive_type exists (Internships gets
+      // its own dedicated history view).
       const aggRows = await this.prisma.$queryRaw<BatchAggRow[]>(Prisma.sql`
         WITH dept_students AS (
           SELECT st.id AS student_id, cl.batch_id
@@ -277,8 +520,8 @@ export class HodPlacementsService {
         )
         SELECT ds.batch_id,
           COUNT(DISTINCT ds.student_id)::bigint AS eligible,
-          COUNT(DISTINCT sda.student_id) FILTER (WHERE sda.status = 'placed')::bigint AS placed,
-          AVG(sda.offered_package) FILTER (WHERE sda.status = 'placed')::text AS avg_package
+          COUNT(DISTINCT sda.student_id) FILTER (WHERE sda.status = 'placed' ${placedInternshipFilter})::bigint AS placed,
+          AVG(sda.offered_package) FILTER (WHERE sda.status = 'placed' ${placedInternshipFilter})::text AS avg_package
         FROM dept_students ds
         LEFT JOIN student_drive_applications sda ON sda.student_id = ds.student_id
         GROUP BY ds.batch_id
@@ -299,6 +542,7 @@ export class HodPlacementsService {
           JOIN companies c ON c.id = pd.company_id
           JOIN dept_students ds ON ds.student_id = sda.student_id
           WHERE sda.status = 'placed'
+          ${internshipFilter}
           GROUP BY ds.batch_id, c.name
         )
         SELECT DISTINCT ON (batch_id) batch_id, company_name, offers

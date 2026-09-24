@@ -38,13 +38,16 @@ export class StudentOdsController {
   }
 
   /**
-   * PATCH /api/v1/me/student-ods/:id/faculty-approve — Faculty only (the
+   * PATCH /api/v1/me/student-ods/:id/faculty-approve — Faculty/HoD (the
    * mentor of the requesting team's creator). The mentor gate on the
-   * two-stage chain (mentor, then each member's department HoD).
+   * two-stage chain (mentor, then each member's department HoD). HOD
+   * included so an HoD who also mentors a class (Switch Account's "Class
+   * Advisor" mode) can approve as that mentor, same precedent as
+   * student-leaves.controller.ts's facultyApprove.
    */
   @Patch('student-ods/:id/faculty-approve')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   facultyApprove(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: FacultyApproveOdDto,

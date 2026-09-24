@@ -8,6 +8,7 @@ import {
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { paginate } from 'src/common/dto/pagination.dto';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import { FindPhotocopyRequestsQueryDto } from './dto/find-photocopy-requests-query.dto';
 import { UpdatePhotocopyRequestDto } from './dto/update-photocopy-request.dto';
 import { CreatePhotocopyRequestDto } from './dto/create-photocopy-request.dto';
@@ -32,7 +33,12 @@ const INCLUDE = {
           id: true,
           exam_id: true,
           subjects: { select: { id: true, name: true, subject_code: true } },
-          classes: { select: { department_id: true, departments: { select: { code: true, name: true } } } },
+          classes: {
+            select: {
+              department_id: true,
+              departments: { select: { code: true, name: true } },
+            },
+          },
         },
       },
     },
@@ -52,24 +58,46 @@ export class PhotocopyRequestsService {
 
   /** POST /photocopy-requests — counter entry (COE is the only role with access to this controller at all, so there's no separate student-vs-counter path to widen here). */
   async create(dto: CreatePhotocopyRequestDto) {
-    const examMark = await this.prisma.exam_marks.findUnique({ where: { id: dto.exam_marks_id } });
+    const examMark = await this.prisma.exam_marks.findUnique({
+      where: { id: dto.exam_marks_id },
+    });
     if (!examMark) {
-      throw new NotFoundException({ message: 'Exam marks record not found.', errorCode: 'EXAM_MARKS_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Exam marks record not found.',
+        errorCode: 'EXAM_MARKS_NOT_FOUND',
+      });
     }
-    const student = await this.prisma.students.findUnique({ where: { id: dto.student_id } });
+    const student = await this.prisma.students.findUnique({
+      where: { id: dto.student_id },
+    });
     if (!student) {
-      throw new NotFoundException({ message: 'Student not found.', errorCode: 'STUDENT_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Student not found.',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
     }
 
     const existing = await this.prisma.photocopy_requests.findUnique({
-      where: { student_id_exam_marks_id: { student_id: dto.student_id, exam_marks_id: dto.exam_marks_id } },
+      where: {
+        student_id_exam_marks_id: {
+          student_id: dto.student_id,
+          exam_marks_id: dto.exam_marks_id,
+        },
+      },
     });
     if (existing) {
-      throw new ConflictException({ message: 'A photocopy request already exists for this exam mark.', errorCode: 'PHOTOCOPY_REQUEST_EXISTS' });
+      throw new ConflictException({
+        message: 'A photocopy request already exists for this exam mark.',
+        errorCode: 'PHOTOCOPY_REQUEST_EXISTS',
+      });
     }
 
     const created = await this.prisma.photocopy_requests.create({
-      data: { exam_marks_id: dto.exam_marks_id, student_id: dto.student_id, fee_amount: dto.fee_amount },
+      data: {
+        exam_marks_id: dto.exam_marks_id,
+        student_id: dto.student_id,
+        fee_amount: dto.fee_amount,
+      },
       include: INCLUDE,
     });
     return withNumericFee(created);
@@ -127,6 +155,9 @@ export class PhotocopyRequestsService {
         },
         include: INCLUDE,
       });
+
+      await this.trySetDecisionRemarks(id, dto.decision_remarks);
+
       return withNumericFee(updated);
     } catch (err: unknown) {
       if (
@@ -145,6 +176,30 @@ export class PhotocopyRequestsService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
+    }
+  }
+
+  /**
+   * Real once decision_reason_columns.query.md's photocopy_requests.
+   * decision_remarks runs — silently no-ops (reason not persisted) until
+   * then, same convention as HodApprovalsService's trySet*Remarks methods.
+   */
+  private async trySetDecisionRemarks(
+    id: number,
+    decisionRemarks: string | undefined,
+  ) {
+    if (!decisionRemarks) return;
+    try {
+      await this.prisma
+        .$executeRaw`UPDATE photocopy_requests SET decision_remarks = ${decisionRemarks} WHERE id = ${id}`;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'decision_remarks')) {
+        this.logger.warn(
+          'photocopy_requests.decision_remarks missing — see decision_reason_columns.query.md; reason not persisted',
+        );
+        return;
+      }
+      throw err;
     }
   }
 }

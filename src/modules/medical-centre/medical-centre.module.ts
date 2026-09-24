@@ -71,5 +71,8 @@ import { MedicalAppointmentsService } from './medical-appointments.service';
     MedicalCentreAppointmentsService,
     MedicalAppointmentsService,
   ],
+  // MedicalAppointmentsService exported so ParentsModule can reuse
+  // listForStudentId for a parent's read-only appointment history view.
+  exports: [MedicalAppointmentsService],
 })
 export class MedicalCentreModule {}

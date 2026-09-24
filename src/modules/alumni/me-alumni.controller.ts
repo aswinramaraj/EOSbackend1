@@ -20,6 +20,7 @@ import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { MeAlumniGroupService } from './me-alumni-group.service';
 import { MeAlumniMessagesService } from './me-alumni-messages.service';
 import { AlumniAnnouncementsService } from './alumni-announcements.service';
+import { MeAlumniExamStatusService } from './me-alumni-exam-status.service';
 import { UpdateAlumniProfileDto } from './dto/update-alumni-profile.dto';
 import { CreateAlumniMessageDto } from './dto/create-alumni-message.dto';
 
@@ -32,6 +33,7 @@ export class MeAlumniController {
     private readonly groupService: MeAlumniGroupService,
     private readonly messagesService: MeAlumniMessagesService,
     private readonly announcementsService: AlumniAnnouncementsService,
+    private readonly examStatusService: MeAlumniExamStatusService,
   ) {}
 
   @Get('group')
@@ -71,5 +73,11 @@ export class MeAlumniController {
   @Get('announcements')
   listAnnouncements(@Query() query: PaginationDto) {
     return this.announcementsService.listAnnouncements(query);
+  }
+
+  /** GET /me/alumni/arrears — whether the caller currently has a standing arrear, used to gate the mobile app's Campus tab "Exam schedule" card (see MeAlumniExamStatusService). */
+  @Get('arrears')
+  getArrearStatus(@CurrentUser() user: JwtPayload) {
+    return this.examStatusService.getArrearStatus(user.sub);
   }
 }

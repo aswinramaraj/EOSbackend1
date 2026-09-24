@@ -32,6 +32,58 @@ function today(): Date {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
+// Shared `students` select for the Principal's institution-wide Placements
+// search (searchUpcomingForPrincipal/searchHistoryForPrincipal below) - adds
+// class_id/department/batch/course on top of the plain department-scoped
+// view's toStudentSummary shape, so the filter row (Batch/Department/Class
+// with Section) has real labels to show, not just ids.
+const PRINCIPAL_STUDENT_SUMMARY_SELECT = {
+  id: true,
+  student_id_no: true,
+  class_id: true,
+  soa_applications: { select: { first_name: true, last_name: true } },
+  users: { select: { email: true } },
+  classes: {
+    select: {
+      section: true,
+      departments: { select: { code: true, name: true } },
+      batches: { select: { name: true } },
+      courses: { select: { code: true } },
+    },
+  },
+} as const;
+
+interface PrincipalStudentSummarySource {
+  id: number;
+  student_id_no: string;
+  class_id: number | null;
+  soa_applications: { first_name: string; last_name: string | null } | null;
+  users: { email: string };
+  classes: {
+    section: string;
+    departments: { code: string; name: string } | null;
+    batches: { name: string } | null;
+    courses: { code: string } | null;
+  } | null;
+}
+
+// Full-name-or-roll-no search applied in application code, not a Prisma
+// `OR` on split first_name/last_name columns - a two-word query like
+// "Madhavan C" needs to match the CONCATENATED full name, same reasoning as
+// PrincipalFacultyService.getCoordination's own search. Rows are already
+// narrowed by whichever of batch/department/class the caller picked before
+// this runs, so filtering the (small) remaining set in memory is cheap.
+function filterByStudentSearch<T extends { student: { name: string; student_id_no: string } }>(
+  rows: T[],
+  search?: string,
+): T[] {
+  const term = search?.trim().toLowerCase();
+  if (!term) return rows;
+  return rows.filter(
+    (r) => r.student.name.toLowerCase().includes(term) || r.student.student_id_no.toLowerCase().includes(term),
+  );
+}
+
 interface DriveExtras {
   mode: string | null;
   backlogs_allowed: string | null;
@@ -40,6 +92,10 @@ interface DriveExtras {
   round2_label: string | null;
   round3_label: string | null;
   result_declaration_note: string | null;
+  /** Real once internship_drive_type.query.md runs — 'full_time' (the column's own DB default) until then, so every existing drive keeps behaving as full-time. */
+  drive_type: string;
+  stipend_amount: number | null;
+  duration_months: number | null;
 }
 
 const NO_DRIVE_EXTRAS: DriveExtras = {
@@ -50,6 +106,9 @@ const NO_DRIVE_EXTRAS: DriveExtras = {
   round2_label: null,
   round3_label: null,
   result_declaration_note: null,
+  drive_type: 'full_time',
+  stipend_amount: null,
+  duration_months: null,
 };
 
 interface OfferExtras {
@@ -129,6 +188,29 @@ export class DrivesService {
     if (dto.status) where.status = dto.status;
     if (dto.upcoming) where.scheduled_date = { gte: today() };
 
+    // drive_type isn't in Prisma's generated types pre-migration, so it's
+    // applied as an id filter here instead of a typed `where.drive_type` —
+    // same convention as hod-placements.service.ts. Defaults to full_time
+    // (Internships have their own dedicated GET /drives/internships/report),
+    // so this admin list/search/badge-count endpoint never silently mixes
+    // the two once internship drives exist.
+    const extras = await this.loadAllDriveExtras();
+    const internshipIds = new Set(
+      [...extras.entries()]
+        .filter(([, e]) => e.drive_type === 'internship')
+        .map(([id]) => id),
+    );
+    if (internshipIds.size > 0) {
+      where.id =
+        dto.drive_type === 'internship'
+          ? { in: [...internshipIds] }
+          : { notIn: [...internshipIds] };
+    } else if (dto.drive_type === 'internship') {
+      // No internship drives exist yet — an explicit internship-only
+      // request should return empty, not silently fall back to full-time.
+      where.id = { in: [] };
+    }
+
     const [data, total] = await Promise.all([
       this.prisma.placement_drives.findMany({
         where,
@@ -147,11 +229,13 @@ export class DrivesService {
   }
 
   // One row per drive with real, computed round-progress stats — powers the
-  // Placement Drives list. Unpaginated (small real dataset) so the frontend
-  // can search/sort/paginate client-side, same as the students/companies
-  // report endpoints.
+  // Placement Drives list (full-time placements only — Internships get
+  // their own dedicated view, so drive_type='internship' rows are excluded
+  // here once that column exists; see internship_drive_type.query.md).
+  // Unpaginated (small real dataset) so the frontend can search/sort/
+  // paginate client-side, same as the students/companies report endpoints.
   async getDriveReport() {
-    const [drives, extras] = await Promise.all([
+    const [allDrives, extras] = await Promise.all([
       this.prisma.placement_drives.findMany({
         orderBy: { scheduled_date: 'desc' },
         include: {
@@ -163,6 +247,9 @@ export class DrivesService {
       }),
       this.loadAllDriveExtras(),
     ]);
+    const drives = allDrives.filter(
+      (d) => (extras.get(d.id) ?? NO_DRIVE_EXTRAS).drive_type !== 'internship',
+    );
 
     const now = today();
     return drives.map((d) => {
@@ -191,6 +278,65 @@ export class DrivesService {
         scheduled_date: d.scheduled_date,
         package_lpa: d.package_lpa != null ? Number(d.package_lpa) : null,
         mode: rowExtras.mode,
+        applied,
+        shortlisted,
+        selected,
+        conversion_pct: conversionPct,
+        status: d.status,
+        display_status: displayStatus,
+      };
+    });
+  }
+
+  /**
+   * Internship-only mirror of getDriveReport() — powers the Placement
+   * portal's own dedicated Internships list. Real once
+   * internship_drive_type.query.md runs; empty array until then.
+   */
+  async getInternshipDriveReport() {
+    const [allDrives, extras] = await Promise.all([
+      this.prisma.placement_drives.findMany({
+        orderBy: { scheduled_date: 'desc' },
+        include: {
+          companies: { select: { name: true } },
+          student_drive_applications: {
+            select: { status: true, last_cleared_round: true },
+          },
+        },
+      }),
+      this.loadAllDriveExtras(),
+    ]);
+    const drives = allDrives.filter(
+      (d) => (extras.get(d.id) ?? NO_DRIVE_EXTRAS).drive_type === 'internship',
+    );
+
+    const now = today();
+    return drives.map((d) => {
+      const apps = d.student_drive_applications;
+      const applied = apps.length;
+      const shortlisted = apps.filter(
+        (a) => (a.last_cleared_round ?? 0) >= 1 || a.status === 'placed',
+      ).length;
+      const selected = apps.filter((a) => a.status === 'placed').length;
+      const conversionPct =
+        applied > 0 ? Math.round((selected / applied) * 100) : 0;
+      const displayStatus =
+        d.status === 'completed'
+          ? 'completed'
+          : d.status === 'cancelled'
+            ? 'cancelled'
+            : d.scheduled_date > now
+              ? 'upcoming'
+              : 'ongoing';
+      const rowExtras = extras.get(d.id) ?? NO_DRIVE_EXTRAS;
+
+      return {
+        id: d.id,
+        company_name: d.companies.name,
+        job_role: d.job_role,
+        scheduled_date: d.scheduled_date,
+        stipend_amount: rowExtras.stipend_amount,
+        duration_months: rowExtras.duration_months,
         applied,
         shortlisted,
         selected,
@@ -727,6 +873,16 @@ export class DrivesService {
    * scoped to one class (the same drill-down the page's own filter uses),
    * so the exported file matches whatever's on screen.
    */
+  // Institution-wide, no-filter exports render fully synchronously and
+  // fully buffered in memory (see report-export.util.ts) — with neither
+  // batch_id nor class supplied this returned every student in one request,
+  // the single highest-priority finding in docs/production/PERFORMANCE_AUDIT.md
+  // §4. Fail fast with a clear message instead of silently rendering an
+  // arbitrarily large report on the one shared Node process. (Threshold is a
+  // placeholder pending real confirmation with Placement Cell on typical
+  // export sizes — raise it if a genuine, larger legitimate use case exists.)
+  private static readonly MAX_STUDENT_REPORT_EXPORT_ROWS = 2000;
+
   async buildStudentReportTable(
     batchId: number | undefined,
     classLabel?: string,
@@ -735,6 +891,13 @@ export class DrivesService {
     const rows = classLabel
       ? allRows.filter((r) => r.class_label === classLabel)
       : allRows;
+
+    if (rows.length > DrivesService.MAX_STUDENT_REPORT_EXPORT_ROWS) {
+      throw new BadRequestException({
+        message: `This export would include ${rows.length} students, above the ${DrivesService.MAX_STUDENT_REPORT_EXPORT_ROWS}-row limit. Narrow the report with a batch or class filter and try again.`,
+        errorCode: 'EXPORT_TOO_LARGE',
+      });
+    }
 
     const batch = batchId
       ? await this.prisma.batches.findUnique({
@@ -789,11 +952,12 @@ export class DrivesService {
 
     const [
       companies,
-      drives,
-      applications,
+      rawDrives,
+      rawApplications,
       students,
       batches,
       allStudentsForTrend,
+      driveExtras,
     ] = await Promise.all([
       this.prisma.companies.findMany({ select: { created_at: true } }),
       this.prisma.placement_drives.findMany({
@@ -838,7 +1002,21 @@ export class DrivesService {
         select: { id: true, name: true, start_year: true, end_year: true },
       }),
       this.prisma.students.findMany({ select: { id: true, batch_id: true } }),
+      this.loadAllDriveExtras(),
     ]);
+
+    // Full-time-placement dashboard/reports — excludes internship drives
+    // (drive_type is real once internship_drive_type.query.md runs; every
+    // drive already counts as full_time until then, so this is a no-op).
+    const internshipDriveIds = new Set(
+      [...driveExtras.entries()]
+        .filter(([, e]) => e.drive_type === 'internship')
+        .map(([id]) => id),
+    );
+    const drives = rawDrives.filter((d) => !internshipDriveIds.has(d.id));
+    const applications = rawApplications.filter(
+      (a) => !internshipDriveIds.has(a.drive_id),
+    );
 
     const driveById = new Map(drives.map((d) => [d.id, d]));
     const activeDrives = drives.filter((d) => d.status === 'scheduled');
@@ -1319,9 +1497,12 @@ export class DrivesService {
   /**
    * Every "placed" application across every drive, flattened for the Offers
    * page — one query instead of /drives + one /applications call per drive.
+   * Full-time only (package_lpa/joining_date framing doesn't fit an
+   * internship completion) — excludes drive_type='internship' rows once
+   * that column exists; see internship_drive_type.query.md.
    */
   async getOffers() {
-    const [applications, extras] = await Promise.all([
+    const [rawApplications, extras, driveExtras] = await Promise.all([
       this.prisma.student_drive_applications.findMany({
         where: { status: 'placed' },
         include: {
@@ -1354,7 +1535,13 @@ export class DrivesService {
         orderBy: { updated_at: 'desc' },
       }),
       this.loadAllOfferExtras(),
+      this.loadAllDriveExtras(),
     ]);
+    const applications = rawApplications.filter(
+      (a) =>
+        (driveExtras.get(a.placement_drives.id) ?? NO_DRIVE_EXTRAS)
+          .drive_type !== 'internship',
+    );
 
     return applications.map((a) => {
       const soa = a.students.soa_applications;
@@ -1765,29 +1952,111 @@ export class DrivesService {
   }
 
   private async buildHistoryForStudentId(studentId: number) {
-    const applications = await this.prisma.student_drive_applications.findMany({
-      where: {
-        student_id: studentId,
-        status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
-      },
-      include: { placement_drives: { include: { companies: true } } },
-      orderBy: { updated_at: 'desc' },
-    });
+    const [applications, extras] = await Promise.all([
+      this.prisma.student_drive_applications.findMany({
+        where: {
+          student_id: studentId,
+          status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        },
+        include: { placement_drives: { include: { companies: true } } },
+        orderBy: { updated_at: 'desc' },
+      }),
+      this.loadAllDriveExtras(),
+    ]);
 
-    return applications.map((app) => {
-      const drive = app.placement_drives;
-      return {
-        drive_id: drive.id,
-        company_name: this.resolveCompanyName(drive),
-        scheduled_date: drive.scheduled_date,
-        drive_status: drive.status,
-        job_role: drive.job_role,
-        package_lpa:
-          drive.package_lpa === null ? null : Number(drive.package_lpa),
-        application_status: app.status,
-        last_cleared_round: app.last_cleared_round,
-      };
+    // Full-time placement history only — Internships get their own
+    // dedicated history once that view exists; same "own dedicated view"
+    // convention as getDriveReport()/getOffers()/getUpcomingDrivesForFaculty().
+    return applications
+      .filter(
+        (app) =>
+          (extras.get(app.placement_drives.id) ?? NO_DRIVE_EXTRAS)
+            .drive_type !== 'internship',
+      )
+      .map((app) => {
+        const drive = app.placement_drives;
+        return {
+          drive_id: drive.id,
+          company_name: this.resolveCompanyName(drive),
+          scheduled_date: drive.scheduled_date,
+          drive_status: drive.status,
+          job_role: drive.job_role,
+          package_lpa:
+            drive.package_lpa === null ? null : Number(drive.package_lpa),
+          application_status: app.status,
+          last_cleared_round: app.last_cleared_round,
+        };
+      });
+  }
+
+  /** Internship-only mirror of buildHistoryForStudentId() — stipend/duration instead of package_lpa. */
+  private async buildInternshipHistoryForStudentId(studentId: number) {
+    const [applications, extras] = await Promise.all([
+      this.prisma.student_drive_applications.findMany({
+        where: {
+          student_id: studentId,
+          status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        },
+        include: { placement_drives: { include: { companies: true } } },
+        orderBy: { updated_at: 'desc' },
+      }),
+      this.loadAllDriveExtras(),
+    ]);
+
+    return applications
+      .filter(
+        (app) =>
+          (extras.get(app.placement_drives.id) ?? NO_DRIVE_EXTRAS)
+            .drive_type === 'internship',
+      )
+      .map((app) => {
+        const drive = app.placement_drives;
+        const rowExtras = extras.get(drive.id) ?? NO_DRIVE_EXTRAS;
+        return {
+          drive_id: drive.id,
+          company_name: this.resolveCompanyName(drive),
+          scheduled_date: drive.scheduled_date,
+          drive_status: drive.status,
+          job_role: drive.job_role,
+          stipend_amount: rowExtras.stipend_amount,
+          duration_months: rowExtras.duration_months,
+          application_status: app.status,
+          last_cleared_round: app.last_cleared_round,
+        };
+      });
+  }
+
+  /**
+   * GET /me/mentored-students/:studentId/internship-history (Faculty only)
+   * — internship-only mirror of getStudentPlacementHistoryForMentor().
+   */
+  async getStudentInternshipHistoryForMentor(
+    studentId: number,
+    userId: number,
+  ) {
+    const faculty = await this.resolveFacultyByUserId(userId);
+
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { id: true, class_id: true },
     });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    const mentorMapping =
+      student.class_id !== null
+        ? await this.prisma.class_mentors.findFirst({
+            where: { class_id: student.class_id, faculty_id: faculty.id },
+          })
+        : null;
+    if (!mentorMapping) {
+      throw new ForbiddenException(
+        "You are not the mentor for this student's class",
+      );
+    }
+
+    return this.buildInternshipHistoryForStudentId(studentId);
   }
 
   /**
@@ -1823,38 +2092,100 @@ export class DrivesService {
    * the same disclosed/undisclosed masking as everywhere else.
    */
   async getUpcomingDrivesForFaculty() {
-    const drives = await this.prisma.placement_drives.findMany({
-      where: { status: 'scheduled' },
-      include: {
-        companies: true,
-        // Real registered-applicant count — the same _count pattern
-        // DrivesService.findAll already uses for the admin listing, added
-        // here too instead of leaving "— registered" on the faculty view.
-        _count: { select: { student_drive_applications: true } },
-      },
-      orderBy: { scheduled_date: 'asc' },
-    });
+    const [drives, extras] = await Promise.all([
+      this.prisma.placement_drives.findMany({
+        where: { status: 'scheduled' },
+        include: {
+          companies: true,
+          // Real registered-applicant count — the same _count pattern
+          // DrivesService.findAll already uses for the admin listing, added
+          // here too instead of leaving "— registered" on the faculty view.
+          _count: { select: { student_drive_applications: true } },
+        },
+        orderBy: { scheduled_date: 'asc' },
+      }),
+      this.loadAllDriveExtras(),
+    ]);
 
-    return drives.map((drive) => ({
-      drive_id: drive.id,
-      company_name: this.resolveCompanyName(drive),
-      company_profile_info: drive.is_disclosed
-        ? drive.companies.profile_info
-        : null,
-      scheduled_date: drive.scheduled_date,
-      is_disclosed: drive.is_disclosed,
-      disclosed_reveal_date: drive.is_disclosed
-        ? null
-        : drive.disclosed_reveal_date,
-      // Real columns on placement_drives, previously fetched but dropped
-      // when shaping this response.
-      job_role: drive.job_role,
-      venue: drive.venue,
-      status: drive.status,
-      eligibility_cgpa:
-        drive.eligibility_cgpa === null ? null : Number(drive.eligibility_cgpa),
-      registered_count: drive._count.student_drive_applications,
-    }));
+    // Full-time only — Internships get their own dedicated view
+    // (getUpcomingInternshipDrivesForFaculty below), same "own dedicated
+    // view" convention as getDriveReport()/getOffers().
+    return drives
+      .filter(
+        (d) =>
+          (extras.get(d.id) ?? NO_DRIVE_EXTRAS).drive_type !== 'internship',
+      )
+      .map((drive) => ({
+        drive_id: drive.id,
+        company_name: this.resolveCompanyName(drive),
+        company_profile_info: drive.is_disclosed
+          ? drive.companies.profile_info
+          : null,
+        scheduled_date: drive.scheduled_date,
+        is_disclosed: drive.is_disclosed,
+        disclosed_reveal_date: drive.is_disclosed
+          ? null
+          : drive.disclosed_reveal_date,
+        // Real columns on placement_drives, previously fetched but dropped
+        // when shaping this response.
+        job_role: drive.job_role,
+        venue: drive.venue,
+        status: drive.status,
+        eligibility_cgpa:
+          drive.eligibility_cgpa === null
+            ? null
+            : Number(drive.eligibility_cgpa),
+        registered_count: drive._count.student_drive_applications,
+      }));
+  }
+
+  /**
+   * Internship-only mirror of getUpcomingDrivesForFaculty() — same
+   * Faculty/HoD-facing shape, but drive_type='internship' rows only, with
+   * stipend/duration instead of package/eligibility. Real once
+   * internship_drive_type.query.md runs; empty array until then (same
+   * degrade-gracefully convention as the rest of this file's schema-gap
+   * columns).
+   */
+  async getUpcomingInternshipDrivesForFaculty() {
+    const [drives, extras] = await Promise.all([
+      this.prisma.placement_drives.findMany({
+        where: { status: 'scheduled' },
+        include: {
+          companies: true,
+          _count: { select: { student_drive_applications: true } },
+        },
+        orderBy: { scheduled_date: 'asc' },
+      }),
+      this.loadAllDriveExtras(),
+    ]);
+
+    return drives
+      .filter(
+        (d) =>
+          (extras.get(d.id) ?? NO_DRIVE_EXTRAS).drive_type === 'internship',
+      )
+      .map((drive) => {
+        const rowExtras = extras.get(drive.id) ?? NO_DRIVE_EXTRAS;
+        return {
+          drive_id: drive.id,
+          company_name: this.resolveCompanyName(drive),
+          company_profile_info: drive.is_disclosed
+            ? drive.companies.profile_info
+            : null,
+          scheduled_date: drive.scheduled_date,
+          is_disclosed: drive.is_disclosed,
+          disclosed_reveal_date: drive.is_disclosed
+            ? null
+            : drive.disclosed_reveal_date,
+          job_role: drive.job_role,
+          venue: drive.venue,
+          status: drive.status,
+          stipend_amount: rowExtras.stipend_amount,
+          duration_months: rowExtras.duration_months,
+          registered_count: drive._count.student_drive_applications,
+        };
+      });
   }
 
   /**
@@ -1999,30 +2330,43 @@ export class DrivesService {
   async getUpcomingForDepartment(departmentId: number) {
     await this.assertDepartmentExists(departmentId);
 
-    const applications = await this.prisma.student_drive_applications.findMany({
-      where: {
-        status: { notIn: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
-        students: { classes: { department_id: departmentId } },
-      },
-      include: {
-        placement_drives: { include: { companies: true } },
-        students: {
-          select: {
-            id: true,
-            student_id_no: true,
-            soa_applications: { select: { first_name: true, last_name: true } },
-            users: { select: { email: true } },
-            classes: { select: { section: true } },
+    const [applications, extras] = await Promise.all([
+      this.prisma.student_drive_applications.findMany({
+        where: {
+          status: { notIn: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+          students: { classes: { department_id: departmentId } },
+        },
+        include: {
+          placement_drives: { include: { companies: true } },
+          students: {
+            select: {
+              id: true,
+              student_id_no: true,
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
+              users: { select: { email: true } },
+              classes: { select: { section: true } },
+            },
           },
         },
-      },
-      orderBy: { placement_drives: { scheduled_date: 'asc' } },
-    });
+        orderBy: { placement_drives: { scheduled_date: 'asc' } },
+      }),
+      this.loadAllDriveExtras(),
+    ]);
 
-    return applications.map((app) => ({
-      ...this.toUpcomingDrive(app),
-      student: this.toStudentSummary(app.students),
-    }));
+    // Full-time only — same "own dedicated view" convention as
+    // getDriveReport()/getOffers()/buildHistoryForStudentId().
+    return applications
+      .filter(
+        (app) =>
+          (extras.get(app.placement_drives.id) ?? NO_DRIVE_EXTRAS)
+            .drive_type !== 'internship',
+      )
+      .map((app) => ({
+        ...this.toUpcomingDrive(app),
+        student: this.toStudentSummary(app.students),
+      }));
   }
 
   /**
@@ -2033,27 +2377,130 @@ export class DrivesService {
   async getHistoryForDepartment(departmentId: number) {
     await this.assertDepartmentExists(departmentId);
 
+    const [applications, extras] = await Promise.all([
+      this.prisma.student_drive_applications.findMany({
+        where: {
+          status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+          students: { classes: { department_id: departmentId } },
+        },
+        include: {
+          placement_drives: { include: { companies: true } },
+          students: {
+            select: {
+              id: true,
+              student_id_no: true,
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
+              users: { select: { email: true } },
+              classes: { select: { section: true } },
+            },
+          },
+        },
+        orderBy: { updated_at: 'desc' },
+      }),
+      this.loadAllDriveExtras(),
+    ]);
+
+    return applications
+      .filter(
+        (app) =>
+          (extras.get(app.placement_drives.id) ?? NO_DRIVE_EXTRAS)
+            .drive_type !== 'internship',
+      )
+      .map((app) => {
+        const drive = app.placement_drives;
+        return {
+          drive_id: drive.id,
+          company_name: this.resolveCompanyName(drive),
+          scheduled_date: drive.scheduled_date,
+          drive_status: drive.status,
+          application_status: app.status,
+          last_cleared_round: app.last_cleared_round,
+          student: this.toStudentSummary(app.students),
+        };
+      });
+  }
+
+  /**
+   * GET /drives/institution/upcoming (Principal only) — same shape as
+   * getUpcomingForDepartment above, but every filter (search/batch/
+   * department/class) is optional and combinable, institution-wide - the
+   * Principal's own Placements page filter row (Batch/Department/Class with
+   * Section + name-or-roll-no search), not gated behind picking a
+   * department first the way the old single-department-picker UI was.
+   * `search` is applied in application code (not a Prisma `OR` on split
+   * first_name/last_name columns) so a two-word query like "Madhavan C"
+   * matches the CONCATENATED full name, same reasoning as
+   * PrincipalFacultyService.getCoordination's own search - the
+   * batch/department/class filters already narrow the candidate set via
+   * Prisma first, so this is cheap.
+   */
+  async searchUpcomingForPrincipal(filters: {
+    search?: string;
+    batch_id?: number;
+    department_id?: number;
+    class_id?: number;
+  }) {
     const applications = await this.prisma.student_drive_applications.findMany({
       where: {
-        status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
-        students: { classes: { department_id: departmentId } },
+        status: { notIn: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        students: {
+          ...(filters.class_id !== undefined && { class_id: filters.class_id }),
+          ...((filters.batch_id !== undefined || filters.department_id !== undefined) && {
+            classes: {
+              ...(filters.department_id !== undefined && { department_id: filters.department_id }),
+              ...(filters.batch_id !== undefined && { batch_id: filters.batch_id }),
+            },
+          }),
+        },
       },
       include: {
         placement_drives: { include: { companies: true } },
+        students: { select: PRINCIPAL_STUDENT_SUMMARY_SELECT },
+      },
+      orderBy: { placement_drives: { scheduled_date: 'asc' } },
+    });
+
+    const mapped = applications.map((app) => ({
+      ...this.toUpcomingDrive(app),
+      student: this.toStudentSummaryFull(app.students),
+    }));
+    return filterByStudentSearch(mapped, filters.search);
+  }
+
+  /**
+   * GET /drives/institution/history (Principal only) — same relationship to
+   * getHistoryForDepartment as searchUpcomingForPrincipal has to
+   * getUpcomingForDepartment above.
+   */
+  async searchHistoryForPrincipal(filters: {
+    search?: string;
+    batch_id?: number;
+    department_id?: number;
+    class_id?: number;
+  }) {
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: {
+        status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
         students: {
-          select: {
-            id: true,
-            student_id_no: true,
-            soa_applications: { select: { first_name: true, last_name: true } },
-            users: { select: { email: true } },
-            classes: { select: { section: true } },
-          },
+          ...(filters.class_id !== undefined && { class_id: filters.class_id }),
+          ...((filters.batch_id !== undefined || filters.department_id !== undefined) && {
+            classes: {
+              ...(filters.department_id !== undefined && { department_id: filters.department_id }),
+              ...(filters.batch_id !== undefined && { batch_id: filters.batch_id }),
+            },
+          }),
         },
+      },
+      include: {
+        placement_drives: { include: { companies: true } },
+        students: { select: PRINCIPAL_STUDENT_SUMMARY_SELECT },
       },
       orderBy: { updated_at: 'desc' },
     });
 
-    return applications.map((app) => {
+    const mapped = applications.map((app) => {
       const drive = app.placement_drives;
       return {
         drive_id: drive.id,
@@ -2062,9 +2509,45 @@ export class DrivesService {
         drive_status: drive.status,
         application_status: app.status,
         last_cleared_round: app.last_cleared_round,
-        student: this.toStudentSummary(app.students),
+        student: this.toStudentSummaryFull(app.students),
       };
     });
+    return filterByStudentSearch(mapped, filters.search);
+  }
+
+  /**
+   * GET /drives/institution/classes (Principal only) — the Class+Section
+   * dropdown for the filter row above, narrowed by whichever of
+   * batch_id/department_id is already picked (both optional, same two-step
+   * relationship CiaMarksScreen/SubjectRecordsScreen use on the mobile side).
+   */
+  async getClassesForPrincipal(filters: { batch_id?: number; department_id?: number }) {
+    return this.prisma.classes.findMany({
+      where: {
+        ...(filters.batch_id !== undefined && { batch_id: filters.batch_id }),
+        ...(filters.department_id !== undefined && { department_id: filters.department_id }),
+      },
+      select: {
+        id: true,
+        section: true,
+        current_semester: true,
+        batches: { select: { name: true } },
+        courses: { select: { code: true } },
+        departments: { select: { code: true, name: true } },
+      },
+      orderBy: [{ batch_id: 'desc' }, { section: 'asc' }],
+    });
+  }
+
+  private toStudentSummaryFull(student: PrincipalStudentSummarySource) {
+    return {
+      ...this.toStudentSummary(student),
+      class_id: student.class_id,
+      department_code: student.classes?.departments?.code ?? null,
+      department_name: student.classes?.departments?.name ?? null,
+      batch_name: student.classes?.batches?.name ?? null,
+      course_code: student.classes?.courses?.code ?? null,
+    };
   }
 
   private async assertDepartmentExists(departmentId: number) {
@@ -2215,6 +2698,141 @@ export class DrivesService {
     }
 
     return this.buildHistoryForStudentId(studentId);
+  }
+
+  /**
+   * GET /me/department-drive-history (HoD only) — same concluded-application
+   * query as getHistoryForDepartment (the Principal's version above), scoped
+   * to the HoD's own department via their own faculty row (same resolution/
+   * classId-narrowing as getDepartmentStudents) instead of an arbitrary
+   * departmentId param, and grouped by drive instead of returned as flat
+   * per-application rows: the Placements History tab's drive-centric view
+   * for a HoD wants "pick a drive, see which department students
+   * applied/attended it", not one row per application. `classId` optionally
+   * narrows this to one class (must belong to the HoD's own department,
+   * same check as getDepartmentStudents) - the mobile client also uses each
+   * applicant's own batch_name/section (both included below) to offer a
+   * Batch filter client-side without a second round trip.
+   */
+  async getDriveHistoryForHod(userId: number, classId?: number) {
+    const hod = await this.resolveFacultyByUserId(userId);
+
+    let classIds: number[];
+    if (classId !== undefined) {
+      const cls = await this.prisma.classes.findUnique({
+        where: { id: classId },
+        select: { department_id: true },
+      });
+      if (!cls || cls.department_id !== hod.department_id) {
+        throw new ForbiddenException('This class is not in your department');
+      }
+      classIds = [classId];
+    } else {
+      const departmentClasses = await this.prisma.classes.findMany({
+        where: { department_id: hod.department_id },
+        select: { id: true },
+      });
+      classIds = departmentClasses.map((c) => c.id);
+    }
+    if (classIds.length === 0) return [];
+
+    const applications = await this.prisma.student_drive_applications.findMany({
+      where: {
+        status: { in: [...DrivesService.CONCLUDED_APPLICATION_STATUSES] },
+        students: { class_id: { in: classIds } },
+      },
+      include: {
+        placement_drives: { include: { companies: true } },
+        students: {
+          select: {
+            id: true,
+            student_id_no: true,
+            soa_applications: { select: { first_name: true, last_name: true } },
+            users: { select: { email: true } },
+            classes: {
+              select: {
+                id: true,
+                section: true,
+                batches: { select: { name: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { placement_drives: { scheduled_date: 'desc' } },
+    });
+
+    type DriveHistoryGroup = {
+      drive_id: number;
+      company_name: string;
+      scheduled_date: Date;
+      drive_status: string;
+      applicants: Array<{
+        id: number;
+        student_id_no: string;
+        name: string;
+        class_id: number | null;
+        section: string | null;
+        batch_name: string | null;
+        application_status: string;
+        last_cleared_round: number | null;
+      }>;
+    };
+
+    const drivesById = new Map<number, DriveHistoryGroup>();
+    for (const app of applications) {
+      const drive = app.placement_drives;
+      let group = drivesById.get(drive.id);
+      if (!group) {
+        group = {
+          drive_id: drive.id,
+          company_name: this.resolveCompanyName(drive),
+          scheduled_date: drive.scheduled_date,
+          drive_status: drive.status,
+          applicants: [],
+        };
+        drivesById.set(drive.id, group);
+      }
+      const student = app.students;
+      group.applicants.push({
+        id: student.id,
+        student_id_no: student.student_id_no,
+        name: this.resolveStudentDisplayName(student),
+        class_id: student.classes?.id ?? null,
+        section: student.classes?.section ?? null,
+        batch_name: student.classes?.batches.name ?? null,
+        application_status: app.status,
+        last_cleared_round: app.last_cleared_round,
+      });
+    }
+
+    return Array.from(drivesById.values());
+  }
+
+  /**
+   * GET /me/department-students/:studentId/profile (HoD only — student's
+   * class must belong to the HoD's own department). Same full profile
+   * (identity + all applications + all offers) as the Placement Cell's own
+   * student detail page - see getStudentProfile().
+   */
+  async getStudentProfileForHod(studentId: number, userId: number) {
+    const hod = await this.resolveFacultyByUserId(userId);
+
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+      select: { id: true, classes: { select: { department_id: true } } },
+    });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    if (
+      !student.classes ||
+      student.classes.department_id !== hod.department_id
+    ) {
+      throw new ForbiddenException('This student is not in your department');
+    }
+
+    return this.getStudentProfile(studentId);
   }
 
   /** No generic "display name" column on `students` - same fallback chain used across every other faculty-facing module in this codebase. */
@@ -2526,13 +3144,23 @@ export class DrivesService {
    * `prisma db pull`. Every read here degrades to `NO_DRIVE_EXTRAS`, and
    * every write silently no-ops, when the columns don't exist yet.
    */
+  /** node-postgres returns DECIMAL columns as strings — coerce before returning to callers typed as `number | null`. */
+  private normalizeDriveExtras(row: DriveExtras): DriveExtras {
+    return {
+      ...row,
+      drive_type: row.drive_type ?? 'full_time',
+      stipend_amount:
+        row.stipend_amount != null ? Number(row.stipend_amount) : null,
+    };
+  }
+
   private async loadDriveExtras(id: number): Promise<DriveExtras> {
     try {
       const rows = await this.prisma.$queryRaw<DriveExtras[]>`
-        SELECT mode, backlogs_allowed, eligible_department_codes, round1_label, round2_label, round3_label, result_declaration_note
+        SELECT mode, backlogs_allowed, eligible_department_codes, round1_label, round2_label, round3_label, result_declaration_note, drive_type, stipend_amount, duration_months
         FROM placement_drives WHERE id = ${id}
       `;
-      return rows[0] ?? NO_DRIVE_EXTRAS;
+      return rows[0] ? this.normalizeDriveExtras(rows[0]) : NO_DRIVE_EXTRAS;
     } catch {
       return NO_DRIVE_EXTRAS;
     }
@@ -2543,10 +3171,10 @@ export class DrivesService {
       const rows = await this.prisma.$queryRaw<
         ({ id: number } & DriveExtras)[]
       >`
-        SELECT id, mode, backlogs_allowed, eligible_department_codes, round1_label, round2_label, round3_label, result_declaration_note
+        SELECT id, mode, backlogs_allowed, eligible_department_codes, round1_label, round2_label, round3_label, result_declaration_note, drive_type, stipend_amount, duration_months
         FROM placement_drives
       `;
-      return new Map(rows.map((r) => [r.id, r]));
+      return new Map(rows.map((r) => [r.id, this.normalizeDriveExtras(r)]));
     } catch {
       return new Map();
     }
@@ -2568,11 +3196,14 @@ export class DrivesService {
           round1_label = COALESCE(${dto.round1_label ?? null}, round1_label),
           round2_label = COALESCE(${dto.round2_label ?? null}, round2_label),
           round3_label = COALESCE(${dto.round3_label ?? null}, round3_label),
-          result_declaration_note = COALESCE(${dto.result_declaration_note ?? null}, result_declaration_note)
+          result_declaration_note = COALESCE(${dto.result_declaration_note ?? null}, result_declaration_note),
+          drive_type = COALESCE(${dto.drive_type ?? null}, drive_type),
+          stipend_amount = COALESCE(${dto.stipend_amount ?? null}, stipend_amount),
+          duration_months = COALESCE(${dto.duration_months ?? null}, duration_months)
         WHERE id = ${id}
       `;
     } catch {
-      // columns don't exist yet — query.md #14 not run; silently degrade.
+      // columns don't exist yet — query.md #14 / internship_drive_type.query.md not run; silently degrade.
     }
   }
 

@@ -31,7 +31,7 @@ import { ListPersonalCalendarEntriesQueryDto } from './dto/list-personal-calenda
  */
 @Controller('me/personal-calendar-entries')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL, ROLES.STUDENT, ROLES.HOD, ROLES.FACULTY)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT, ROLES.STUDENT, ROLES.HOD, ROLES.FACULTY)
 export class PersonalCalendarController {
   constructor(
     private readonly personalCalendarService: PersonalCalendarService,

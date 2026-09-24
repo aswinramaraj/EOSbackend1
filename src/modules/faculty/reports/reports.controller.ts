@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -20,9 +20,18 @@ import { FacultyReportsService } from './reports.service';
 export class FacultyReportsController {
   constructor(private readonly reportsService: FacultyReportsService) {}
 
-  /** GET /api/v1/me/reports/weekly-attendance */
+  /**
+   * GET /api/v1/me/reports/weekly-attendance?from=&to=
+   * from/to (YYYY-MM-DD) are optional — omitted keeps the original
+   * "most recent 8 weeks with data" behaviour; supplying either returns
+   * every week in that range instead, uncapped.
+   */
   @Get('weekly-attendance')
-  getWeeklyAttendanceTrend(@CurrentUser() user: JwtPayload) {
-    return this.reportsService.getWeeklyAttendanceTrend(user.sub);
+  getWeeklyAttendanceTrend(
+    @CurrentUser() user: JwtPayload,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.reportsService.getWeeklyAttendanceTrend(user.sub, from, to);
   }
 }

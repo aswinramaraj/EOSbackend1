@@ -106,10 +106,27 @@ export class CompaniesService {
     return { ...company, ...extras };
   }
 
+  /**
+   * `drive_type` is real once internship_drive_type.query.md runs — returns
+   * an empty set (no filtering) until then. This report is full-time
+   * recruitment stats per company (Internships gets its own view).
+   */
+  private async internshipDriveIds(): Promise<Set<number>> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM placement_drives WHERE drive_type = 'internship'
+      `;
+      return new Set(rows.map((r) => r.id));
+    } catch {
+      return new Set();
+    }
+  }
+
   // One row per company with real, computed recruitment stats — powers the
-  // Companies page.
+  // Companies page. Full-time only — internship drives excluded once
+  // drive_type exists.
   async getCompanyReport() {
-    const [companies, extras] = await Promise.all([
+    const [companies, extras, internshipIds] = await Promise.all([
       this.prisma.companies.findMany({
         orderBy: { name: 'asc' },
         select: {
@@ -118,6 +135,7 @@ export class CompaniesService {
           profile_info: true,
           placement_drives: {
             select: {
+              id: true,
               status: true,
               scheduled_date: true,
               package_lpa: true,
@@ -130,10 +148,11 @@ export class CompaniesService {
         },
       }),
       this.loadAllExtras(),
+      this.internshipDriveIds(),
     ]);
 
     return companies.map((c) => {
-      const drives = c.placement_drives;
+      const drives = c.placement_drives.filter((d) => !internshipIds.has(d.id));
       const openRoles = drives.filter((d) => d.status === 'scheduled').length;
       const placedPackages = drives.flatMap((d) =>
         d.student_drive_applications.map((a) =>

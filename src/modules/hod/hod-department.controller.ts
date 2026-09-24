@@ -45,6 +45,13 @@ export class HodDepartmentController {
     return this.classRecords.getClasses(user);
   }
 
+  /** GET /hod/attendance-overview — every class in the HoD's own department, with a mean attendance % each. */
+  @Get('attendance-overview')
+  @Roles(ROLES.HOD)
+  getAttendanceOverview(@CurrentUser() user: JwtPayload) {
+    return this.classRecords.getAttendanceOverview(user);
+  }
+
   @Get('class-records/student/:id/meeting-notes')
   @Roles(ROLES.HOD)
   getMeetingNotes(
@@ -132,6 +139,17 @@ export class HodDepartmentController {
     @Query('semester', ParseIntPipe) semester: number,
   ) {
     return this.examinations.getGrid(user, classId, examTypeId, semester);
+  }
+
+  @Get('examinations/kpis')
+  @Roles(ROLES.HOD)
+  getExaminationKpis(
+    @CurrentUser() user: JwtPayload,
+    @Query('class_id', ParseIntPipe) classId: number,
+    @Query('exam_type_id', ParseIntPipe) examTypeId: number,
+    @Query('semester', ParseIntPipe) semester: number,
+  ) {
+    return this.examinations.getKpis(user, classId, examTypeId, semester);
   }
 
   /** GET /hod/examinations/grid/export — same grid as above, as a real .xlsx download. */
