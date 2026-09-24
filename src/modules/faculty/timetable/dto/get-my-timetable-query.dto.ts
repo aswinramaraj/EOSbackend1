@@ -1,5 +1,12 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
 /**
  * GET /me/timetable (Student only).
@@ -12,6 +19,14 @@ import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
  * `day` range is 1-6 (Monday-Saturday, no Sunday classes), matching this
  * module's one established day_of_week convention (see CreateTimetableDto) —
  * not 1-7; day_of_week can never actually be 7 for any real row.
+ *
+ * `date` (optional, YYYY-MM-DD) — when supplied together with `day`, that
+ * exact calendar date's accepted timetable_period_requests overlay is
+ * applied on top of the recurring day-of-week rows (e.g. a faculty covering
+ * this class's period today shows up instead of the normal teacher, but
+ * only for this one date). Omitted, the response is the plain recurring
+ * schedule exactly as before — this parameter is additive, not a breaking
+ * change to any existing caller.
  */
 export class GetMyTimetableQueryDto {
   @IsOptional()
@@ -24,4 +39,8 @@ export class GetMyTimetableQueryDto {
   @IsOptional()
   @IsString()
   week?: string;
+
+  @IsOptional()
+  @IsDateString()
+  date?: string;
 }

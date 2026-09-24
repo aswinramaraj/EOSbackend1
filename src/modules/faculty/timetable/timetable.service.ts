@@ -12,6 +12,10 @@ import { CreateTimetableDto } from './dto/create-timetable.dto';
 import { UpdateTimetableDto } from './dto/update-timetable.dto';
 import { ListTimetableQueryDto } from './dto/list-timetable-query.dto';
 import { GetMyTimetableQueryDto } from './dto/get-my-timetable-query.dto';
+import {
+  TimetablePeriodRequestsService,
+  dayOfWeekOf,
+} from './timetable-period-requests.service';
 
 function prismaErrorCode(err: unknown): string | undefined {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -96,6 +100,7 @@ interface TimetableRow {
 }
 
 const MY_TIMETABLE_SLOT_SELECT = {
+  id: true,
   day_of_week: true,
   period_number: true,
   start_time: true,
@@ -107,6 +112,7 @@ const MY_TIMETABLE_SLOT_SELECT = {
 } as const;
 
 interface MyTimetableSlotRow {
+  id: number;
   day_of_week: number;
   period_number: number;
   start_time: Date;
@@ -182,16 +188,29 @@ function toDateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function toMySlotResponse(slot: MyTimetableSlotRow) {
+/** A real accepted timetable_period_requests row's effect on one specific timetable_slots row, for that one date only. */
+interface SlotOverlayEffect {
+  faculty: { id: number; name: string };
+  subject: { id: number; name: string; subject_code: string } | null;
+  note: string;
+}
+
+function toMySlotResponse(
+  slot: MyTimetableSlotRow,
+  overlay?: SlotOverlayEffect,
+) {
   return {
     period_number: slot.period_number,
     start_time: formatHHMM(slot.start_time),
     end_time: formatHHMM(slot.end_time),
-    subject: slot.subjects,
-    faculty: {
-      id: slot.faculty.id,
-      name: `${slot.faculty.first_name} ${slot.faculty.last_name}`,
-    },
+    subject: overlay ? (overlay.subject ?? slot.subjects) : slot.subjects,
+    faculty: overlay
+      ? overlay.faculty
+      : {
+          id: slot.faculty.id,
+          name: `${slot.faculty.first_name} ${slot.faculty.last_name}`,
+        },
+    substitution_note: overlay?.note ?? null,
   };
 }
 
@@ -246,8 +265,13 @@ function toTodaySlotResponse(slot: TodaySlotRow) {
     class_section: slot.classes.section,
     semester: slot.classes.current_semester,
     department_name: slot.classes.departments.name,
+    is_substitution: false,
+    substitution_note: null as string | null,
+    covered_by: null as { id: number; name: string } | null,
   };
 }
+
+type TodaySlotResponse = ReturnType<typeof toTodaySlotResponse>;
 
 function toResponse(slot: TimetableRow) {
   return {
@@ -272,7 +296,10 @@ function toResponse(slot: TimetableRow) {
 export class TimetableService {
   private readonly logger = new Logger(TimetableService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly periodRequests: TimetablePeriodRequestsService,
+  ) {}
 
   /** POST /timetable (HoD only). */
   async create(dto: CreateTimetableDto) {
@@ -545,18 +572,25 @@ export class TimetableService {
       department_code: klass?.departments.code ?? null,
     };
 
+    // Real accepted takeover/swap requests for this exact date only — the
+    // recurring rows above are never mutated, this is purely a display-time
+    // overlay (see TimetablePeriodRequestsService's own doc comment).
+    const overlayBySlotId = query.date
+      ? await this.buildClassOverlay(classId, query.date)
+      : new Map<number, SlotOverlayEffect>();
+
     if (query.day !== undefined) {
       return {
         day_of_week: query.day,
         class: classInfo,
-        slots: rows.map(toMySlotResponse),
+        slots: rows.map((r) => toMySlotResponse(r, overlayBySlotId.get(r.id))),
       };
     }
 
     const days = new Map<number, ReturnType<typeof toMySlotResponse>[]>();
     for (const row of rows) {
       const daySlots = days.get(row.day_of_week) ?? [];
-      daySlots.push(toMySlotResponse(row));
+      daySlots.push(toMySlotResponse(row, overlayBySlotId.get(row.id)));
       days.set(row.day_of_week, daySlots);
     }
 
@@ -570,29 +604,188 @@ export class TimetableService {
   }
 
   /**
-   * GET /me/classes/today (Faculty only).
+   * Builds a slot_id -> effective faculty/subject map from every accepted
+   * timetable_period_requests row touching this class on this exact date.
+   * Takeover: the primary slot shows the covering faculty (and their own
+   * subject, once they've picked one on accept). Swap: BOTH sides trade —
+   * the primary slot shows the secondary side's original faculty+subject
+   * and vice versa, since each faculty keeps teaching their own subject,
+   * just at the other's time.
+   */
+  private async buildClassOverlay(
+    classId: number,
+    dateIso: string,
+  ): Promise<Map<number, SlotOverlayEffect>> {
+    const overrides =
+      await this.periodRequests.getAcceptedOverridesForClassDate(
+        classId,
+        dateIso,
+      );
+    const map = new Map<number, SlotOverlayEffect>();
+    for (const o of overrides) {
+      if (o.request_type === 'takeover') {
+        map.set(o.primary_period.slot_id, {
+          faculty: o.to_faculty,
+          subject: o.covering_subject
+            ? {
+                id: o.covering_subject.id,
+                name: o.covering_subject.name,
+                subject_code: o.covering_subject.code,
+              }
+            : null,
+          note: `Covered by ${o.to_faculty.name} (usually ${o.from_faculty.name})`,
+        });
+      } else if (o.secondary_period) {
+        map.set(o.primary_period.slot_id, {
+          faculty: o.to_faculty,
+          subject: o.secondary_period.subject
+            ? {
+                id: o.secondary_period.subject.id,
+                name: o.secondary_period.subject.name,
+                subject_code: o.secondary_period.subject.code,
+              }
+            : null,
+          note: `Swapped with ${o.to_faculty.name}'s period ${o.secondary_period.period_number}`,
+        });
+        map.set(o.secondary_period.slot_id, {
+          faculty: o.from_faculty,
+          subject: {
+            id: o.primary_period.subject.id,
+            name: o.primary_period.subject.name,
+            subject_code: o.primary_period.subject.code,
+          },
+          note: `Swapped with ${o.from_faculty.name}'s period ${o.primary_period.period_number}`,
+        });
+      }
+    }
+    return map;
+  }
+
+  /**
+   * GET /me/classes/today?date= (Faculty only).
    *
    * Resolves the caller's own faculty_id from the JWT — never client-supplied.
-   * "Today" is resolved server-side via JS Date.getDay() (0=Sunday..6=Saturday),
-   * which lines up with this module's day_of_week convention (1=Monday..6=
-   * Saturday) for every value that convention actually stores — a Sunday (0)
-   * simply matches no rows, since no timetable_slots row can have
-   * day_of_week 0. Not scoped to academic_year/semester — the doc doesn't
-   * specify how "currently active" is resolved for a class the caller
-   * teaches (unlike the student view, which has classes.current_semester to
-   * anchor on), so every matching row for today is returned regardless of year.
+   * `date` (optional, YYYY-MM-DD) defaults to today; its day_of_week is
+   * resolved via the exact same dayOfWeekOf() helper timetable-period-
+   * requests.service.ts uses, so "which weekday is this date" is computed
+   * identically everywhere in this feature rather than two subtly different
+   * ways. Not scoped to academic_year/semester — the doc doesn't specify how
+   * "currently active" is resolved for a class the caller teaches (unlike
+   * the student view, which has classes.current_semester to anchor on), so
+   * every matching row for that weekday is returned regardless of year.
+   *
+   * Once resolved, this date's real accepted timetable_period_requests are
+   * overlaid: a period the caller gave up (takeover/swap) stays in the list
+   * but flagged `covered_by`; a period the caller picked up (covering
+   * someone else, or their own subject moved to a swapped-in time) is
+   * synthesized and flagged `is_substitution` — the recurring
+   * timetable_slots rows themselves are never touched.
    */
-  async findTodayForFaculty(userId: number) {
+  async findTodayForFaculty(userId: number, date?: string) {
     const faculty = await this.resolveFacultyByUserId(userId);
-    const dayOfWeek = new Date().getDay();
+    const dateIso = date ?? toDateOnly(new Date());
+    const dayOfWeek = dayOfWeekOf(dateIso);
 
     const rows = await this.prisma.timetable_slots.findMany({
       where: { faculty_id: faculty.id, day_of_week: dayOfWeek },
       orderBy: { period_number: 'asc' },
       select: TODAY_SLOT_SELECT,
     });
+    const base = rows.map(toTodaySlotResponse);
 
-    return rows.map(toTodaySlotResponse);
+    const overrides =
+      await this.periodRequests.getAcceptedOverridesForFacultyDate(
+        faculty.id,
+        dateIso,
+      );
+    if (overrides.length === 0) return base;
+
+    const bySlotId = new Map(base.map((r) => [r.id, r]));
+    const added: TodaySlotResponse[] = [];
+
+    for (const o of overrides) {
+      if (o.request_type === 'takeover') {
+        if (o.from_faculty.id === faculty.id) {
+          const mine = bySlotId.get(o.primary_period.slot_id);
+          if (mine) {
+            mine.covered_by = o.to_faculty;
+            mine.substitution_note = `Covered by ${o.to_faculty.name}`;
+          }
+        } else {
+          added.push({
+            id: o.primary_period.slot_id,
+            period_number: o.primary_period.period_number,
+            start_time: o.primary_period.start_time,
+            end_time: o.primary_period.end_time,
+            subject_id: o.covering_subject?.id ?? o.primary_period.subject.id,
+            subject_name: o.covering_subject?.name ?? '—',
+            subject_code: o.covering_subject?.code ?? '',
+            course_type: null,
+            class_id: o.class.id,
+            class_section: o.class.section,
+            semester: o.class.semester,
+            department_name: o.class.department_name,
+            is_substitution: true,
+            substitution_note: `Covering for ${o.from_faculty.name}`,
+            covered_by: null,
+          });
+        }
+      } else if (o.secondary_period) {
+        const isFrom = o.from_faculty.id === faculty.id;
+        const isTo = o.to_faculty.id === faculty.id;
+        if (isFrom) {
+          const mine = bySlotId.get(o.primary_period.slot_id);
+          if (mine) {
+            mine.covered_by = o.to_faculty;
+            mine.substitution_note = `Swapped with ${o.to_faculty.name}`;
+          }
+          added.push({
+            id: o.secondary_period.slot_id,
+            period_number: o.secondary_period.period_number!,
+            start_time: o.secondary_period.start_time!,
+            end_time: o.secondary_period.end_time!,
+            subject_id: o.primary_period.subject.id,
+            subject_name: o.primary_period.subject.name,
+            subject_code: o.primary_period.subject.code,
+            course_type: null,
+            class_id: o.secondary_period.class_id!,
+            class_section: o.secondary_period.class_section!,
+            semester: o.secondary_period.class_semester,
+            department_name: o.secondary_period.class_department_name!,
+            is_substitution: true,
+            substitution_note: `Moved here from period ${o.primary_period.period_number} (swap with ${o.to_faculty.name})`,
+            covered_by: null,
+          });
+        } else if (isTo) {
+          const mine = bySlotId.get(o.secondary_period.slot_id);
+          if (mine) {
+            mine.covered_by = o.from_faculty;
+            mine.substitution_note = `Swapped with ${o.from_faculty.name}`;
+          }
+          added.push({
+            id: o.primary_period.slot_id,
+            period_number: o.primary_period.period_number,
+            start_time: o.primary_period.start_time,
+            end_time: o.primary_period.end_time,
+            subject_id: o.secondary_period.subject!.id,
+            subject_name: o.secondary_period.subject!.name,
+            subject_code: o.secondary_period.subject!.code,
+            course_type: null,
+            class_id: o.class.id,
+            class_section: o.class.section,
+            semester: o.class.semester,
+            department_name: o.class.department_name,
+            is_substitution: true,
+            substitution_note: `Moved here from period ${o.secondary_period.period_number} (swap with ${o.from_faculty.name})`,
+            covered_by: null,
+          });
+        }
+      }
+    }
+
+    return [...base, ...added].sort(
+      (a, b) => a.period_number - b.period_number,
+    );
   }
 
   /**

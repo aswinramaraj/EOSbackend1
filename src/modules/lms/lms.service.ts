@@ -45,6 +45,22 @@ export class LmsService {
   /** GET /me/lms/subjects (Student) — every subject on the student's own class, current semester. */
   async getMySubjects(userId: number) {
     const student = await this.resolveStudentByUserId(userId);
+    return this.computeSubjects(student);
+  }
+
+  /**
+   * Same computation as getMySubjects, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService.
+   */
+  async getSubjectsForStudentId(studentId: number) {
+    const student = await this.resolveStudentById(studentId);
+    return this.computeSubjects(student);
+  }
+
+  private async computeSubjects(student: {
+    id: number;
+    class_id: number | null;
+  }) {
     if (!student.class_id) return [];
 
     const klass = await this.prisma.classes.findUnique({
@@ -58,13 +74,24 @@ export class LmsService {
         semester: klass?.current_semester ?? undefined,
       },
       select: {
-        subjects: { select: { id: true, name: true, subject_code: true, credits: true, hours: true } },
+        subjects: {
+          select: {
+            id: true,
+            name: true,
+            subject_code: true,
+            credits: true,
+            hours: true,
+          },
+        },
       },
       orderBy: { subjects: { name: 'asc' } },
     });
 
     const mappings = await this.prisma.faculty_subject_class_mapping.findMany({
-      where: { class_id: student.class_id, subject_id: { in: rows.map((r) => r.subjects.id) } },
+      where: {
+        class_id: student.class_id,
+        subject_id: { in: rows.map((r) => r.subjects.id) },
+      },
       select: {
         subject_id: true,
         academic_year: true,
@@ -75,7 +102,10 @@ export class LmsService {
     const facultyNameBySubject = new Map<number, string>();
     for (const m of mappings) {
       if (!facultyNameBySubject.has(m.subject_id)) {
-        facultyNameBySubject.set(m.subject_id, `${m.faculty.first_name} ${m.faculty.last_name}`);
+        facultyNameBySubject.set(
+          m.subject_id,
+          `${m.faculty.first_name} ${m.faculty.last_name}`,
+        );
       }
     }
 
@@ -92,6 +122,13 @@ export class LmsService {
   /** GET /me/lms/subjects/:subjectId/folders (Student) — folders shared to the student's own class for this subject. */
   async getStudentFolders(subjectId: number, userId: number) {
     const student = await this.resolveStudentByUserId(userId);
+    return this.computeFolders(subjectId, student);
+  }
+
+  private async computeFolders(
+    subjectId: number,
+    student: { class_id: number | null },
+  ) {
     if (!student.class_id) return [];
 
     const folders = await this.prisma.lms_folders.findMany({
@@ -125,7 +162,10 @@ export class LmsService {
    * Student: only if the folder is shared to their own class.
    * Faculty/HoD: only their own folder.
    */
-  async getFolderResources(folderId: number, user: { sub: number; role: string }) {
+  async getFolderResources(
+    folderId: number,
+    user: { sub: number; role: string },
+  ) {
     const folder = await this.prisma.lms_folders.findUnique({
       where: { id: folderId },
       select: {
@@ -134,14 +174,21 @@ export class LmsService {
       },
     });
     if (!folder) {
-      throw new NotFoundException({ message: 'Folder not found', errorCode: 'FOLDER_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Folder not found',
+        errorCode: 'FOLDER_NOT_FOUND',
+      });
     }
 
     if (this.isStudentRole(user.role)) {
       const student = await this.resolveStudentByUserId(user.sub);
-      const hasAccess = folder.lms_folder_classes.some((c) => c.class_id === student.class_id);
+      const hasAccess = folder.lms_folder_classes.some(
+        (c) => c.class_id === student.class_id,
+      );
       if (!hasAccess) {
-        throw new ForbiddenException('This folder is not shared with your class');
+        throw new ForbiddenException(
+          'This folder is not shared with your class',
+        );
       }
     } else {
       const faculty = await this.resolveFacultyByUserId(user.sub);
@@ -150,6 +197,10 @@ export class LmsService {
       }
     }
 
+    return this.fetchResources(folderId);
+  }
+
+  private async fetchResources(folderId: number) {
     const resources = await this.prisma.lms_resources.findMany({
       where: { folder_id: folderId },
       orderBy: { created_at: 'desc' },
@@ -169,6 +220,22 @@ export class LmsService {
   /** GET /me/lms/subjects/:subjectId/tasks (Student) — tasks for the student's own class + this subject, with their own submission status. */
   async getStudentTasks(subjectId: number, userId: number) {
     const student = await this.resolveStudentByUserId(userId);
+    return this.computeTasks(subjectId, student);
+  }
+
+  /**
+   * Same computation as getStudentTasks, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService.
+   */
+  async getTasksForStudentId(subjectId: number, studentId: number) {
+    const student = await this.resolveStudentById(studentId);
+    return this.computeTasks(subjectId, student);
+  }
+
+  private async computeTasks(
+    subjectId: number,
+    student: { id: number; class_id: number | null },
+  ) {
     if (!student.class_id) return [];
 
     const tasks = await this.prisma.assignments.findMany({
@@ -216,29 +283,53 @@ export class LmsService {
   async submitTask(taskId: number, userId: number, file: Express.Multer.File) {
     const student = await this.resolveStudentByUserId(userId);
 
-    const task = await this.prisma.assignments.findUnique({ where: { id: taskId } });
+    const task = await this.prisma.assignments.findUnique({
+      where: { id: taskId },
+    });
     if (!task) {
-      throw new NotFoundException({ message: 'Task not found', errorCode: 'TASK_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Task not found',
+        errorCode: 'TASK_NOT_FOUND',
+      });
     }
     if (task.class_id !== student.class_id) {
       throw new ForbiddenException('This task is not assigned to your class');
     }
 
     const existing = await this.prisma.student_assignment_status.findUnique({
-      where: { assignment_id_student_id: { assignment_id: taskId, student_id: student.id } },
+      where: {
+        assignment_id_student_id: {
+          assignment_id: taskId,
+          student_id: student.id,
+        },
+      },
     });
-    if (existing?.marks_obtained !== null && existing?.marks_obtained !== undefined) {
+    if (
+      existing?.marks_obtained !== null &&
+      existing?.marks_obtained !== undefined
+    ) {
       throw new BadRequestException({
-        message: 'This task has already been graded and can no longer be resubmitted',
+        message:
+          'This task has already been graded and can no longer be resubmitted',
         errorCode: 'ALREADY_GRADED',
       });
     }
 
-    const { key } = await this.storage.upload('lms-submissions', file.originalname, file.buffer, file.mimetype);
+    const { key } = await this.storage.upload(
+      'lms-submissions',
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+    );
     const submissionUrl = this.storage.getPublicUrl(key);
 
     await this.prisma.student_assignment_status.upsert({
-      where: { assignment_id_student_id: { assignment_id: taskId, student_id: student.id } },
+      where: {
+        assignment_id_student_id: {
+          assignment_id: taskId,
+          student_id: student.id,
+        },
+      },
       create: {
         assignment_id: taskId,
         student_id: student.id,
@@ -277,14 +368,21 @@ export class LmsService {
         subject_id: true,
         subjects: { select: { name: true, subject_code: true } },
         class_id: true,
-        classes: { select: { section: true, departments: { select: { code: true } } } },
+        classes: {
+          select: { section: true, departments: { select: { code: true } } },
+        },
       },
       orderBy: [{ subject_id: 'asc' }, { class_id: 'asc' }],
     });
 
     const bySubject = new Map<
       number,
-      { subject_id: number; subject_name: string; subject_code: string; classes: { class_id: number; label: string }[] }
+      {
+        subject_id: number;
+        subject_name: string;
+        subject_code: string;
+        classes: { class_id: number; label: string }[];
+      }
     >();
     for (const m of mappings) {
       const entry = bySubject.get(m.subject_id) ?? {
@@ -318,7 +416,15 @@ export class LmsService {
         created_at: true,
         _count: { select: { lms_resources: true } },
         lms_folder_classes: {
-          select: { class_id: true, classes: { select: { section: true, departments: { select: { code: true } } } } },
+          select: {
+            class_id: true,
+            classes: {
+              select: {
+                section: true,
+                departments: { select: { code: true } },
+              },
+            },
+          },
         },
       },
       orderBy: { created_at: 'desc' },
@@ -340,7 +446,11 @@ export class LmsService {
   /** POST /me/lms/folders (Faculty/HoD) — verifies the caller actually teaches subject_id to every one of class_ids before creating. */
   async createFolder(dto: CreateFolderDto, userId: number) {
     const faculty = await this.resolveFacultyByUserId(userId);
-    await this.assertTeachesAllClasses(faculty.id, dto.subject_id, dto.class_ids);
+    await this.assertTeachesAllClasses(
+      faculty.id,
+      dto.subject_id,
+      dto.class_ids,
+    );
 
     const folder = await this.prisma.lms_folders.create({
       data: {
@@ -348,11 +458,15 @@ export class LmsService {
         faculty_id: faculty.id,
         title: dto.title,
         description: dto.description,
-        lms_folder_classes: { createMany: { data: dto.class_ids.map((class_id) => ({ class_id })) } },
+        lms_folder_classes: {
+          createMany: { data: dto.class_ids.map((class_id) => ({ class_id })) },
+        },
       },
     });
 
-    this.logger.log(`LMS folder created: id=${folder.id} faculty=${faculty.id} subject=${dto.subject_id}`);
+    this.logger.log(
+      `LMS folder created: id=${folder.id} faculty=${faculty.id} subject=${dto.subject_id}`,
+    );
     return { id: folder.id };
   }
 
@@ -362,7 +476,11 @@ export class LmsService {
     const folder = await this.getOwnedFolder(folderId, faculty.id);
 
     if (dto.class_ids) {
-      await this.assertTeachesAllClasses(faculty.id, folder.subject_id, dto.class_ids);
+      await this.assertTeachesAllClasses(
+        faculty.id,
+        folder.subject_id,
+        dto.class_ids,
+      );
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -371,9 +489,14 @@ export class LmsService {
         data: { title: dto.title, description: dto.description },
       });
       if (dto.class_ids) {
-        await tx.lms_folder_classes.deleteMany({ where: { folder_id: folderId } });
+        await tx.lms_folder_classes.deleteMany({
+          where: { folder_id: folderId },
+        });
         await tx.lms_folder_classes.createMany({
-          data: dto.class_ids.map((class_id) => ({ folder_id: folderId, class_id })),
+          data: dto.class_ids.map((class_id) => ({
+            folder_id: folderId,
+            class_id,
+          })),
         });
       }
     });
@@ -390,11 +513,21 @@ export class LmsService {
   }
 
   /** POST /me/lms/folders/:id/resources/file (Faculty/HoD, own folder). */
-  async addFileResource(folderId: number, dto: CreateFileResourceDto, userId: number, file: Express.Multer.File) {
+  async addFileResource(
+    folderId: number,
+    dto: CreateFileResourceDto,
+    userId: number,
+    file: Express.Multer.File,
+  ) {
     const faculty = await this.resolveFacultyByUserId(userId);
     await this.getOwnedFolder(folderId, faculty.id);
 
-    const { key } = await this.storage.upload('lms-resources', file.originalname, file.buffer, file.mimetype);
+    const { key } = await this.storage.upload(
+      'lms-resources',
+      file.originalname,
+      file.buffer,
+      file.mimetype,
+    );
     const fileUrl = this.storage.getPublicUrl(key);
 
     const resource = await this.prisma.lms_resources.create({
@@ -412,7 +545,11 @@ export class LmsService {
   }
 
   /** POST /me/lms/folders/:id/resources/link (Faculty/HoD, own folder). */
-  async addLinkResource(folderId: number, dto: CreateLinkResourceDto, userId: number) {
+  async addLinkResource(
+    folderId: number,
+    dto: CreateLinkResourceDto,
+    userId: number,
+  ) {
     const faculty = await this.resolveFacultyByUserId(userId);
     await this.getOwnedFolder(folderId, faculty.id);
 
@@ -439,10 +576,15 @@ export class LmsService {
       select: { id: true, lms_folders: { select: { faculty_id: true } } },
     });
     if (!resource) {
-      throw new NotFoundException({ message: 'Resource not found', errorCode: 'RESOURCE_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Resource not found',
+        errorCode: 'RESOURCE_NOT_FOUND',
+      });
     }
     if (resource.lms_folders.faculty_id !== faculty.id) {
-      throw new ForbiddenException('You may only delete resources from your own folders');
+      throw new ForbiddenException(
+        'You may only delete resources from your own folders',
+      );
     }
 
     await this.prisma.lms_resources.delete({ where: { id: resourceId } });
@@ -450,11 +592,19 @@ export class LmsService {
   }
 
   /** GET /me/lms/my-subjects/:subjectId/tasks?class_id= (Faculty/HoD, own tasks). */
-  async getFacultyTasks(subjectId: number, classId: number | undefined, userId: number) {
+  async getFacultyTasks(
+    subjectId: number,
+    classId: number | undefined,
+    userId: number,
+  ) {
     const faculty = await this.resolveFacultyByUserId(userId);
 
     const tasks = await this.prisma.assignments.findMany({
-      where: { subject_id: subjectId, faculty_id: faculty.id, class_id: classId },
+      where: {
+        subject_id: subjectId,
+        faculty_id: faculty.id,
+        class_id: classId,
+      },
       select: {
         id: true,
         title: true,
@@ -462,8 +612,18 @@ export class LmsService {
         due_date: true,
         max_marks: true,
         task_type: true,
-        classes: { select: { id: true, section: true, departments: { select: { code: true } } } },
-        _count: { select: { student_assignment_status: { where: { is_submitted: true } } } },
+        classes: {
+          select: {
+            id: true,
+            section: true,
+            departments: { select: { code: true } },
+          },
+        },
+        _count: {
+          select: {
+            student_assignment_status: { where: { is_submitted: true } },
+          },
+        },
       },
       orderBy: { id: 'desc' },
     });
@@ -493,10 +653,16 @@ export class LmsService {
 
     const created: number[] = [];
     for (const classId of dto.class_ids) {
-      const mapping = await this.prisma.faculty_subject_class_mapping.findFirst({
-        where: { faculty_id: faculty.id, subject_id: dto.subject_id, class_id: classId },
-        orderBy: { academic_year: 'desc' },
-      });
+      const mapping = await this.prisma.faculty_subject_class_mapping.findFirst(
+        {
+          where: {
+            faculty_id: faculty.id,
+            subject_id: dto.subject_id,
+            class_id: classId,
+          },
+          orderBy: { academic_year: 'desc' },
+        },
+      );
       if (!mapping) {
         throw new ForbiddenException(
           `You are not assigned to teach subject ${dto.subject_id} for class ${classId}`,
@@ -551,16 +717,23 @@ export class LmsService {
       }
     }
 
-    this.logger.log(`LMS task created: ids=${created.join(',')} faculty=${faculty.id}`);
+    this.logger.log(
+      `LMS task created: ids=${created.join(',')} faculty=${faculty.id}`,
+    );
     return { ids: created };
   }
 
   /** DELETE /me/lms/tasks/:id (Faculty/HoD, own task). Cascades to student_assignment_status. */
   async deleteTask(taskId: number, userId: number) {
     const faculty = await this.resolveFacultyByUserId(userId);
-    const task = await this.prisma.assignments.findUnique({ where: { id: taskId } });
+    const task = await this.prisma.assignments.findUnique({
+      where: { id: taskId },
+    });
     if (!task) {
-      throw new NotFoundException({ message: 'Task not found', errorCode: 'TASK_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Task not found',
+        errorCode: 'TASK_NOT_FOUND',
+      });
     }
     if (task.faculty_id !== faculty.id) {
       throw new ForbiddenException('You may only delete your own tasks');
@@ -572,12 +745,19 @@ export class LmsService {
   /** GET /me/lms/tasks/:id/submissions (Faculty/HoD, own task) — every student in the class, submitted or not. */
   async getTaskSubmissions(taskId: number, userId: number) {
     const faculty = await this.resolveFacultyByUserId(userId);
-    const task = await this.prisma.assignments.findUnique({ where: { id: taskId } });
+    const task = await this.prisma.assignments.findUnique({
+      where: { id: taskId },
+    });
     if (!task) {
-      throw new NotFoundException({ message: 'Task not found', errorCode: 'TASK_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Task not found',
+        errorCode: 'TASK_NOT_FOUND',
+      });
     }
     if (task.faculty_id !== faculty.id) {
-      throw new ForbiddenException('You may only view submissions for your own tasks');
+      throw new ForbiddenException(
+        'You may only view submissions for your own tasks',
+      );
     }
 
     const students = await this.prisma.students.findMany({
@@ -589,7 +769,13 @@ export class LmsService {
         users: { select: { email: true } },
         student_assignment_status: {
           where: { assignment_id: taskId },
-          select: { id: true, is_submitted: true, submission_file_url: true, submitted_at: true, marks_obtained: true },
+          select: {
+            id: true,
+            is_submitted: true,
+            submission_file_url: true,
+            submitted_at: true,
+            marks_obtained: true,
+          },
         },
       },
       orderBy: { student_id_no: 'asc' },
@@ -611,24 +797,38 @@ export class LmsService {
   }
 
   /** PATCH /me/lms/submissions/:id (Faculty/HoD, own task's submission). */
-  async gradeSubmission(statusId: number, dto: GradeSubmissionDto, userId: number) {
+  async gradeSubmission(
+    statusId: number,
+    dto: GradeSubmissionDto,
+    userId: number,
+  ) {
     const faculty = await this.resolveFacultyByUserId(userId);
 
     const status = await this.prisma.student_assignment_status.findUnique({
       where: { id: statusId },
       select: {
         id: true,
-        assignments: { select: { faculty_id: true, max_marks: true, title: true } },
+        assignments: {
+          select: { faculty_id: true, max_marks: true, title: true },
+        },
         students: { select: { user_id: true } },
       },
     });
     if (!status) {
-      throw new NotFoundException({ message: 'Submission not found', errorCode: 'SUBMISSION_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Submission not found',
+        errorCode: 'SUBMISSION_NOT_FOUND',
+      });
     }
     if (status.assignments.faculty_id !== faculty.id) {
-      throw new ForbiddenException('You may only grade submissions for your own tasks');
+      throw new ForbiddenException(
+        'You may only grade submissions for your own tasks',
+      );
     }
-    if (status.assignments.max_marks !== null && dto.marks_obtained > status.assignments.max_marks) {
+    if (
+      status.assignments.max_marks !== null &&
+      dto.marks_obtained > status.assignments.max_marks
+    ) {
       throw new BadRequestException({
         message: `marks_obtained cannot exceed max_marks (${status.assignments.max_marks})`,
         errorCode: 'MARKS_EXCEED_MAX',
@@ -637,7 +837,11 @@ export class LmsService {
 
     await this.prisma.student_assignment_status.update({
       where: { id: statusId },
-      data: { marks_obtained: dto.marks_obtained, marked_by_faculty_id: faculty.id, marked_at: new Date() },
+      data: {
+        marks_obtained: dto.marks_obtained,
+        marked_by_faculty_id: faculty.id,
+        marked_at: new Date(),
+      },
     });
 
     await this.notifications.notify({
@@ -653,7 +857,11 @@ export class LmsService {
   }
 
   /** GET /me/lms/my-subjects/:subjectId/lesson-plan?class_id= (Faculty/HoD, own mapping). */
-  async getFacultyLessonPlan(subjectId: number, classId: number, userId: number) {
+  async getFacultyLessonPlan(
+    subjectId: number,
+    classId: number,
+    userId: number,
+  ) {
     const faculty = await this.resolveFacultyByUserId(userId);
     await this.assertTeachesAllClasses(faculty.id, subjectId, [classId]);
     return this.fetchLessonPlan(subjectId, classId, faculty.id);
@@ -662,7 +870,9 @@ export class LmsService {
   /** POST /me/lms/lesson-plan/sessions (Faculty/HoD) — upserts the parent lesson_plans row, then appends a session. */
   async createLessonSession(dto: CreateLessonSessionDto, userId: number) {
     const faculty = await this.resolveFacultyByUserId(userId);
-    await this.assertTeachesAllClasses(faculty.id, dto.subject_id, [dto.class_id]);
+    await this.assertTeachesAllClasses(faculty.id, dto.subject_id, [
+      dto.class_id,
+    ]);
 
     const classSubject = await this.prisma.class_subjects.findFirst({
       where: { class_id: dto.class_id, subject_id: dto.subject_id },
@@ -678,7 +888,12 @@ export class LmsService {
           semester,
         },
       },
-      create: { faculty_id: faculty.id, subject_id: dto.subject_id, class_id: dto.class_id, semester },
+      create: {
+        faculty_id: faculty.id,
+        subject_id: dto.subject_id,
+        class_id: dto.class_id,
+        semester,
+      },
       update: {},
     });
 
@@ -701,7 +916,11 @@ export class LmsService {
   }
 
   /** PATCH /me/lms/lesson-plan/sessions/:id (Faculty/HoD, own session). */
-  async updateLessonSession(sessionId: number, dto: UpdateLessonSessionDto, userId: number) {
+  async updateLessonSession(
+    sessionId: number,
+    dto: UpdateLessonSessionDto,
+    userId: number,
+  ) {
     const faculty = await this.resolveFacultyByUserId(userId);
     const session = await this.getOwnedSession(sessionId, faculty.id);
 
@@ -722,7 +941,9 @@ export class LmsService {
   async deleteLessonSession(sessionId: number, userId: number) {
     const faculty = await this.resolveFacultyByUserId(userId);
     const session = await this.getOwnedSession(sessionId, faculty.id);
-    await this.prisma.lesson_plan_sessions.delete({ where: { id: session.id } });
+    await this.prisma.lesson_plan_sessions.delete({
+      where: { id: session.id },
+    });
     return { id: sessionId, deleted: true };
   }
 
@@ -734,7 +955,11 @@ export class LmsService {
     return role === 'student';
   }
 
-  private async fetchLessonPlan(subjectId: number, classId: number, requireFacultyId?: number) {
+  private async fetchLessonPlan(
+    subjectId: number,
+    classId: number,
+    requireFacultyId?: number,
+  ) {
     const plan = await this.prisma.lesson_plans.findFirst({
       where: {
         subject_id: subjectId,
@@ -760,9 +985,17 @@ export class LmsService {
     };
   }
 
-  private async assertTeachesAllClasses(facultyId: number, subjectId: number, classIds: number[]) {
+  private async assertTeachesAllClasses(
+    facultyId: number,
+    subjectId: number,
+    classIds: number[],
+  ) {
     const mappings = await this.prisma.faculty_subject_class_mapping.findMany({
-      where: { faculty_id: facultyId, subject_id: subjectId, class_id: { in: classIds } },
+      where: {
+        faculty_id: facultyId,
+        subject_id: subjectId,
+        class_id: { in: classIds },
+      },
       select: { class_id: true },
     });
     const mappedClassIds = new Set(mappings.map((m) => m.class_id));
@@ -775,9 +1008,14 @@ export class LmsService {
   }
 
   private async getOwnedFolder(folderId: number, facultyId: number) {
-    const folder = await this.prisma.lms_folders.findUnique({ where: { id: folderId } });
+    const folder = await this.prisma.lms_folders.findUnique({
+      where: { id: folderId },
+    });
     if (!folder) {
-      throw new NotFoundException({ message: 'Folder not found', errorCode: 'FOLDER_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Folder not found',
+        errorCode: 'FOLDER_NOT_FOUND',
+      });
     }
     if (folder.faculty_id !== facultyId) {
       throw new ForbiddenException('You may only manage your own folders');
@@ -791,16 +1029,23 @@ export class LmsService {
       select: { id: true, lesson_plans: { select: { faculty_id: true } } },
     });
     if (!session) {
-      throw new NotFoundException({ message: 'Session not found', errorCode: 'SESSION_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Session not found',
+        errorCode: 'SESSION_NOT_FOUND',
+      });
     }
     if (session.lesson_plans.faculty_id !== facultyId) {
-      throw new ForbiddenException('You may only manage your own lesson plan sessions');
+      throw new ForbiddenException(
+        'You may only manage your own lesson plan sessions',
+      );
     }
     return session;
   }
 
   private async resolveFacultyByUserId(userId: number) {
-    const faculty = await this.prisma.faculty.findUnique({ where: { user_id: userId } });
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { user_id: userId },
+    });
     if (!faculty) {
       throw new NotFoundException({
         message: 'Faculty profile not found for the authenticated user',
@@ -811,12 +1056,24 @@ export class LmsService {
   }
 
   private async resolveStudentByUserId(userId: number) {
-    const student = await this.prisma.students.findUnique({ where: { user_id: userId } });
+    const student = await this.prisma.students.findUnique({
+      where: { user_id: userId },
+    });
     if (!student) {
       throw new NotFoundException({
         message: 'Student profile not found for the authenticated user',
         errorCode: 'STUDENT_NOT_FOUND',
       });
+    }
+    return student;
+  }
+
+  private async resolveStudentById(studentId: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { id: studentId },
+    });
+    if (!student) {
+      throw new NotFoundException('Student not found');
     }
     return student;
   }

@@ -1,7 +1,21 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { PrincipalFacultyService } from 'src/modules/principal/faculty/faculty.service';
+import {
+  getPatentInventorsTable,
+  getPatentsTable,
+  getPublicationsTable,
+  getResearchMembersTable,
+  getResearchProjectsTable,
+  hasPublicationContributors,
+  patentsAcceptStudents,
+  researchAcceptsStudents,
+} from 'src/common/db/publications-table.util';
 import { AddPublicationEntryDto } from './dto/add-publication-entry.dto';
+import type { PublicationContributorDto } from './dto/publication-contributor.dto';
 import { AddDevelopmentProgramEntryDto } from './dto/add-development-program-entry.dto';
 import { AddResearchEntryDto } from './dto/add-research-entry.dto';
 import { AddPatentEntryDto } from './dto/add-patent-entry.dto';
@@ -72,10 +86,7 @@ function inRange(date: Date, range: { start: Date; end: Date }): boolean {
 
 @Injectable()
 export class IqacFacultyDevelopmentService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly faculty: PrincipalFacultyService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   private async targetFor(metricKey: string): Promise<number | null> {
     const row = await this.prisma.iqac_metric_targets.findUnique({
@@ -95,39 +106,32 @@ export class IqacFacultyDevelopmentService {
    * Same shape as PrincipalFacultyService.leadingPublicationVenues(), but
    * computed fresh here (not a duplicate for its own sake) because
    * filtering by indexing needs per-paper indexing values, which that
-   * method's aggregate return doesn't carry. indexing is read via a
-   * guarded raw query (see add-publication-entry.dto.ts's ALTER
-   * statements) — every paper has indexing=null until that column exists,
-   * so the filter honestly has no effect (not a fabricated value) until
-   * then.
+   * method's aggregate return doesn't carry.
    */
   async publicationVenues(indexing?: string) {
-    const papers = await this.prisma.faculty_publications.findMany({
-      select: {
-        id: true,
-        venue: true,
-        citation_count: true,
-        faculty: { select: { departments: { select: { code: true } } } },
-      },
-    });
-
-    let indexingByPaperId = new Map<number, string | null>();
-    try {
-      const rows = await this.prisma.$queryRaw<
-        { id: number; indexing: string | null }[]
-      >`SELECT id, indexing FROM faculty_publications`;
-      indexingByPaperId = new Map(rows.map((r) => [r.id, r.indexing]));
-    } catch {
-      // indexing column not added yet — every paper's indexing stays null.
-    }
+    const table = await getPublicationsTable(this.prisma);
+    const rows = await this.prisma.$queryRawUnsafe<
+      {
+        id: number;
+        venue: string | null;
+        citation_count: number;
+        indexing: string | null;
+        dept_code: string | null;
+      }[]
+    >(`
+      SELECT p.id, p.venue, p.citation_count, p.indexing, d.code AS dept_code
+      FROM ${table} p
+      LEFT JOIN faculty f ON f.id = p.faculty_id
+      LEFT JOIN departments d ON d.id = f.department_id
+    `);
 
     const byVenue = new Map<
       string,
       { papers: number; citations: number; departments: Set<string> }
     >();
-    for (const p of papers) {
+    for (const p of rows) {
       if (!p.venue) continue;
-      if (indexing && indexingByPaperId.get(p.id) !== indexing) continue;
+      if (indexing && p.indexing !== indexing) continue;
       const entry = byVenue.get(p.venue) ?? {
         papers: 0,
         citations: 0,
@@ -135,8 +139,7 @@ export class IqacFacultyDevelopmentService {
       };
       entry.papers += 1;
       entry.citations += p.citation_count;
-      if (p.faculty.departments?.code)
-        entry.departments.add(p.faculty.departments.code);
+      if (p.dept_code) entry.departments.add(p.dept_code);
       byVenue.set(p.venue, entry);
     }
 
@@ -150,31 +153,31 @@ export class IqacFacultyDevelopmentService {
       .sort((a, b) => b.papers - a.papers);
   }
 
-  /** Every distinct real indexing value on file, for the Publications page's filter dropdown. Empty until the column exists. */
+  /** Every distinct real indexing value on file, for the Publications page's filter dropdown. */
   async indexingOptions(): Promise<string[]> {
-    try {
-      const rows = await this.prisma.$queryRaw<
-        { indexing: string }[]
-      >`SELECT DISTINCT indexing FROM faculty_publications WHERE indexing IS NOT NULL ORDER BY indexing`;
-      return rows.map((r) => r.indexing);
-    } catch {
-      return [];
-    }
+    const table = await getPublicationsTable(this.prisma);
+    const rows = await this.prisma.$queryRawUnsafe<{ indexing: string }[]>(
+      `SELECT DISTINCT indexing FROM ${table} WHERE indexing IS NOT NULL ORDER BY indexing`,
+    );
+    return rows.map((r) => r.indexing);
   }
 
   /**
    * GET /me/iqac/faculty-development/publications/quality
    *
-   * faculty_publications.year is a plain calendar year (no month/day), so
-   * "This year"/"Last year" compare that real year to the current calendar
-   * year directly — not the Jul-Dec/Jan-Jun term window Attendance/Results
-   * use for real DATE columns, since that finer split doesn't exist here.
+   * year is a plain calendar year (no month/day), so "This year"/"Last
+   * year" compare that real year to the current calendar year directly —
+   * not the Jul-Dec/Jan-Jun term window Attendance/Results use for real
+   * DATE columns, since that finer split doesn't exist here.
    */
   async publicationsQuality() {
     const currentYear = new Date().getUTCFullYear();
+    const table = await getPublicationsTable(this.prisma);
     const [target, rows] = await Promise.all([
       this.targetFor('publications'),
-      this.prisma.faculty_publications.findMany({ select: { year: true } }),
+      this.prisma.$queryRawUnsafe<{ year: number | null }[]>(
+        `SELECT year FROM ${table}`,
+      ),
     ]);
 
     const thisYear = rows.filter((r) => r.year === currentYear).length;
@@ -188,94 +191,316 @@ export class IqacFacultyDevelopmentService {
     };
   }
 
+  private readonly missingContributorsError = new BadRequestException({
+    message:
+      'Recording contributors needs a pending database update — ask an admin to run research_development_rename.query.md first.',
+    errorCode: 'PUBLICATION_CONTRIBUTORS_NOT_MIGRATED',
+  });
+
+  private async insertContributors(
+    tx: Pick<PrismaService, '$executeRawUnsafe'>,
+    publicationId: number,
+    contributors: PublicationContributorDto[],
+  ) {
+    for (const c of contributors) {
+      await tx.$executeRawUnsafe(
+        `INSERT INTO publication_contributors (publication_id, faculty_id, student_id, role) VALUES ($1, $2, $3, $4)`,
+        publicationId,
+        c.type === 'faculty' ? c.id : null,
+        c.type === 'student' ? c.id : null,
+        c.role,
+      );
+    }
+  }
+
+  /** One publication's full row plus its resolved contributor list (name joined from faculty or students+soa_applications, same fallback-to-email convention as PrincipalStudentsService). */
+  private async loadPublicationWithContributors(
+    client: Pick<PrismaService, '$queryRawUnsafe'>,
+    table: string,
+    id: number,
+  ) {
+    const [pub] = await client.$queryRawUnsafe<
+      {
+        id: number;
+        title: string;
+        type: string;
+        year: number | null;
+        venue: string | null;
+        doi: string | null;
+        citation_count: number;
+        indexing: string | null;
+        published_date: Date | null;
+        status: string | null;
+      }[]
+    >(
+      `SELECT id, title, type, year, venue, doi, citation_count, indexing, published_date, status FROM ${table} WHERE id = $1`,
+      id,
+    );
+    if (!pub) return null;
+
+    const contributors = await client.$queryRawUnsafe<
+      {
+        type: 'faculty' | 'student';
+        person_id: number;
+        name: string;
+        role: string;
+      }[]
+    >(
+      `SELECT
+         CASE WHEN pc.faculty_id IS NOT NULL THEN 'faculty' ELSE 'student' END AS type,
+         COALESCE(pc.faculty_id, pc.student_id) AS person_id,
+         CASE
+           WHEN pc.faculty_id IS NOT NULL THEN f.first_name || ' ' || f.last_name
+           ELSE COALESCE(NULLIF(TRIM(CONCAT_WS(' ', sa.first_name, sa.last_name)), ''), su.email)
+         END AS name,
+         pc.role
+       FROM publication_contributors pc
+       LEFT JOIN faculty f ON f.id = pc.faculty_id
+       LEFT JOIN students s ON s.id = pc.student_id
+       LEFT JOIN soa_applications sa ON sa.id = s.soa_application_id
+       LEFT JOIN users su ON su.id = s.user_id
+       WHERE pc.publication_id = $1
+       ORDER BY pc.role, name`,
+      id,
+    );
+
+    return {
+      ...pub,
+      contributors: contributors.map((c) => ({
+        type: c.type,
+        id: c.person_id,
+        name: c.name,
+        role: c.role,
+      })),
+    };
+  }
+
   /**
    * POST /me/iqac/faculty-development/publications/entries
    *
-   * Creates the real faculty_publications row via PrincipalFacultyService's
-   * own existing createPublication() (title/type/year/venue/citation_count),
-   * then guards a raw-query UPDATE for author_role/indexing/published_date/
-   * status — genuinely new columns, not yet in schema.prisma. Silently
-   * no-ops per field until the ALTER statements in
-   * add-publication-entry.dto.ts are run, same convention as
-   * DrivesService.updateApplicationStatus()'s joining_date/work_location.
+   * Creates a real `publications` row plus one `publication_contributors`
+   * row per submitted contributor (faculty and/or students, each tagged
+   * Primary/Secondary author). Requires Steps 1-3 of
+   * research_development_rename.query.md — surfaces a clear, actionable
+   * error rather than silently truncating multiple/student contributors
+   * down to one faculty author if that migration hasn't run yet.
    */
   async addPublicationEntry(dto: AddPublicationEntryDto) {
+    const ready = await hasPublicationContributors(this.prisma);
+    if (!ready) throw this.missingContributorsError;
+
+    const table = await getPublicationsTable(this.prisma);
     const publishedYear = dto.published_date
       ? new Date(dto.published_date).getUTCFullYear()
-      : undefined;
+      : null;
 
-    const created = await this.faculty.createPublication({
-      faculty_id: dto.faculty_id,
-      title: dto.title,
-      type: 'journal',
-      venue: dto.venue,
-      year: publishedYear,
+    return this.prisma.$transaction(async (tx) => {
+      const [row] = await tx.$queryRawUnsafe<{ id: number }[]>(
+        `INSERT INTO ${table} (title, type, year, venue, citation_count, created_at, indexing, published_date, status)
+         VALUES ($1, 'journal', $2, $3, 0, now(), $4, $5::date, $6)
+         RETURNING id`,
+        dto.title,
+        publishedYear,
+        dto.venue ?? null,
+        dto.indexing ?? null,
+        dto.published_date ?? null,
+        dto.status ?? null,
+      );
+      await this.insertContributors(tx, row.id, dto.contributors);
+      return this.loadPublicationWithContributors(tx, table, row.id);
     });
-
-    if (dto.author_role || dto.indexing || dto.published_date || dto.status) {
-      try {
-        await this.prisma.$executeRaw`
-          UPDATE faculty_publications SET
-            author_role = COALESCE(${dto.author_role ?? null}, author_role),
-            indexing = COALESCE(${dto.indexing ?? null}, indexing),
-            published_date = COALESCE(${dto.published_date ?? null}::date, published_date),
-            status = COALESCE(${dto.status ?? null}, status)
-          WHERE id = ${created.id}
-        `;
-      } catch {
-        // additive columns not added yet — silently degrade.
-      }
-    }
-
-    return created;
   }
 
   /**
-   * PATCH /me/iqac/faculty-development/publications/:id — real
-   * faculty_publications update. author_role/indexing/published_date/status
-   * are real columns now (confirmed in schema.prisma), so this is a plain
-   * typed update, not the guarded raw-query fallback addPublicationEntry()
-   * still uses for its own historical reasons.
+   * PATCH /me/iqac/faculty-development/publications/:id
+   *
+   * `contributors`, when provided, fully replaces the existing list
+   * (delete + re-insert, inside the same transaction as the field update).
    */
   async updatePublicationEntry(id: number, dto: UpdatePublicationEntryDto) {
-    const existing = await this.prisma.faculty_publications.findUnique({
-      where: { id },
-    });
+    const table = await getPublicationsTable(this.prisma);
+    const [existing] = await this.prisma.$queryRawUnsafe<{ id: number }[]>(
+      `SELECT id FROM ${table} WHERE id = $1`,
+      id,
+    );
     if (!existing) {
       throw new NotFoundException({
         message: 'Publication not found',
         errorCode: 'PUBLICATION_NOT_FOUND',
       });
     }
-    return this.prisma.faculty_publications.update({
-      where: { id },
-      data: {
-        title: dto.title,
-        venue: dto.venue,
-        author_role: dto.author_role,
-        indexing: dto.indexing,
-        published_date: dto.published_date
-          ? new Date(dto.published_date)
-          : undefined,
-        status: dto.status,
-        citation_count: dto.citation_count,
-      },
+
+    if (dto.contributors && !(await hasPublicationContributors(this.prisma))) {
+      throw this.missingContributorsError;
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        `UPDATE ${table} SET
+           title = COALESCE($2, title),
+           venue = COALESCE($3, venue),
+           indexing = COALESCE($4, indexing),
+           published_date = COALESCE($5::date, published_date),
+           status = COALESCE($6, status),
+           citation_count = COALESCE($7, citation_count)
+         WHERE id = $1`,
+        id,
+        dto.title ?? null,
+        dto.venue ?? null,
+        dto.indexing ?? null,
+        dto.published_date ?? null,
+        dto.status ?? null,
+        dto.citation_count ?? null,
+      );
+
+      if (dto.contributors) {
+        await tx.$executeRawUnsafe(
+          `DELETE FROM publication_contributors WHERE publication_id = $1`,
+          id,
+        );
+        await this.insertContributors(tx, id, dto.contributors);
+      }
+
+      return this.loadPublicationWithContributors(tx, table, id);
     });
   }
 
-  /** DELETE /me/iqac/faculty-development/publications/:id */
+  /** DELETE /me/iqac/faculty-development/publications/:id — publication_contributors rows cascade automatically once Steps 1-3 have run. */
   async removePublicationEntry(id: number) {
-    const existing = await this.prisma.faculty_publications.findUnique({
-      where: { id },
-    });
+    const table = await getPublicationsTable(this.prisma);
+    const [existing] = await this.prisma.$queryRawUnsafe<{ id: number }[]>(
+      `SELECT id FROM ${table} WHERE id = $1`,
+      id,
+    );
     if (!existing) {
       throw new NotFoundException({
         message: 'Publication not found',
         errorCode: 'PUBLICATION_NOT_FOUND',
       });
     }
-    await this.prisma.faculty_publications.delete({ where: { id } });
+    await this.prisma.$executeRawUnsafe(
+      `DELETE FROM ${table} WHERE id = $1`,
+      id,
+    );
     return { id, deleted: true };
+  }
+
+  /**
+   * GET /me/iqac/faculty-development/publications/venues/:venue — every
+   * real paper on file for one venue, with its full contributor list. The
+   * IQAC-only successor to PrincipalFacultyService.venuePublications()
+   * (which keeps its original single-author shape unchanged for its own
+   * separate consumers). Pre-migration (no publication_contributors table
+   * yet), each paper's still-present faculty_id/author_role is presented
+   * as a one-item contributor list so the page renders sensibly either way.
+   */
+  async venuePublicationsWithContributors(venue: string) {
+    const table = await getPublicationsTable(this.prisma);
+    const ready = await hasPublicationContributors(this.prisma);
+    const isUnspecified = venue === 'Unspecified venue';
+    const whereVenue = isUnspecified
+      ? `(venue IS NULL OR venue = '')`
+      : `venue = $1`;
+    const params = isUnspecified ? [] : [venue];
+
+    const rows = await this.prisma.$queryRawUnsafe<
+      {
+        id: number;
+        title: string;
+        type: string;
+        year: number | null;
+        doi: string | null;
+        citation_count: number;
+      }[]
+    >(
+      `SELECT id, title, type, year, doi, citation_count FROM ${table} WHERE ${whereVenue} ORDER BY year DESC NULLS LAST`,
+      ...params,
+    );
+
+    if (!ready) {
+      const legacyRows = await this.prisma.$queryRawUnsafe<
+        {
+          id: number;
+          faculty_id: number;
+          author_role: string | null;
+          first_name: string;
+          last_name: string;
+        }[]
+      >(
+        `SELECT p.id, p.faculty_id, p.author_role, f.first_name, f.last_name
+         FROM ${table} p JOIN faculty f ON f.id = p.faculty_id
+         WHERE ${whereVenue}`,
+        ...params,
+      );
+      const byId = new Map(legacyRows.map((r) => [r.id, r]));
+      return rows.map((r) => {
+        const legacy = byId.get(r.id);
+        return {
+          ...r,
+          contributors: legacy
+            ? [
+                {
+                  type: 'faculty' as const,
+                  id: legacy.faculty_id,
+                  name: `${legacy.first_name} ${legacy.last_name}`,
+                  role:
+                    legacy.author_role === 'first_author' ||
+                    legacy.author_role === 'corresponding_author'
+                      ? 'primary_author'
+                      : 'secondary_author',
+                },
+              ]
+            : [],
+        };
+      });
+    }
+
+    const ids = rows.map((r) => r.id);
+    const contributorRows = ids.length
+      ? await this.prisma.$queryRawUnsafe<
+          {
+            publication_id: number;
+            type: 'faculty' | 'student';
+            person_id: number;
+            name: string;
+            role: string;
+          }[]
+        >(
+          `SELECT pc.publication_id,
+                  CASE WHEN pc.faculty_id IS NOT NULL THEN 'faculty' ELSE 'student' END AS type,
+                  COALESCE(pc.faculty_id, pc.student_id) AS person_id,
+                  CASE
+                    WHEN pc.faculty_id IS NOT NULL THEN f.first_name || ' ' || f.last_name
+                    ELSE COALESCE(NULLIF(TRIM(CONCAT_WS(' ', sa.first_name, sa.last_name)), ''), su.email)
+                  END AS name,
+                  pc.role
+           FROM publication_contributors pc
+           LEFT JOIN faculty f ON f.id = pc.faculty_id
+           LEFT JOIN students s ON s.id = pc.student_id
+           LEFT JOIN soa_applications sa ON sa.id = s.soa_application_id
+           LEFT JOIN users su ON su.id = s.user_id
+           WHERE pc.publication_id = ANY($1)
+           ORDER BY pc.role, name`,
+          ids,
+        )
+      : [];
+
+    const byPublication = new Map<number, typeof contributorRows>();
+    for (const c of contributorRows) {
+      const list = byPublication.get(c.publication_id) ?? [];
+      list.push(c);
+      byPublication.set(c.publication_id, list);
+    }
+
+    return rows.map((r) => ({
+      ...r,
+      contributors: (byPublication.get(r.id) ?? []).map((c) => ({
+        type: c.type,
+        id: c.person_id,
+        name: c.name,
+        role: c.role,
+      })),
+    }));
   }
 
   /** Shared faculty summary shape for FDP/STTP/Research/Patents rows. */
@@ -443,12 +668,12 @@ export class IqacFacultyDevelopmentService {
   async researchQuality() {
     const thisTerm = currentTermRange(startOfToday());
     const lastYearTerm = priorYearTermRange(thisTerm);
+    const membersTable = await getResearchMembersTable(this.prisma);
     const [target, rows] = await Promise.all([
       this.targetFor('research'),
-      this.prisma.faculty_research_project_members.findMany({
-        where: { joined_on: { not: null } },
-        select: { joined_on: true },
-      }),
+      this.prisma.$queryRawUnsafe<{ joined_on: Date | null }[]>(
+        `SELECT joined_on FROM ${membersTable} WHERE joined_on IS NOT NULL`,
+      ),
     ]);
     const thisYear = rows.filter((r) => inRange(r.joined_on!, thisTerm)).length;
     const lastYear = rows.filter((r) =>
@@ -462,76 +687,202 @@ export class IqacFacultyDevelopmentService {
     };
   }
 
-  /** GET /me/iqac/faculty-development/research?department_id= — real faculty_research_project_members rows, one per faculty-project membership. */
+  /**
+   * GET /me/iqac/faculty-development/research?department_id= — real
+   * research_project_members rows, one per contributor-project membership
+   * (faculty and, once research_development_rename.query.md Section 2 has
+   * run, students too).
+   */
   async research(departmentId?: number) {
-    const rows = await this.prisma.faculty_research_project_members.findMany({
-      where:
-        departmentId != null
-          ? { faculty: { department_id: departmentId } }
-          : undefined,
-      orderBy: { id: 'desc' },
-      include: {
-        faculty: this.facultyInclude,
-        faculty_research_projects: true,
-      },
-    });
-    return rows.map((r) => ({
+    const projectsTable = await getResearchProjectsTable(this.prisma);
+    const membersTable = await getResearchMembersTable(this.prisma);
+
+    type FacultyMemberRow = {
+      id: number;
+      role: string;
+      joined_on: Date | null;
+      centre_name: string;
+      focus_area: string | null;
+      project_status: string;
+      faculty_id: number;
+      first_name: string;
+      last_name: string;
+      designation: string;
+      dept_code: string | null;
+    };
+    const facultySelect = `
+      SELECT m.id, m.role, m.joined_on, p.centre_name, p.focus_area, p.status AS project_status,
+             f.id AS faculty_id, f.first_name, f.last_name, f.designation, d.code AS dept_code
+      FROM ${membersTable} m
+      JOIN ${projectsTable} p ON p.id = m.project_id
+      JOIN faculty f ON f.id = m.faculty_id
+      LEFT JOIN departments d ON d.id = f.department_id`;
+    const facultyRows =
+      departmentId != null
+        ? await this.prisma.$queryRawUnsafe<FacultyMemberRow[]>(
+            `${facultySelect} WHERE f.department_id = $1 ORDER BY m.id DESC`,
+            departmentId,
+          )
+        : await this.prisma.$queryRawUnsafe<FacultyMemberRow[]>(
+            `${facultySelect} ORDER BY m.id DESC`,
+          );
+
+    const facultyResults = facultyRows.map((r) => ({
       id: r.id,
-      faculty: this.facultySummary(r.faculty),
-      centre_name: r.faculty_research_projects.centre_name,
-      focus_area: r.faculty_research_projects.focus_area,
-      project_status: r.faculty_research_projects.status,
+      contributor: {
+        type: 'faculty' as const,
+        id: r.faculty_id,
+        name: `${r.first_name} ${r.last_name}`,
+        subtitle: [r.designation, r.dept_code].filter(Boolean).join(' · '),
+        department_code: r.dept_code,
+      },
+      centre_name: r.centre_name,
+      focus_area: r.focus_area,
+      project_status: r.project_status,
       role: r.role,
       joined_on: r.joined_on,
     }));
+
+    if (!(await researchAcceptsStudents(this.prisma))) return facultyResults;
+
+    type StudentMemberRow = {
+      id: number;
+      role: string;
+      joined_on: Date | null;
+      centre_name: string;
+      focus_area: string | null;
+      project_status: string;
+      student_id: number;
+      name: string;
+      roll_no: string | null;
+      dept_code: string | null;
+    };
+    const studentSelect = `
+      SELECT m.id, m.role, m.joined_on, p.centre_name, p.focus_area, p.status AS project_status,
+             s.id AS student_id,
+             COALESCE(NULLIF(TRIM(CONCAT_WS(' ', sa.first_name, sa.last_name)), ''), u.email) AS name,
+             s.roll_no, d.code AS dept_code
+      FROM ${membersTable} m
+      JOIN ${projectsTable} p ON p.id = m.project_id
+      JOIN students s ON s.id = m.student_id
+      LEFT JOIN soa_applications sa ON sa.id = s.soa_application_id
+      LEFT JOIN users u ON u.id = s.user_id
+      LEFT JOIN courses c ON c.id = s.course_id
+      LEFT JOIN departments d ON d.id = c.department_id`;
+    const studentRows =
+      departmentId != null
+        ? await this.prisma.$queryRawUnsafe<StudentMemberRow[]>(
+            `${studentSelect} WHERE c.department_id = $1 ORDER BY m.id DESC`,
+            departmentId,
+          )
+        : await this.prisma.$queryRawUnsafe<StudentMemberRow[]>(
+            `${studentSelect} ORDER BY m.id DESC`,
+          );
+
+    const studentResults = studentRows.map((r) => ({
+      id: r.id,
+      contributor: {
+        type: 'student' as const,
+        id: r.student_id,
+        name: r.name,
+        subtitle: [r.roll_no, r.dept_code].filter(Boolean).join(' · '),
+        department_code: r.dept_code,
+      },
+      centre_name: r.centre_name,
+      focus_area: r.focus_area,
+      project_status: r.project_status,
+      role: r.role,
+      joined_on: r.joined_on,
+    }));
+
+    return [...facultyResults, ...studentResults].sort((a, b) => b.id - a.id);
   }
 
   /**
    * POST /me/iqac/faculty-development/research — finds a real
-   * faculty_research_projects row by exact centre_name or creates one
-   * (focus_area only used on create), then inserts a real membership row.
+   * research_projects row by exact centre_name or creates one (focus_area
+   * only used on create), then inserts one real membership row per
+   * submitted contributor (faculty and/or students).
    */
   async addResearchEntry(dto: AddResearchEntryDto) {
-    let project = await this.prisma.faculty_research_projects.findFirst({
-      where: { centre_name: dto.centre_name },
-    });
-    if (!project) {
-      project = await this.prisma.faculty_research_projects.create({
-        data: { centre_name: dto.centre_name, focus_area: dto.focus_area },
+    const projectsTable = await getResearchProjectsTable(this.prisma);
+    const membersTable = await getResearchMembersTable(this.prisma);
+
+    const [existingProject] = await this.prisma.$queryRawUnsafe<
+      { id: number }[]
+    >(
+      `SELECT id FROM ${projectsTable} WHERE centre_name = $1`,
+      dto.centre_name,
+    );
+    let projectId = existingProject?.id;
+    if (projectId == null) {
+      const [created] = await this.prisma.$queryRawUnsafe<{ id: number }[]>(
+        `INSERT INTO ${projectsTable} (centre_name, focus_area, status, created_at) VALUES ($1, $2, 'ongoing', now()) RETURNING id`,
+        dto.centre_name,
+        dto.focus_area ?? null,
+      );
+      projectId = created.id;
+    }
+
+    const facultyContributors = dto.contributors.filter(
+      (c) => c.type === 'faculty',
+    );
+    const studentContributors = dto.contributors.filter(
+      (c) => c.type === 'student',
+    );
+
+    if (
+      studentContributors.length > 0 &&
+      !(await researchAcceptsStudents(this.prisma))
+    ) {
+      throw new BadRequestException({
+        message:
+          'Adding student contributors needs a pending database update — ask an admin to run research_development_rename.query.md (Section 2) first.',
+        errorCode: 'RESEARCH_STUDENTS_NOT_MIGRATED',
       });
     }
-    return this.prisma.faculty_research_project_members.upsert({
-      where: {
-        project_id_faculty_id: {
-          project_id: project.id,
-          faculty_id: dto.faculty_id,
-        },
-      },
-      create: {
-        project_id: project.id,
-        faculty_id: dto.faculty_id,
-        role: dto.role,
-        joined_on: dto.joined_on ? new Date(dto.joined_on) : undefined,
-      },
-      update: {
-        role: dto.role,
-        joined_on: dto.joined_on ? new Date(dto.joined_on) : undefined,
-      },
-    });
+
+    for (const c of facultyContributors) {
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO ${membersTable} (project_id, faculty_id, role, joined_on)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (project_id, faculty_id) DO UPDATE SET role = EXCLUDED.role, joined_on = EXCLUDED.joined_on`,
+        projectId,
+        c.id,
+        c.role,
+        dto.joined_on ?? null,
+      );
+    }
+    for (const c of studentContributors) {
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO ${membersTable} (project_id, student_id, role, joined_on)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (project_id, student_id) WHERE student_id IS NOT NULL
+         DO UPDATE SET role = EXCLUDED.role, joined_on = EXCLUDED.joined_on`,
+        projectId,
+        c.id,
+        c.role,
+        dto.joined_on ?? null,
+      );
+    }
+
+    return { project_id: projectId, added: dto.contributors.length };
   }
 
   /**
    * PATCH /me/iqac/faculty-development/research/:id — id is the real
-   * faculty_research_project_members row. role/joined_on edit that
-   * membership; focus_area/status edit the shared faculty_research_projects
-   * row (visible to every other member too — same convention as patents'
-   * stage/filed_year below).
+   * research_project_members row. role/joined_on edit that membership;
+   * focus_area/status edit the shared research_projects row (visible to
+   * every other member too — same convention as patents' stage/filed_year
+   * below).
    */
   async updateResearchEntry(id: number, dto: UpdateResearchEntryDto) {
-    const existing =
-      await this.prisma.faculty_research_project_members.findUnique({
-        where: { id },
-      });
+    const projectsTable = await getResearchProjectsTable(this.prisma);
+    const membersTable = await getResearchMembersTable(this.prisma);
+
+    const [existing] = await this.prisma.$queryRawUnsafe<
+      { id: number; project_id: number }[]
+    >(`SELECT id, project_id FROM ${membersTable} WHERE id = $1`, id);
     if (!existing) {
       throw new NotFoundException({
         message: 'Research entry not found',
@@ -539,45 +890,58 @@ export class IqacFacultyDevelopmentService {
       });
     }
     if (dto.focus_area !== undefined || dto.status !== undefined) {
-      await this.prisma.faculty_research_projects.update({
-        where: { id: existing.project_id },
-        data: { focus_area: dto.focus_area, status: dto.status },
-      });
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE ${projectsTable} SET focus_area = COALESCE($2, focus_area), status = COALESCE($3, status) WHERE id = $1`,
+        existing.project_id,
+        dto.focus_area ?? null,
+        dto.status ?? null,
+      );
     }
-    return this.prisma.faculty_research_project_members.update({
-      where: { id },
-      data: {
-        role: dto.role,
-        joined_on: dto.joined_on ? new Date(dto.joined_on) : undefined,
-      },
-      include: { faculty_research_projects: true },
-    });
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE ${membersTable} SET role = COALESCE($2, role), joined_on = COALESCE($3::date, joined_on) WHERE id = $1`,
+      id,
+      dto.role ?? null,
+      dto.joined_on ?? null,
+    );
+    const [updated] = await this.prisma.$queryRawUnsafe<
+      Record<string, unknown>[]
+    >(
+      `SELECT m.*, p.centre_name, p.focus_area, p.status AS project_status
+       FROM ${membersTable} m JOIN ${projectsTable} p ON p.id = m.project_id WHERE m.id = $1`,
+      id,
+    );
+    return updated;
   }
 
-  /** DELETE /me/iqac/faculty-development/research/:id — removes just this faculty's membership, not the shared project. */
+  /** DELETE /me/iqac/faculty-development/research/:id — removes just this contributor's membership, not the shared project. */
   async removeResearchEntry(id: number) {
-    const existing =
-      await this.prisma.faculty_research_project_members.findUnique({
-        where: { id },
-      });
+    const membersTable = await getResearchMembersTable(this.prisma);
+    const [existing] = await this.prisma.$queryRawUnsafe<{ id: number }[]>(
+      `SELECT id FROM ${membersTable} WHERE id = $1`,
+      id,
+    );
     if (!existing) {
       throw new NotFoundException({
         message: 'Research entry not found',
         errorCode: 'RESEARCH_ENTRY_NOT_FOUND',
       });
     }
-    await this.prisma.faculty_research_project_members.delete({
-      where: { id },
-    });
+    await this.prisma.$executeRawUnsafe(
+      `DELETE FROM ${membersTable} WHERE id = $1`,
+      id,
+    );
     return { id, deleted: true };
   }
 
   /** GET /me/iqac/faculty-development/patents/quality — bucketed by the real filed_year (calendar year, same convention as Publications). */
   async patentsQuality() {
     const currentYear = new Date().getUTCFullYear();
+    const patentsTable = await getPatentsTable(this.prisma);
     const [target, rows] = await Promise.all([
       this.targetFor('patents'),
-      this.prisma.faculty_patents.findMany({ select: { filed_year: true } }),
+      this.prisma.$queryRawUnsafe<{ filed_year: number | null }[]>(
+        `SELECT filed_year FROM ${patentsTable}`,
+      ),
     ]);
     const thisYear = rows.filter((r) => r.filed_year === currentYear).length;
     const lastYear = rows.filter(
@@ -591,73 +955,200 @@ export class IqacFacultyDevelopmentService {
     };
   }
 
-  /** GET /me/iqac/faculty-development/patents?department_id= — real faculty_patent_inventors rows, one per faculty-patent inventorship. */
+  /**
+   * GET /me/iqac/faculty-development/patents?department_id= — real
+   * patent_inventors rows, one per contributor-patent inventorship (faculty
+   * and, once research_development_rename.query.md Section 2 has run,
+   * students too).
+   */
   async patents(departmentId?: number) {
-    const rows = await this.prisma.faculty_patent_inventors.findMany({
-      where:
-        departmentId != null
-          ? { faculty: { department_id: departmentId } }
-          : undefined,
-      orderBy: { id: 'desc' },
-      include: { faculty: this.facultyInclude, faculty_patents: true },
-    });
-    return rows.map((r) => ({
+    const patentsTable = await getPatentsTable(this.prisma);
+    const inventorsTable = await getPatentInventorsTable(this.prisma);
+
+    type FacultyInventorRow = {
+      id: number;
+      role: string;
+      title: string;
+      stage: string;
+      filed_year: number | null;
+      stage_date: Date | null;
+      faculty_id: number;
+      first_name: string;
+      last_name: string;
+      designation: string;
+      dept_code: string | null;
+    };
+    const facultySelect = `
+      SELECT i.id, i.role, p.title, p.stage, p.filed_year, p.stage_date,
+             f.id AS faculty_id, f.first_name, f.last_name, f.designation, d.code AS dept_code
+      FROM ${inventorsTable} i
+      JOIN ${patentsTable} p ON p.id = i.patent_id
+      JOIN faculty f ON f.id = i.faculty_id
+      LEFT JOIN departments d ON d.id = f.department_id`;
+    const facultyRows =
+      departmentId != null
+        ? await this.prisma.$queryRawUnsafe<FacultyInventorRow[]>(
+            `${facultySelect} WHERE f.department_id = $1 ORDER BY i.id DESC`,
+            departmentId,
+          )
+        : await this.prisma.$queryRawUnsafe<FacultyInventorRow[]>(
+            `${facultySelect} ORDER BY i.id DESC`,
+          );
+
+    const facultyResults = facultyRows.map((r) => ({
       id: r.id,
-      faculty: this.facultySummary(r.faculty),
-      title: r.faculty_patents.title,
-      stage: r.faculty_patents.stage,
-      filed_year: r.faculty_patents.filed_year,
-      stage_date: r.faculty_patents.stage_date,
+      contributor: {
+        type: 'faculty' as const,
+        id: r.faculty_id,
+        name: `${r.first_name} ${r.last_name}`,
+        subtitle: [r.designation, r.dept_code].filter(Boolean).join(' · '),
+        department_code: r.dept_code,
+      },
+      title: r.title,
+      stage: r.stage,
+      filed_year: r.filed_year,
+      stage_date: r.stage_date,
       role: r.role,
     }));
+
+    if (!(await patentsAcceptStudents(this.prisma))) return facultyResults;
+
+    type StudentInventorRow = {
+      id: number;
+      role: string;
+      title: string;
+      stage: string;
+      filed_year: number | null;
+      stage_date: Date | null;
+      student_id: number;
+      name: string;
+      roll_no: string | null;
+      dept_code: string | null;
+    };
+    const studentSelect = `
+      SELECT i.id, i.role, p.title, p.stage, p.filed_year, p.stage_date,
+             s.id AS student_id,
+             COALESCE(NULLIF(TRIM(CONCAT_WS(' ', sa.first_name, sa.last_name)), ''), u.email) AS name,
+             s.roll_no, d.code AS dept_code
+      FROM ${inventorsTable} i
+      JOIN ${patentsTable} p ON p.id = i.patent_id
+      JOIN students s ON s.id = i.student_id
+      LEFT JOIN soa_applications sa ON sa.id = s.soa_application_id
+      LEFT JOIN users u ON u.id = s.user_id
+      LEFT JOIN courses c ON c.id = s.course_id
+      LEFT JOIN departments d ON d.id = c.department_id`;
+    const studentRows =
+      departmentId != null
+        ? await this.prisma.$queryRawUnsafe<StudentInventorRow[]>(
+            `${studentSelect} WHERE c.department_id = $1 ORDER BY i.id DESC`,
+            departmentId,
+          )
+        : await this.prisma.$queryRawUnsafe<StudentInventorRow[]>(
+            `${studentSelect} ORDER BY i.id DESC`,
+          );
+
+    const studentResults = studentRows.map((r) => ({
+      id: r.id,
+      contributor: {
+        type: 'student' as const,
+        id: r.student_id,
+        name: r.name,
+        subtitle: [r.roll_no, r.dept_code].filter(Boolean).join(' · '),
+        department_code: r.dept_code,
+      },
+      title: r.title,
+      stage: r.stage,
+      filed_year: r.filed_year,
+      stage_date: r.stage_date,
+      role: r.role,
+    }));
+
+    return [...facultyResults, ...studentResults].sort((a, b) => b.id - a.id);
   }
 
   /**
-   * POST /me/iqac/faculty-development/patents — finds a real faculty_patents
-   * row by exact title or creates one (stage/filed_year/stage_date only
-   * used on create), then inserts a real inventorship row.
+   * POST /me/iqac/faculty-development/patents — finds a real patents row by
+   * exact title or creates one (stage/filed_year/stage_date only used on
+   * create), then inserts one real inventorship row per submitted
+   * contributor (faculty and/or students).
    */
   async addPatentEntry(dto: AddPatentEntryDto) {
-    let patent = await this.prisma.faculty_patents.findFirst({
-      where: { title: dto.title },
-    });
-    if (!patent) {
-      patent = await this.prisma.faculty_patents.create({
-        data: {
-          title: dto.title,
-          stage: dto.stage,
-          filed_year: dto.filed_year,
-          stage_date: dto.stage_date ? new Date(dto.stage_date) : undefined,
-        },
+    const patentsTable = await getPatentsTable(this.prisma);
+    const inventorsTable = await getPatentInventorsTable(this.prisma);
+
+    const [existingPatent] = await this.prisma.$queryRawUnsafe<
+      { id: number }[]
+    >(`SELECT id FROM ${patentsTable} WHERE title = $1`, dto.title);
+    let patentId = existingPatent?.id;
+    if (patentId == null) {
+      const [created] = await this.prisma.$queryRawUnsafe<{ id: number }[]>(
+        `INSERT INTO ${patentsTable} (title, stage, filed_year, stage_date, created_at)
+         VALUES ($1, $2, $3, $4::date, now()) RETURNING id`,
+        dto.title,
+        dto.stage ?? 'filed',
+        dto.filed_year ?? null,
+        dto.stage_date ?? null,
+      );
+      patentId = created.id;
+    }
+
+    const facultyContributors = dto.contributors.filter(
+      (c) => c.type === 'faculty',
+    );
+    const studentContributors = dto.contributors.filter(
+      (c) => c.type === 'student',
+    );
+
+    if (
+      studentContributors.length > 0 &&
+      !(await patentsAcceptStudents(this.prisma))
+    ) {
+      throw new BadRequestException({
+        message:
+          'Adding student contributors needs a pending database update — ask an admin to run research_development_rename.query.md (Section 2) first.',
+        errorCode: 'PATENT_STUDENTS_NOT_MIGRATED',
       });
     }
-    return this.prisma.faculty_patent_inventors.upsert({
-      where: {
-        patent_id_faculty_id: {
-          patent_id: patent.id,
-          faculty_id: dto.faculty_id,
-        },
-      },
-      create: {
-        patent_id: patent.id,
-        faculty_id: dto.faculty_id,
-        role: dto.role,
-      },
-      update: { role: dto.role },
-    });
+
+    for (const c of facultyContributors) {
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO ${inventorsTable} (patent_id, faculty_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (patent_id, faculty_id) DO UPDATE SET role = EXCLUDED.role`,
+        patentId,
+        c.id,
+        c.role,
+      );
+    }
+    for (const c of studentContributors) {
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO ${inventorsTable} (patent_id, student_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (patent_id, student_id) WHERE student_id IS NOT NULL
+         DO UPDATE SET role = EXCLUDED.role`,
+        patentId,
+        c.id,
+        c.role,
+      );
+    }
+
+    return { patent_id: patentId, added: dto.contributors.length };
   }
 
   /**
    * PATCH /me/iqac/faculty-development/patents/:id — id is the real
-   * faculty_patent_inventors row. role edits that inventorship; title/
-   * stage/filed_year/stage_date edit the shared faculty_patents row
-   * (visible to every other inventor too) — this is how a patent's real
-   * Filed → Granted progression gets recorded.
+   * patent_inventors row. role edits that inventorship; title/stage/
+   * filed_year/stage_date edit the shared patents row (visible to every
+   * other inventor too) — this is how a patent's real Filed → Granted
+   * progression gets recorded.
    */
   async updatePatentEntry(id: number, dto: UpdatePatentEntryDto) {
-    const existing = await this.prisma.faculty_patent_inventors.findUnique({
-      where: { id },
-    });
+    const patentsTable = await getPatentsTable(this.prisma);
+    const inventorsTable = await getPatentInventorsTable(this.prisma);
+
+    const [existing] = await this.prisma.$queryRawUnsafe<
+      { id: number; patent_id: number }[]
+    >(`SELECT id, patent_id FROM ${inventorsTable} WHERE id = $1`, id);
     if (!existing) {
       throw new NotFoundException({
         message: 'Patent entry not found',
@@ -670,35 +1161,52 @@ export class IqacFacultyDevelopmentService {
       dto.filed_year !== undefined ||
       dto.stage_date !== undefined
     ) {
-      await this.prisma.faculty_patents.update({
-        where: { id: existing.patent_id },
-        data: {
-          title: dto.title,
-          stage: dto.stage,
-          filed_year: dto.filed_year,
-          stage_date: dto.stage_date ? new Date(dto.stage_date) : undefined,
-        },
-      });
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE ${patentsTable} SET
+           title = COALESCE($2, title),
+           stage = COALESCE($3, stage),
+           filed_year = COALESCE($4, filed_year),
+           stage_date = COALESCE($5::date, stage_date)
+         WHERE id = $1`,
+        existing.patent_id,
+        dto.title ?? null,
+        dto.stage ?? null,
+        dto.filed_year ?? null,
+        dto.stage_date ?? null,
+      );
     }
-    return this.prisma.faculty_patent_inventors.update({
-      where: { id },
-      data: { role: dto.role },
-      include: { faculty_patents: true },
-    });
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE ${inventorsTable} SET role = COALESCE($2, role) WHERE id = $1`,
+      id,
+      dto.role ?? null,
+    );
+    const [updated] = await this.prisma.$queryRawUnsafe<
+      Record<string, unknown>[]
+    >(
+      `SELECT i.*, p.title, p.stage, p.filed_year, p.stage_date
+       FROM ${inventorsTable} i JOIN ${patentsTable} p ON p.id = i.patent_id WHERE i.id = $1`,
+      id,
+    );
+    return updated;
   }
 
-  /** DELETE /me/iqac/faculty-development/patents/:id — removes just this faculty's inventorship, not the shared patent. */
+  /** DELETE /me/iqac/faculty-development/patents/:id — removes just this contributor's inventorship, not the shared patent. */
   async removePatentEntry(id: number) {
-    const existing = await this.prisma.faculty_patent_inventors.findUnique({
-      where: { id },
-    });
+    const inventorsTable = await getPatentInventorsTable(this.prisma);
+    const [existing] = await this.prisma.$queryRawUnsafe<{ id: number }[]>(
+      `SELECT id FROM ${inventorsTable} WHERE id = $1`,
+      id,
+    );
     if (!existing) {
       throw new NotFoundException({
         message: 'Patent entry not found',
         errorCode: 'PATENT_ENTRY_NOT_FOUND',
       });
     }
-    await this.prisma.faculty_patent_inventors.delete({ where: { id } });
+    await this.prisma.$executeRawUnsafe(
+      `DELETE FROM ${inventorsTable} WHERE id = $1`,
+      id,
+    );
     return { id, deleted: true };
   }
 

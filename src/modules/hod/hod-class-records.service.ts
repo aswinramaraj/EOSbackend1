@@ -56,8 +56,18 @@ export class HodClassRecordsService {
     try {
       const classes = await this.prisma.classes.findMany({
         where: { department_id: departmentId },
-        select: { id: true, section: true, current_semester: true },
-        orderBy: [{ current_semester: 'asc' }, { section: 'asc' }],
+        select: {
+          id: true,
+          section: true,
+          current_semester: true,
+          batch_id: true,
+          batches: { select: { name: true, start_year: true } },
+        },
+        orderBy: [
+          { batches: { start_year: 'desc' } },
+          { current_semester: 'asc' },
+          { section: 'asc' },
+        ],
       });
 
       // One groupBy for every class's student count instead of one count()
@@ -65,10 +75,15 @@ export class HodClassRecordsService {
       // many classes this department has.
       const counts = await this.prisma.students.groupBy({
         by: ['class_id'],
-        where: { class_id: { in: classes.map((cl) => cl.id) }, status: 'active' },
+        where: {
+          class_id: { in: classes.map((cl) => cl.id) },
+          status: 'active',
+        },
         _count: { _all: true },
       });
-      const countByClassId = new Map(counts.map((c) => [c.class_id, c._count._all]));
+      const countByClassId = new Map(
+        counts.map((c) => [c.class_id, c._count._all]),
+      );
 
       return classes.map((cl) => ({
         class_id: cl.id,
@@ -76,6 +91,8 @@ export class HodClassRecordsService {
         year: yearLabel(cl.current_semester) ?? '—',
         semester: cl.current_semester ?? 0,
         student_count: countByClassId.get(cl.id) ?? 0,
+        batch_id: cl.batch_id,
+        batch_name: cl.batches.name,
       }));
     } catch (err) {
       if (err instanceof NotFoundException) throw err;
@@ -96,7 +113,11 @@ export class HodClassRecordsService {
    * sequential between each *different* stat — same pooler-capacity
    * discipline as every other hod service).
    */
-  async getClassDetail(user: JwtPayload, classId: number) {
+  async getClassDetail(
+    user: JwtPayload,
+    classId: number,
+    viewSemester?: number,
+  ) {
     const departmentId = await this.resolveDepartmentId(user);
     try {
       const cls = await this.prisma.classes.findUnique({
@@ -117,6 +138,21 @@ export class HodClassRecordsService {
         });
       }
 
+      // A class is one continuous row across its whole 4-year life —
+      // `current_semester` only ever holds where it is *now*. Viewing a
+      // past year (e.g. Year I of a batch that's now in Year III) means the
+      // same class_id, same roster, just reading that year's own GPA
+      // instead of the live one. Never allow "viewing" a semester that
+      // hasn't happened yet.
+      const effectiveSemester =
+        viewSemester != null &&
+        cls.current_semester != null &&
+        viewSemester >= 1 &&
+        viewSemester <= cls.current_semester
+          ? viewSemester
+          : cls.current_semester;
+      const isHistoricalView = effectiveSemester !== cls.current_semester;
+
       const students = await this.prisma.students.findMany({
         where: { class_id: classId, status: 'active' },
         select: {
@@ -128,7 +164,7 @@ export class HodClassRecordsService {
         orderBy: { student_id_no: 'asc' },
       });
       const studentIds = students.map((s) => s.id);
-      const classLabel = `${yearLabel(cls.current_semester) ?? '—'}-${cls.section}`;
+      const classLabel = `${yearLabel(effectiveSemester) ?? '—'}-${cls.section}`;
 
       const mentorRow = await this.prisma.class_mentors.findFirst({
         where: { class_id: classId },
@@ -151,13 +187,14 @@ export class HodClassRecordsService {
           class: {
             class_id: cls.id,
             section: cls.section,
-            semester: cls.current_semester,
-            year: yearLabel(cls.current_semester),
+            semester: effectiveSemester,
+            year: yearLabel(effectiveSemester),
             department_name: cls.departments.name,
             department_code: cls.departments.code,
             classroom: cls.classroom,
             student_count: 0,
           },
+          is_historical_view: isHistoricalView,
           advisor: mentorRow
             ? {
                 name: `${mentorRow.faculty.first_name} ${mentorRow.faculty.last_name}`.trim(),
@@ -214,7 +251,7 @@ export class HodClassRecordsService {
         const list = cgpaByStudent.get(row.student_id) ?? [];
         list.push(gpa);
         cgpaByStudent.set(row.student_id, list);
-        if (row.semester === cls.current_semester) {
+        if (row.semester === effectiveSemester) {
           currentSemGpaByStudent.set(row.student_id, gpa);
         }
       }
@@ -357,13 +394,19 @@ export class HodClassRecordsService {
         class: {
           class_id: cls.id,
           section: cls.section,
-          semester: cls.current_semester,
-          year: yearLabel(cls.current_semester),
+          semester: effectiveSemester,
+          year: yearLabel(effectiveSemester),
           department_name: cls.departments.name,
           department_code: cls.departments.code,
           classroom: cls.classroom,
           student_count: students.length,
         },
+        // True when viewing a past year of this same class. Only the GPA
+        // column is genuinely scoped to that year — attendance, arrears,
+        // fees, and placement status below are always today's real totals
+        // (this schema has no historical snapshot of those), so the
+        // frontend shows a plain note rather than implying otherwise.
+        is_historical_view: isHistoricalView,
         advisor: mentorRow
           ? {
               name: `${mentorRow.faculty.first_name} ${mentorRow.faculty.last_name}`.trim(),

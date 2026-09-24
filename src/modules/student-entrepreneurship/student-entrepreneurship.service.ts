@@ -1,4 +1,10 @@
-import { ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateStudentEntrepreneurshipDto } from './dto/create-student-entrepreneurship.dto';
 import { UpdateStudentEntrepreneurshipDto } from './dto/update-student-entrepreneurship.dto';
@@ -49,7 +55,10 @@ function toStudentSummary(student: StudentSummarySource) {
 }
 
 interface StudentSummaryWithDeptSource extends StudentSummarySource {
-  classes: { section: string; departments: { code: string; name: string } } | null;
+  classes: {
+    section: string;
+    departments: { code: string; name: string };
+  } | null;
 }
 
 function toStudentSummaryWithDepartment(student: StudentSummaryWithDeptSource) {
@@ -66,7 +75,12 @@ const VENTURE_DETAIL_INCLUDE = {
       student_id_no: true,
       soa_applications: { select: { first_name: true, last_name: true } },
       users: { select: { email: true } },
-      classes: { select: { section: true, departments: { select: { code: true, name: true } } } },
+      classes: {
+        select: {
+          section: true,
+          departments: { select: { code: true, name: true } },
+        },
+      },
     },
   },
   faculty: { select: { first_name: true, last_name: true } },
@@ -195,9 +209,16 @@ export class StudentEntrepreneurshipService {
             select: {
               id: true,
               student_id_no: true,
-              soa_applications: { select: { first_name: true, last_name: true } },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
               users: { select: { email: true } },
-              classes: { select: { section: true, departments: { select: { code: true, name: true } } } },
+              classes: {
+                select: {
+                  section: true,
+                  departments: { select: { code: true, name: true } },
+                },
+              },
             },
           },
         },
@@ -235,7 +256,9 @@ export class StudentEntrepreneurshipService {
             select: {
               id: true,
               student_id_no: true,
-              soa_applications: { select: { first_name: true, last_name: true } },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
               users: { select: { email: true } },
               classes: { select: { section: true } },
             },
@@ -278,7 +301,9 @@ export class StudentEntrepreneurshipService {
    * class — the normal way EDC assigns mentors — saw nothing for them.
    */
   async findAllForMentor(userId: number) {
-    const faculty = await this.prisma.faculty.findUnique({ where: { user_id: userId } });
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { user_id: userId },
+    });
     if (!faculty) return [];
 
     const mentorClasses = await this.prisma.class_mentors.findMany({
@@ -302,7 +327,9 @@ export class StudentEntrepreneurshipService {
             select: {
               id: true,
               student_id_no: true,
-              soa_applications: { select: { first_name: true, last_name: true } },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
               users: { select: { email: true } },
               classes: { select: { section: true } },
             },
@@ -314,12 +341,15 @@ export class StudentEntrepreneurshipService {
 
       return rows.map((row) => ({
         id: row.id,
-        mentor_faculty_name: row.faculty ? `${row.faculty.first_name} ${row.faculty.last_name}` : null,
+        mentor_faculty_name: row.faculty
+          ? `${row.faculty.first_name} ${row.faculty.last_name}`
+          : null,
         business_name: row.business_name,
         business_description: row.business_description,
         sector: row.sector,
         stage: row.stage,
-        funding_required: row.funding_required !== null ? Number(row.funding_required) : null,
+        funding_required:
+          row.funding_required !== null ? Number(row.funding_required) : null,
         remarks: row.remarks,
         created_at: row.created_at,
         is_incubated: row.is_incubated,
@@ -347,10 +377,12 @@ export class StudentEntrepreneurshipService {
         mvp_launched: row.mvp_launched,
         product_launched: row.product_launched,
         customers_count: row.customers_count,
-        monthly_revenue: row.monthly_revenue !== null ? Number(row.monthly_revenue) : null,
+        monthly_revenue:
+          row.monthly_revenue !== null ? Number(row.monthly_revenue) : null,
         growth_stage: row.growth_stage,
         funding_status: row.funding_status,
-        funding_received: row.funding_received !== null ? Number(row.funding_received) : null,
+        funding_received:
+          row.funding_received !== null ? Number(row.funding_received) : null,
         funding_source: row.funding_source,
         govt_grant_scheme: row.govt_grant_scheme,
         incubator_support: row.incubator_support,
@@ -358,7 +390,10 @@ export class StudentEntrepreneurshipService {
         student: toStudentSummary(row.students),
       }));
     } catch (err) {
-      this.logger.error('DB error listing student_entrepreneurship for mentor', err);
+      this.logger.error(
+        'DB error listing student_entrepreneurship for mentor',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -381,7 +416,10 @@ export class StudentEntrepreneurshipService {
 
       return rows.map(toVentureDetail);
     } catch (err) {
-      this.logger.error('DB error listing student_entrepreneurship for coordinator', err);
+      this.logger.error(
+        'DB error listing student_entrepreneurship for coordinator',
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
@@ -396,26 +434,34 @@ export class StudentEntrepreneurshipService {
    * EdcVentureDetail verbatim instead of a second bespoke read-only layout.
    */
   async findForStudent(userId: number) {
-    try {
-      const student = await this.prisma.students.findUnique({
-        where: { user_id: userId },
-        select: { id: true },
+    const student = await this.prisma.students.findUnique({
+      where: { user_id: userId },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'No student record found for this account',
+        errorCode: 'STUDENT_RECORD_NOT_FOUND',
       });
-      if (!student) {
-        throw new NotFoundException({
-          message: 'No student record found for this account',
-          errorCode: 'STUDENT_RECORD_NOT_FOUND',
-        });
-      }
+    }
+    return this.findForStudentId(student.id);
+  }
 
+  /**
+   * Same computation as findForStudent, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService
+   * once it has verified (via parent_student_mapping) that the caller is
+   * actually this student's parent.
+   */
+  async findForStudentId(studentId: number) {
+    try {
       const row = await this.prisma.student_entrepreneurship.findUnique({
-        where: { student_id: student.id },
+        where: { student_id: studentId },
         include: VENTURE_DETAIL_INCLUDE,
       });
 
       return row ? toVentureDetail(row) : null;
     } catch (err) {
-      if (err instanceof NotFoundException) throw err;
       this.logger.error(
         'DB error reading student_entrepreneurship for student',
         err,
@@ -490,9 +536,19 @@ export class StudentEntrepreneurshipService {
       student_id_no: row.student_id_no,
       roll_no: row.roll_no,
       register_no: row.register_no,
-      name: row.first_name ? (row.last_name ? `${row.first_name} ${row.last_name}` : row.first_name) : `Student ${row.student_id_no}`,
+      name: row.first_name
+        ? row.last_name
+          ? `${row.first_name} ${row.last_name}`
+          : row.first_name
+        : `Student ${row.student_id_no}`,
       email: row.email,
-      department: row.department_id ? { id: row.department_id, name: row.department_name, code: row.department_code } : null,
+      department: row.department_id
+        ? {
+            id: row.department_id,
+            name: row.department_name,
+            code: row.department_code,
+          }
+        : null,
       section: row.section,
       batch_name: row.batch_name,
       has_venture: row.has_venture,
@@ -508,7 +564,9 @@ export class StudentEntrepreneurshipService {
    * than letting the @unique constraint surface as a raw DB error.
    */
   async createForCoordinator(dto: CreateStudentEntrepreneurshipDto) {
-    const student = await this.prisma.students.findUnique({ where: { id: dto.student_id } });
+    const student = await this.prisma.students.findUnique({
+      where: { id: dto.student_id },
+    });
     if (!student) {
       throw new NotFoundException({
         message: 'Student not found',
@@ -574,9 +632,16 @@ export class StudentEntrepreneurshipService {
             select: {
               id: true,
               student_id_no: true,
-              soa_applications: { select: { first_name: true, last_name: true } },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
               users: { select: { email: true } },
-              classes: { select: { section: true, departments: { select: { code: true, name: true } } } },
+              classes: {
+                select: {
+                  section: true,
+                  departments: { select: { code: true, name: true } },
+                },
+              },
             },
           },
           faculty: { select: { first_name: true, last_name: true } },
@@ -585,12 +650,17 @@ export class StudentEntrepreneurshipService {
 
       return {
         id: created.id,
-        mentor_faculty_name: created.faculty ? `${created.faculty.first_name} ${created.faculty.last_name}` : null,
+        mentor_faculty_name: created.faculty
+          ? `${created.faculty.first_name} ${created.faculty.last_name}`
+          : null,
         business_name: created.business_name,
         business_description: created.business_description,
         sector: created.sector,
         stage: created.stage,
-        funding_required: created.funding_required !== null ? Number(created.funding_required) : null,
+        funding_required:
+          created.funding_required !== null
+            ? Number(created.funding_required)
+            : null,
         remarks: created.remarks,
         created_at: created.created_at,
         is_incubated: created.is_incubated,
@@ -618,10 +688,16 @@ export class StudentEntrepreneurshipService {
         mvp_launched: created.mvp_launched,
         product_launched: created.product_launched,
         customers_count: created.customers_count,
-        monthly_revenue: created.monthly_revenue !== null ? Number(created.monthly_revenue) : null,
+        monthly_revenue:
+          created.monthly_revenue !== null
+            ? Number(created.monthly_revenue)
+            : null,
         growth_stage: created.growth_stage,
         funding_status: created.funding_status,
-        funding_received: created.funding_received !== null ? Number(created.funding_received) : null,
+        funding_received:
+          created.funding_received !== null
+            ? Number(created.funding_received)
+            : null,
         funding_source: created.funding_source,
         govt_grant_scheme: created.govt_grant_scheme,
         incubator_support: created.incubator_support,
@@ -653,16 +729,23 @@ export class StudentEntrepreneurshipService {
    * transaction rather than surfacing a confusing DB error to the user.
    */
   async removeForCoordinator(id: number) {
-    const existing = await this.prisma.student_entrepreneurship.findUnique({ where: { id } });
+    const existing = await this.prisma.student_entrepreneurship.findUnique({
+      where: { id },
+    });
     if (!existing) {
-      throw new NotFoundException({ message: 'Venture not found', errorCode: 'VENTURE_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Venture not found',
+        errorCode: 'VENTURE_NOT_FOUND',
+      });
     }
     try {
       await this.prisma.$transaction([
         this.prisma.incubation_milestones.deleteMany({
           where: { incubations: { student_entrepreneurship_id: id } },
         }),
-        this.prisma.incubations.deleteMany({ where: { student_entrepreneurship_id: id } }),
+        this.prisma.incubations.deleteMany({
+          where: { student_entrepreneurship_id: id },
+        }),
         this.prisma.startup_ideas.updateMany({
           where: { converted_venture_id: id },
           data: { converted_venture_id: null },
@@ -685,16 +768,29 @@ export class StudentEntrepreneurshipService {
    * can assign a mentor and fill in funding fields after the initial
    * "Add Student" create step, which is normally a bare-minimum submission.
    */
-  async updateForCoordinator(id: number, dto: UpdateStudentEntrepreneurshipDto) {
-    const existing = await this.prisma.student_entrepreneurship.findUnique({ where: { id } });
+  async updateForCoordinator(
+    id: number,
+    dto: UpdateStudentEntrepreneurshipDto,
+  ) {
+    const existing = await this.prisma.student_entrepreneurship.findUnique({
+      where: { id },
+    });
     if (!existing) {
-      throw new NotFoundException({ message: 'Venture not found', errorCode: 'VENTURE_NOT_FOUND' });
+      throw new NotFoundException({
+        message: 'Venture not found',
+        errorCode: 'VENTURE_NOT_FOUND',
+      });
     }
 
     if (dto.mentor_faculty_id !== undefined) {
-      const faculty = await this.prisma.faculty.findUnique({ where: { id: dto.mentor_faculty_id } });
+      const faculty = await this.prisma.faculty.findUnique({
+        where: { id: dto.mentor_faculty_id },
+      });
       if (!faculty) {
-        throw new NotFoundException({ message: 'Mentor faculty not found', errorCode: 'FACULTY_NOT_FOUND' });
+        throw new NotFoundException({
+          message: 'Mentor faculty not found',
+          errorCode: 'FACULTY_NOT_FOUND',
+        });
       }
     }
 
@@ -746,9 +842,16 @@ export class StudentEntrepreneurshipService {
             select: {
               id: true,
               student_id_no: true,
-              soa_applications: { select: { first_name: true, last_name: true } },
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
               users: { select: { email: true } },
-              classes: { select: { section: true, departments: { select: { code: true, name: true } } } },
+              classes: {
+                select: {
+                  section: true,
+                  departments: { select: { code: true, name: true } },
+                },
+              },
             },
           },
           faculty: { select: { first_name: true, last_name: true } },
@@ -757,12 +860,17 @@ export class StudentEntrepreneurshipService {
 
       return {
         id: updated.id,
-        mentor_faculty_name: updated.faculty ? `${updated.faculty.first_name} ${updated.faculty.last_name}` : null,
+        mentor_faculty_name: updated.faculty
+          ? `${updated.faculty.first_name} ${updated.faculty.last_name}`
+          : null,
         business_name: updated.business_name,
         business_description: updated.business_description,
         sector: updated.sector,
         stage: updated.stage,
-        funding_required: updated.funding_required !== null ? Number(updated.funding_required) : null,
+        funding_required:
+          updated.funding_required !== null
+            ? Number(updated.funding_required)
+            : null,
         remarks: updated.remarks,
         created_at: updated.created_at,
         is_incubated: updated.is_incubated,
@@ -790,10 +898,16 @@ export class StudentEntrepreneurshipService {
         mvp_launched: updated.mvp_launched,
         product_launched: updated.product_launched,
         customers_count: updated.customers_count,
-        monthly_revenue: updated.monthly_revenue !== null ? Number(updated.monthly_revenue) : null,
+        monthly_revenue:
+          updated.monthly_revenue !== null
+            ? Number(updated.monthly_revenue)
+            : null,
         growth_stage: updated.growth_stage,
         funding_status: updated.funding_status,
-        funding_received: updated.funding_received !== null ? Number(updated.funding_received) : null,
+        funding_received:
+          updated.funding_received !== null
+            ? Number(updated.funding_received)
+            : null,
         funding_source: updated.funding_source,
         govt_grant_scheme: updated.govt_grant_scheme,
         incubator_support: updated.incubator_support,

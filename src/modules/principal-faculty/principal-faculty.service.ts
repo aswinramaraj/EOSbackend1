@@ -4,6 +4,7 @@ import { Prisma } from '../../../generated/prisma/client';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { renderCsv, renderExcel, renderPdf, type ReportTable } from 'src/common/utils/report-export.util';
+import { getPublicationsTable } from 'src/common/db/publications-table.util';
 
 function fmtDateForExport(d: Date | string | null): string {
   if (!d) return '—';
@@ -247,11 +248,15 @@ export class PrincipalFacultyService {
         orderBy: { academic_year: 'desc' },
         select: { classes: { select: { section: true, current_semester: true, departments: { select: { code: true } } } } },
       }),
-      this.prisma.faculty_publications.findMany({
-        where: { faculty_id: id },
-        orderBy: { year: 'desc' },
-        select: { title: true, type: true, year: true, citation_count: true },
-      }),
+      (async () => {
+        const table = await getPublicationsTable(this.prisma);
+        return this.prisma.$queryRawUnsafe<
+          { title: string; type: string; year: number | null; citation_count: number }[]
+        >(
+          `SELECT title, type, year, citation_count FROM ${table} WHERE faculty_id = $1 ORDER BY year DESC NULLS LAST`,
+          id,
+        );
+      })(),
       this.prisma.faculty_awards.findMany({
         where: { faculty_id: id },
         orderBy: { year: 'desc' },

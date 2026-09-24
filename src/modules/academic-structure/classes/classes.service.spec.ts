@@ -5,6 +5,7 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { ClassesService } from './classes.service';
 
 describe('ClassesService', () => {
@@ -27,6 +28,7 @@ describe('ClassesService', () => {
             },
           },
         },
+        { provide: AuditLogService, useValue: { record: jest.fn() } },
       ],
     }).compile();
 

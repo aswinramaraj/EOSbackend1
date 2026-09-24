@@ -177,6 +177,20 @@ export class HodDepartment2Controller {
     );
   }
 
+  /** Appoints this class's advisor/mentor for the current academic year — own-department-scoped, same pattern as the handling/substitute-faculty writes above. */
+  @Patch('assign-faculty/mentor')
+  @Roles(ROLES.HOD)
+  setClassMentor(
+    @CurrentUser() user: JwtPayload,
+    @Body() body: { class_id: number; faculty_id: number },
+  ) {
+    return this.assignFaculty.setClassMentor(
+      user,
+      body.class_id,
+      body.faculty_id,
+    );
+  }
+
   @Get('timetable')
   @Roles(ROLES.HOD)
   getTimetable(

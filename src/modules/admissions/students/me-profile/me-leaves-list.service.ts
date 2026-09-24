@@ -51,12 +51,25 @@ export class MeLeavesListService {
       });
     }
 
+    return this.computeLeaves(student.id, dto);
+  }
+
+  /**
+   * Same computation as getMyLeaves, but for a student chosen by id rather
+   * than resolved from the caller's own JWT - used by ParentsService.
+   * Read-only: no createLeaveForStudentId, a parent never files leave on a
+   * child's behalf.
+   */
+  async getLeavesForStudentId(studentId: number, dto: GetLeavesDto) {
+    return this.computeLeaves(studentId, dto);
+  }
+
+  private async computeLeaves(studentId: number, dto: GetLeavesDto) {
     const page = dto.page ?? 1;
     const pageSize = dto.page_size ?? 20;
 
     const [total, rows] = await this.fetchLeaves(
-      userId,
-      student.id,
+      studentId,
       dto,
       page,
       pageSize,
@@ -87,7 +100,6 @@ export class MeLeavesListService {
   }
 
   private async fetchLeaves(
-    userId: number,
     studentId: number,
     dto: GetLeavesDto,
     page: number,
@@ -127,7 +139,7 @@ export class MeLeavesListService {
         }),
       ]);
     } catch (err) {
-      this.logger.error(`Failed to fetch leaves for user ${userId}`, err);
+      this.logger.error(`Failed to fetch leaves for student ${studentId}`, err);
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

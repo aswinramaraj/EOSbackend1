@@ -60,6 +60,14 @@ import { MeCareerPathService } from './me-career-path.service';
     MeExamResultsService,
     MeFeesService,
     MeAcademicCalendarService,
+    MeExamScheduleService,
+    MeLeavesListService,
+    MeOdRequestsListService,
+    MeBonafideRequestsService,
+    MeHostelRoomService,
+    MeHostelOutingsService,
+    MeCampusOutingsService,
+    MeCareerPathService,
   ],
 })
 export class MeProfileModule {}

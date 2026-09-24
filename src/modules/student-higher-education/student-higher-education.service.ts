@@ -163,10 +163,19 @@ export class StudentHigherEducationService {
         errorCode: 'STUDENT_RECORD_NOT_FOUND',
       });
     }
+    return this.findForStudentId(student.id);
+  }
 
+  /**
+   * Same computation as findForStudent, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService
+   * once it has verified (via parent_student_mapping) that the caller is
+   * actually this student's parent.
+   */
+  async findForStudentId(studentId: number) {
     try {
       const row = await this.prisma.student_higher_education.findUnique({
-        where: { student_id: student.id },
+        where: { student_id: studentId },
       });
       if (!row) return null;
 

@@ -6,6 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 
@@ -19,7 +20,10 @@ function prismaErrorCode(err: unknown): string | undefined {
 export class CoursesService {
   private readonly logger = new Logger(CoursesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   /**
    * POST /courses
@@ -29,7 +33,7 @@ export class CoursesService {
    *  409 COURSE_CODE_EXISTS   – code already in use
    *  500 INTERNAL_ERROR       – unexpected DB failure
    */
-  async create(createCourseDto: CreateCourseDto) {
+  async create(createCourseDto: CreateCourseDto, performedByUserId: number) {
     const existing = await this.prisma.courses.findUnique({
       where: {
         code: createCourseDto.code,
@@ -56,8 +60,9 @@ export class CoursesService {
       });
     }
 
+    let created: Awaited<ReturnType<typeof this.prisma.courses.create>>;
     try {
-      return await this.prisma.courses.create({
+      created = await this.prisma.courses.create({
         data: {
           name: createCourseDto.name,
           code: createCourseDto.code,
@@ -65,7 +70,14 @@ export class CoursesService {
           duration_years: createCourseDto.duration_years,
         },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (prismaErrorCode(err) === 'P2002') {
+        throw new ConflictException({
+          message: 'Course code already exists',
+          errorCode: 'COURSE_CODE_EXISTS',
+        });
+      }
+
       this.logger.error('Course create error', err);
 
       throw new InternalServerErrorException({
@@ -73,6 +85,20 @@ export class CoursesService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    await this.auditLog.record({
+      entityType: 'course',
+      entityId: created.id,
+      action: 'course_created',
+      performedByUserId,
+      newValue: {
+        name: created.name,
+        code: created.code,
+        department_id: created.department_id,
+      },
+    });
+
+    return created;
   }
 
   async findAll() {
@@ -87,7 +113,11 @@ export class CoursesService {
     });
   }
 
-  async update(id: number, updateCourseDto: UpdateCourseDto) {
+  async update(
+    id: number,
+    updateCourseDto: UpdateCourseDto,
+    performedByUserId: number,
+  ) {
     const existing = await this.prisma.courses.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException({
@@ -112,7 +142,7 @@ export class CoursesService {
     }
 
     try {
-      return await this.prisma.courses.update({
+      await this.prisma.courses.update({
         where: {
           id,
         },
@@ -140,6 +170,17 @@ export class CoursesService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    await this.auditLog.record({
+      entityType: 'course',
+      entityId: id,
+      action: 'course_updated',
+      performedByUserId,
+      oldValue: { name: existing.name, code: existing.code },
+      newValue: { ...updateCourseDto },
+    });
+
+    return this.findOne(id);
   }
 
   /**
@@ -148,7 +189,7 @@ export class CoursesService {
    * Blocked (409 COURSE_IN_USE) if any class still references this course —
    * reports the exact blocking count so the UI can show it before the click.
    */
-  async remove(id: number) {
+  async remove(id: number, performedByUserId: number) {
     const existing = await this.prisma.courses.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException({
@@ -171,6 +212,13 @@ export class CoursesService {
 
     try {
       await this.prisma.courses.delete({ where: { id } });
+      await this.auditLog.record({
+        entityType: 'course',
+        entityId: id,
+        action: 'course_deleted',
+        performedByUserId,
+        oldValue: { name: existing.name, code: existing.code },
+      });
       return { message: 'Course deleted successfully' };
     } catch (err: unknown) {
       if (prismaErrorCode(err) === 'P2003') {

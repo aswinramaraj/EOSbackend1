@@ -7,16 +7,26 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { CreateBatchDto } from './dto/create-batch.dto';
 import { UpdateBatchDto } from './dto/update-batch.dto';
+
+function prismaErrorCode(err: unknown): string | undefined {
+  return typeof err === 'object' && err !== null && 'code' in err
+    ? (err as { code?: string }).code
+    : undefined;
+}
 
 @Injectable()
 export class BatchesService {
   private readonly logger = new Logger(BatchesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
-  async create(dto: CreateBatchDto) {
+  async create(dto: CreateBatchDto, performedByUserId: number) {
     if (dto.end_year < dto.start_year) {
       throw new UnprocessableEntityException({
         message: 'end_year must not be earlier than start_year',
@@ -34,8 +44,9 @@ export class BatchesService {
       });
     }
 
+    let created: Awaited<ReturnType<typeof this.prisma.batches.create>>;
     try {
-      return await this.prisma.batches.create({
+      created = await this.prisma.batches.create({
         data: {
           name: dto.name,
           start_year: dto.start_year,
@@ -43,6 +54,12 @@ export class BatchesService {
         },
       });
     } catch (err) {
+      if (prismaErrorCode(err) === 'P2002') {
+        throw new ConflictException({
+          message: 'Batch name already exists',
+          errorCode: 'BATCH_NAME_EXISTS',
+        });
+      }
       this.logger.error(
         'DB error creating batch',
         err instanceof Error ? err.stack : String(err),
@@ -52,6 +69,20 @@ export class BatchesService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    await this.auditLog.record({
+      entityType: 'batch',
+      entityId: created.id,
+      action: 'batch_created',
+      performedByUserId,
+      newValue: {
+        name: created.name,
+        start_year: created.start_year,
+        end_year: created.end_year,
+      },
+    });
+
+    return created;
   }
 
   async findAll() {
@@ -71,7 +102,7 @@ export class BatchesService {
     return batch;
   }
 
-  async update(id: number, dto: UpdateBatchDto) {
+  async update(id: number, dto: UpdateBatchDto, performedByUserId: number) {
     const batch = await this.findOne(id);
 
     const nextStartYear = dto.start_year ?? batch.start_year;
@@ -96,7 +127,7 @@ export class BatchesService {
     }
 
     try {
-      return await this.prisma.batches.update({
+      await this.prisma.batches.update({
         where: { id },
         data: {
           name: dto.name,
@@ -105,6 +136,12 @@ export class BatchesService {
         },
       });
     } catch (err) {
+      if (prismaErrorCode(err) === 'P2002') {
+        throw new ConflictException({
+          message: 'Batch name already exists',
+          errorCode: 'BATCH_NAME_EXISTS',
+        });
+      }
       this.logger.error(
         `DB error updating batch #${id}`,
         err instanceof Error ? err.stack : String(err),
@@ -114,16 +151,42 @@ export class BatchesService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    await this.auditLog.record({
+      entityType: 'batch',
+      entityId: id,
+      action: 'batch_updated',
+      performedByUserId,
+      oldValue: {
+        name: batch.name,
+        start_year: batch.start_year,
+        end_year: batch.end_year,
+      },
+      newValue: { ...dto },
+    });
+
+    return this.findOne(id);
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, performedByUserId: number) {
+    const batch = await this.findOne(id);
 
     try {
       await this.prisma.batches.delete({ where: { id } });
+      await this.auditLog.record({
+        entityType: 'batch',
+        entityId: id,
+        action: 'batch_deleted',
+        performedByUserId,
+        oldValue: {
+          name: batch.name,
+          start_year: batch.start_year,
+          end_year: batch.end_year,
+        },
+      });
       return { message: 'Batch deleted successfully' };
-    } catch (err: any) {
-      if (err?.code === 'P2003') {
+    } catch (err: unknown) {
+      if (prismaErrorCode(err) === 'P2003') {
         throw new ConflictException({
           message:
             'Batch cannot be deleted while classes, students, or other records reference it',

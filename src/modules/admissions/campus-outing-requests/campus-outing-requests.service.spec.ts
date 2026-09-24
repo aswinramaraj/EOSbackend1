@@ -19,6 +19,7 @@ describe('CampusOutingRequestsService', () => {
       update: jest.Mock;
     };
     $transaction: jest.Mock;
+    $executeRaw: jest.Mock;
   };
 
   function outingRow(overrides: Record<string, unknown> = {}) {
@@ -62,6 +63,7 @@ describe('CampusOutingRequestsService', () => {
       $transaction: jest.fn((queries: Promise<unknown>[]) =>
         Promise.all(queries),
       ),
+      $executeRaw: jest.fn().mockResolvedValue(1),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -215,6 +217,50 @@ describe('CampusOutingRequestsService', () => {
         select: expect.any(Object),
       });
     });
+
+    it('persists remarks on reject via raw SQL (schema-gap-tolerant — distinct from the student-owned reason column)', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
+      prisma.campus_outing_requests.findUnique.mockResolvedValue({
+        status: 'pending',
+        students: { class_id: 5 },
+      });
+      prisma.class_mentors.findFirst.mockResolvedValue({ id: 1 });
+      prisma.campus_outing_requests.update.mockResolvedValue(
+        outingRow({ status: 'rejected' }),
+      );
+
+      await service.facultyApprove(
+        1,
+        { decision: 'rejected', remarks: 'No valid ID card shown' },
+        1,
+      );
+
+      expect(prisma.$executeRaw).toHaveBeenCalled();
+    });
+
+    it('silently no-ops when the remarks column does not exist yet (pre-migration)', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 7 });
+      prisma.campus_outing_requests.findUnique.mockResolvedValue({
+        status: 'pending',
+        students: { class_id: 5 },
+      });
+      prisma.class_mentors.findFirst.mockResolvedValue({ id: 1 });
+      prisma.campus_outing_requests.update.mockResolvedValue(
+        outingRow({ status: 'rejected' }),
+      );
+      prisma.$executeRaw.mockRejectedValue({
+        code: 'P2010',
+        meta: { code: '42703', message: 'column "remarks" does not exist' },
+      });
+
+      await expect(
+        service.facultyApprove(
+          1,
+          { decision: 'rejected', remarks: 'No valid ID card shown' },
+          1,
+        ),
+      ).resolves.toMatchObject({ status: 'rejected' });
+    });
   });
 
   describe('hodApprove', () => {
@@ -270,6 +316,23 @@ describe('CampusOutingRequestsService', () => {
         data: { status: 'hod_approved', approved_by_hod_user_id: 99 },
         select: expect.any(Object),
       });
+    });
+
+    it('persists remarks on reject via raw SQL', async () => {
+      prisma.campus_outing_requests.findUnique.mockResolvedValue({
+        status: 'faculty_approved',
+      });
+      prisma.campus_outing_requests.update.mockResolvedValue(
+        outingRow({ status: 'rejected' }),
+      );
+
+      await service.hodApprove(
+        1,
+        { decision: 'rejected', remarks: 'Overlaps with exam schedule' },
+        99,
+      );
+
+      expect(prisma.$executeRaw).toHaveBeenCalled();
     });
   });
 });

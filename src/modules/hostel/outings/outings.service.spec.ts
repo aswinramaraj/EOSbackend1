@@ -11,11 +11,13 @@ describe('OutingsService', () => {
   let service: OutingsService;
   let prisma: {
     hostel_outings: { findUnique: jest.Mock; update: jest.Mock };
+    $executeRaw: jest.Mock;
   };
 
   beforeEach(async () => {
     prisma = {
       hostel_outings: { findUnique: jest.fn(), update: jest.fn() },
+      $executeRaw: jest.fn().mockResolvedValue(1),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -72,7 +74,7 @@ describe('OutingsService', () => {
       });
     });
 
-    it('allows the decision when the outing belongs to the caller\'s own hostel', async () => {
+    it("allows the decision when the outing belongs to the caller's own hostel", async () => {
       prisma.hostel_outings.findUnique.mockResolvedValue({
         status: 'pending',
         students: {
@@ -88,7 +90,12 @@ describe('OutingsService', () => {
           roll_no: '23EC056',
           soa_applications: { first_name: 'Arjun', last_name: 'Kumar' },
           users: { email: 'arjun.kumar@example.com' },
-          student_hostel_mapping: { hostel_rooms: { room_number: 'A101', hostels: { id: 1, name: 'Block A', code: 'A' } } },
+          student_hostel_mapping: {
+            hostel_rooms: {
+              room_number: 'A101',
+              hostels: { id: 1, name: 'Block A', code: 'A' },
+            },
+          },
         },
         users: null,
         from_date: new Date('2026-08-20T00:00:00.000Z'),
@@ -107,6 +114,83 @@ describe('OutingsService', () => {
           data: { status: 'approved', approved_by_warden_user_id: 99 },
         }),
       );
+    });
+
+    it('persists remarks on reject via raw SQL (schema-gap-tolerant — distinct from the student-owned reason column)', async () => {
+      prisma.hostel_outings.findUnique.mockResolvedValue({
+        status: 'pending',
+        students: { student_hostel_mapping: null },
+      });
+      prisma.hostel_outings.update.mockResolvedValue({
+        id: 1,
+        status: 'rejected',
+        students: {
+          id: 5,
+          student_id_no: '23EC056',
+          roll_no: '23EC056',
+          soa_applications: { first_name: 'Arjun', last_name: 'Kumar' },
+          users: { email: 'arjun.kumar@example.com' },
+          student_hostel_mapping: null,
+        },
+        users: null,
+        from_date: new Date('2026-08-20T00:00:00.000Z'),
+        to_date: new Date('2026-08-21T00:00:00.000Z'),
+        start_time: new Date('2026-08-20T08:00:00.000Z'),
+        return_time: null,
+        reason: 'Family function',
+        created_at: new Date('2026-08-19T00:00:00.000Z'),
+      });
+
+      await service.decide(
+        1,
+        {
+          decision: 'rejected',
+          remarks: 'Insufficient warden approval lead time',
+        },
+        99,
+        null,
+      );
+
+      expect(prisma.$executeRaw).toHaveBeenCalled();
+    });
+
+    it('silently no-ops when the remarks column does not exist yet (pre-migration)', async () => {
+      prisma.hostel_outings.findUnique.mockResolvedValue({
+        status: 'pending',
+        students: { student_hostel_mapping: null },
+      });
+      prisma.hostel_outings.update.mockResolvedValue({
+        id: 1,
+        status: 'rejected',
+        students: {
+          id: 5,
+          student_id_no: '23EC056',
+          roll_no: '23EC056',
+          soa_applications: null,
+          users: { email: 'arjun.kumar@example.com' },
+          student_hostel_mapping: null,
+        },
+        users: null,
+        from_date: new Date('2026-08-20T00:00:00.000Z'),
+        to_date: new Date('2026-08-21T00:00:00.000Z'),
+        start_time: new Date('2026-08-20T08:00:00.000Z'),
+        return_time: null,
+        reason: 'Family function',
+        created_at: new Date('2026-08-19T00:00:00.000Z'),
+      });
+      prisma.$executeRaw.mockRejectedValue({
+        code: 'P2010',
+        meta: { code: '42703', message: 'column "remarks" does not exist' },
+      });
+
+      await expect(
+        service.decide(
+          1,
+          { decision: 'rejected', remarks: 'Late request' },
+          99,
+          null,
+        ),
+      ).resolves.toMatchObject({ id: 1, status: 'rejected' });
     });
 
     it('allows the decision with no hostel scope (e.g. admin)', async () => {

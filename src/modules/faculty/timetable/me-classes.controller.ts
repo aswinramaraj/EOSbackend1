@@ -1,4 +1,5 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { IsDateString, IsOptional } from 'class-validator';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -6,6 +7,13 @@ import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { TimetableService } from './timetable.service';
+
+/** `date` (optional, YYYY-MM-DD) — omitted defaults to today, exactly as before this parameter existed. */
+class GetTodayQueryDto {
+  @IsOptional()
+  @IsDateString()
+  date?: string;
+}
 
 /**
  * GET /api/v1/me/classes/today — Faculty/HoD.
@@ -29,7 +37,7 @@ export class MeClassesController {
 
   @Get('today')
   @Roles(ROLES.FACULTY, ROLES.HOD)
-  findToday(@CurrentUser() user: JwtPayload) {
-    return this.timetableService.findTodayForFaculty(user.sub);
+  findToday(@CurrentUser() user: JwtPayload, @Query() query: GetTodayQueryDto) {
+    return this.timetableService.findTodayForFaculty(user.sub, query.date);
   }
 }

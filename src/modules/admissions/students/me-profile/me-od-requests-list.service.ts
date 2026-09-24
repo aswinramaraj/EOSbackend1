@@ -46,15 +46,27 @@ export class MeOdRequestsListService {
       });
     }
 
+    return this.computeOdRequests(student.id, dto);
+  }
+
+  /**
+   * Same computation as getMyOdRequests, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService.
+   * Deliberately the light per-row summary (approved/pending/rejected
+   * counts), not the full team-member roster or team create/join/leave
+   * actions from MeOdTeamsService - a parent sees their child's own OD
+   * request status, not every teammate's identity or ability to manage the
+   * team on the child's behalf.
+   */
+  async getOdRequestsForStudentId(studentId: number, dto: GetOdRequestsDto) {
+    return this.computeOdRequests(studentId, dto);
+  }
+
+  private async computeOdRequests(studentId: number, dto: GetOdRequestsDto) {
     const page = dto.page ?? 1;
     const pageSize = dto.page_size ?? 20;
 
-    const [total, rows] = await this.fetchRequests(
-      userId,
-      student.id,
-      page,
-      pageSize,
-    );
+    const [total, rows] = await this.fetchRequests(studentId, page, pageSize);
 
     return {
       data: rows.map((row) => {
@@ -94,7 +106,6 @@ export class MeOdRequestsListService {
   }
 
   private async fetchRequests(
-    userId: number,
     studentId: number,
     page: number,
     pageSize: number,
@@ -128,7 +139,10 @@ export class MeOdRequestsListService {
         }),
       ]);
     } catch (err) {
-      this.logger.error(`Failed to fetch OD requests for user ${userId}`, err);
+      this.logger.error(
+        `Failed to fetch OD requests for student ${studentId}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

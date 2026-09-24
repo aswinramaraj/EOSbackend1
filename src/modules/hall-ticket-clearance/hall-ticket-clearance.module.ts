@@ -7,5 +7,6 @@ import { HallTicketClearanceController } from './hall-ticket-clearance.controlle
   imports: [PrismaModule],
   controllers: [HallTicketClearanceController],
   providers: [HallTicketClearanceService],
+  exports: [HallTicketClearanceService],
 })
 export class HallTicketClearanceModule {}

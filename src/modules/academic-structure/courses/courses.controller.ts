@@ -14,6 +14,8 @@ import { UpdateCourseDto } from './dto/update-course.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ApiResponse, ROLES } from 'src/common';
 
 @Controller('courses')
@@ -27,8 +29,11 @@ export class CoursesController {
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
-  async create(@Body() createCourseDto: CreateCourseDto) {
-    const course = await this.coursesService.create(createCourseDto);
+  async create(
+    @Body() createCourseDto: CreateCourseDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const course = await this.coursesService.create(createCourseDto, user.sub);
     return ApiResponse.created(course, 'Course created successfully');
   }
 
@@ -48,15 +53,19 @@ export class CoursesController {
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
-  update(@Param('id') id: string, @Body() updateCourseDto: UpdateCourseDto) {
-    return this.coursesService.update(+id, updateCourseDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateCourseDto: UpdateCourseDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.coursesService.update(+id, updateCourseDto, user.sub);
   }
 
   /** DELETE /api/v1/courses/:id — Admin only. */
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
-  remove(@Param('id') id: string) {
-    return this.coursesService.remove(+id);
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.coursesService.remove(+id, user.sub);
   }
 }

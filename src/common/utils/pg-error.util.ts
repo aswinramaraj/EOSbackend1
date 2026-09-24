@@ -37,3 +37,16 @@ export function isUndefinedColumnError(
 ): boolean {
   return pgErrorMatches(err, '42703', columnHint);
 }
+
+/** Postgres SQLSTATE 42P01 — undefined_table. Use to detect a brand-new
+ * table proposed via a `.query.md` handoff that hasn't been created yet —
+ * unlike an additive column on an existing table, a whole new table has no
+ * "old behavior" to fall back to, so callers should degrade to an empty
+ * result (reads) or a clear "not enabled yet" error (writes), not silently
+ * no-op the way an additive-column write can. */
+export function isUndefinedTableError(
+  err: unknown,
+  tableHint: string,
+): boolean {
+  return pgErrorMatches(err, '42P01', tableHint);
+}

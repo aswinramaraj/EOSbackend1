@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { Prisma } from 'generated/prisma/client';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import { formatStudentName } from '../common/student-name.util';
 import { SearchOutingsDto } from './dto/search-outings.dto';
 import { DecideOutingDto } from './dto/decide-outing.dto';
@@ -190,6 +191,9 @@ export class OutingsService {
         },
         include: OUTING_INCLUDE,
       });
+      if (dto.decision === 'rejected' && dto.remarks) {
+        await this.trySetRemarks(id, dto.remarks);
+      }
       return toOutingResponse(updated);
     } catch (err) {
       this.logger.error('DB error while deciding outing', err);
@@ -197,6 +201,22 @@ export class OutingsService {
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',
       });
+    }
+  }
+
+  /**
+   * Real once hostel_outings.remarks runs (see
+   * decision_reason_columns.query.md) — silently no-ops pre-migration so
+   * rejection keeps working exactly as before, without persisting the
+   * reason, until the column exists.
+   */
+  private async trySetRemarks(id: number, remarks: string) {
+    try {
+      await this.prisma.$executeRaw`
+        UPDATE hostel_outings SET remarks = ${remarks} WHERE id = ${id}
+      `;
+    } catch (err) {
+      if (!isUndefinedColumnError(err, 'remarks')) throw err;
     }
   }
 }

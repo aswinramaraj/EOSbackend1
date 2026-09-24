@@ -5,6 +5,7 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
+import { RESEARCH_ROLES } from './research-contributor.dto';
 
 const PROJECT_STATUSES = ['ongoing', 'completed'] as const;
 
@@ -17,9 +18,8 @@ const PROJECT_STATUSES = ['ongoing', 'completed'] as const;
  */
 export class UpdateResearchEntryDto {
   @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  role?: string;
+  @IsIn(RESEARCH_ROLES)
+  role?: (typeof RESEARCH_ROLES)[number];
 
   @IsOptional()
   @IsDateString()

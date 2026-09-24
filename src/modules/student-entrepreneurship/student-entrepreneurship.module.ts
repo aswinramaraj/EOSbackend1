@@ -17,5 +17,6 @@ import { StudentEntrepreneurshipService } from './student-entrepreneurship.servi
     MeEntrepreneurshipController,
   ],
   providers: [StudentEntrepreneurshipService],
+  exports: [StudentEntrepreneurshipService],
 })
 export class StudentEntrepreneurshipModule {}

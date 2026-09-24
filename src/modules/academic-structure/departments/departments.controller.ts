@@ -15,6 +15,8 @@ import { AssignHodDto } from './dto/assign-hod.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ApiResponse, ROLES } from 'src/common';
 
 @Controller('departments')
@@ -28,9 +30,14 @@ export class DepartmentsController {
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
-  async create(@Body() createDepartmentDto: CreateDepartmentDto) {
-    const department =
-      await this.departmentsService.create(createDepartmentDto);
+  async create(
+    @Body() createDepartmentDto: CreateDepartmentDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const department = await this.departmentsService.create(
+      createDepartmentDto,
+      user.sub,
+    );
     return ApiResponse.created(department, 'Department created successfully');
   }
 
@@ -53,16 +60,17 @@ export class DepartmentsController {
   update(
     @Param('id') id: string,
     @Body() updateDepartmentDto: UpdateDepartmentDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.departmentsService.update(+id, updateDepartmentDto);
+    return this.departmentsService.update(+id, updateDepartmentDto, user.sub);
   }
 
   /** DELETE /api/v1/departments/:id — Admin only. */
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
-  remove(@Param('id') id: string) {
-    return this.departmentsService.remove(+id);
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.departmentsService.remove(+id, user.sub);
   }
 
   /**
@@ -72,7 +80,11 @@ export class DepartmentsController {
   @Patch(':id/hod')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(ROLES.ADMIN)
-  assignHod(@Param('id') id: string, @Body() dto: AssignHodDto) {
-    return this.departmentsService.assignHod(+id, dto);
+  assignHod(
+    @Param('id') id: string,
+    @Body() dto: AssignHodDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.departmentsService.assignHod(+id, dto, user.sub);
   }
 }

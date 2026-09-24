@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ClassesService } from 'src/modules/academic-structure/classes/classes.service';
 
 function yearLabel(semester: number | null): string {
   if (semester == null) return '—';
@@ -35,7 +36,10 @@ function currentAcademicYear(): string {
 export class HodAssignFacultyService {
   private readonly logger = new Logger(HodAssignFacultyService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly classes: ClassesService,
+  ) {}
 
   private async resolveDepartmentId(user: JwtPayload): Promise<number> {
     const faculty = await this.prisma.faculty.findUnique({
@@ -93,6 +97,7 @@ export class HodAssignFacultyService {
         status: 'assigned' | 'unassigned';
       }[] = [];
       let selectedClassLabel: string | null = null;
+      let currentMentor: { faculty_id: number; name: string } | null = null;
 
       if (selectedClassId != null) {
         const selectedClass = classes.find((c) => c.id === selectedClassId);
@@ -155,6 +160,16 @@ export class HodAssignFacultyService {
             status: handling ? 'assigned' : 'unassigned',
           };
         });
+
+        const [mentorRow] = await this.classes.findMentor(selectedClassId, {
+          academic_year: currentAcademicYear(),
+        });
+        currentMentor = mentorRow
+          ? {
+              faculty_id: mentorRow.faculty.id,
+              name: `${mentorRow.faculty.first_name} ${mentorRow.faculty.last_name}`.trim(),
+            }
+          : null;
       }
 
       return {
@@ -170,6 +185,7 @@ export class HodAssignFacultyService {
           name: `${f.first_name} ${f.last_name}`.trim(),
         })),
         rows,
+        current_mentor: currentMentor,
       };
     } catch (err) {
       if (err instanceof NotFoundException) throw err;
@@ -278,5 +294,39 @@ export class HodAssignFacultyService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  /**
+   * PATCH assign-faculty/mentor — appoints (or re-appoints) this class's
+   * advisor/mentor for the current academic year. Delegates the actual
+   * class_mentors upsert to ClassesService.assignMentor() (already real,
+   * already the one thing POST /classes/:id/mentor calls) rather than
+   * duplicating that upsert here — this method only adds the department
+   * scoping/ownership checks that endpoint doesn't do on its own, the same
+   * way setHandlingFaculty/setSubstituteFaculty scope
+   * faculty_subject_class_mapping writes to the caller's own department.
+   */
+  async setClassMentor(user: JwtPayload, classId: number, facultyId: number) {
+    const departmentId = await this.resolveDepartmentId(user);
+    await this.assertClassInDepartment(classId, departmentId);
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { id: facultyId },
+      select: { department_id: true },
+    });
+    if (!faculty || faculty.department_id !== departmentId) {
+      throw new BadRequestException({
+        message: 'That faculty member is not in your department.',
+        errorCode: 'FACULTY_OUT_OF_DEPARTMENT',
+      });
+    }
+    const mentor = await this.classes.assignMentor(
+      classId,
+      { faculty_id: facultyId, academic_year: currentAcademicYear() },
+      user.sub,
+    );
+    return {
+      faculty_id: mentor.faculty.id,
+      name: `${mentor.faculty.first_name} ${mentor.faculty.last_name}`.trim(),
+    };
   }
 }

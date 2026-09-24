@@ -42,11 +42,34 @@ export class MeHostelRoomService {
       });
     }
 
+    return this.computeHostelRoom(student);
+  }
+
+  /**
+   * Same computation as getMyHostelRoom, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService
+   * once it has verified (via parent_student_mapping) that the caller is
+   * actually this student's parent.
+   */
+  async getHostelRoomForStudentId(studentId: number) {
+    const student = await this.fetchStudentById(studentId);
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    return this.computeHostelRoom(student);
+  }
+
+  private async computeHostelRoom(student: {
+    id: number;
+    student_id_no: string;
+    register_no: string | null;
+    soa_applications: { first_name: string; last_name: string | null } | null;
+  }) {
     const studentName = student.soa_applications
       ? `${student.soa_applications.first_name} ${student.soa_applications.last_name ?? ''}`.trim()
       : `Student ${student.student_id_no}`;
 
-    const mapping = await this.fetchMapping(userId, student.id);
+    const mapping = await this.fetchMapping(student.id);
 
     if (!mapping) {
       return {
@@ -95,7 +118,27 @@ export class MeHostelRoomService {
     }
   }
 
-  private async fetchMapping(userId: number, studentId: number) {
+  private async fetchStudentById(studentId: number) {
+    try {
+      return await this.prisma.students.findUnique({
+        where: { id: studentId },
+        select: {
+          id: true,
+          student_id_no: true,
+          register_no: true,
+          soa_applications: { select: { first_name: true, last_name: true } },
+        },
+      });
+    } catch (err) {
+      this.logger.error(`Failed to fetch student ${studentId}`, err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  private async fetchMapping(studentId: number) {
     try {
       return await this.prisma.student_hostel_mapping.findUnique({
         where: { student_id: studentId },
@@ -113,7 +156,7 @@ export class MeHostelRoomService {
       });
     } catch (err) {
       this.logger.error(
-        `Failed to fetch hostel mapping for user ${userId}`,
+        `Failed to fetch hostel mapping for student ${studentId}`,
         err,
       );
       throw new InternalServerErrorException({

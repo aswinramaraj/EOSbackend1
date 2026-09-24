@@ -1232,6 +1232,35 @@ describe('BorrowRecordsService', () => {
     });
   });
 
+  describe('findBorrowRecordsForStudentId', () => {
+    it('queries by the given studentId directly, with no ownership resolution (that is ParentsService.assertOwnChild\'s job, called before this)', async () => {
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
+
+      await service.findBorrowRecordsForStudentId(7, {});
+
+      expect(mockPrismaService.students.findUnique).not.toHaveBeenCalled();
+      expect(
+        mockPrismaService.book_borrow_records.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { student_id: 7 } }),
+      );
+    });
+
+    it('applies the same status filtering as findMyBorrowRecords', async () => {
+      mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
+
+      await service.findBorrowRecordsForStudentId(7, { status: 'overdue' as any });
+
+      expect(
+        mockPrismaService.book_borrow_records.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { student_id: 7, status: 'borrowed', due_date: { lt: expect.any(Date) } },
+        }),
+      );
+    });
+  });
+
   describe('getMyDuesSummary', () => {
     const studentUser = {
       sub: 40,

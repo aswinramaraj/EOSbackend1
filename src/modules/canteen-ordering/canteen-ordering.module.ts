@@ -10,5 +10,6 @@ import { CanteenOrderingService } from './canteen-ordering.service';
   imports: [PrismaModule, CanteenAdminModule, WalletModule, CanteenQueueModule],
   controllers: [CanteenOrderingController],
   providers: [CanteenOrderingService],
+  exports: [CanteenOrderingService],
 })
 export class CanteenOrderingModule {}

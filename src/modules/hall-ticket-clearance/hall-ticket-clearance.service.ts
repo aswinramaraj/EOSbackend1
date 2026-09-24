@@ -238,8 +238,18 @@ export class HallTicketClearanceService {
   /** GET /hall-ticket-clearance/my (Student only — own requests). */
   async findMy(query: ListClearanceQueryDto, userId: number) {
     const student = await this.resolveStudentByUserId(userId);
+    return this.findForStudentId(student.id, query);
+  }
 
-    const where = { student_id: student.id };
+  /**
+   * Same computation as findMy, but for a student chosen by id rather than
+   * resolved from the caller's own JWT - used by ParentsService once it has
+   * verified (via parent_student_mapping) that the caller is actually this
+   * student's parent. Read-only: no createForStudentId, a parent never
+   * files a clearance exception on a child's behalf.
+   */
+  async findForStudentId(studentId: number, query: ListClearanceQueryDto) {
+    const where = { student_id: studentId };
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.hall_ticket_clearance_exceptions.findMany({

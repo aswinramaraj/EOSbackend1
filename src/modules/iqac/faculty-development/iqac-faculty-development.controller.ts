@@ -15,7 +15,6 @@ import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { PrincipalFacultyService } from 'src/modules/principal/faculty/faculty.service';
-import { CreatePublicationDto } from 'src/modules/principal/faculty/dto/create-publication.dto';
 import { AddPublicationEntryDto } from './dto/add-publication-entry.dto';
 import { AddDevelopmentProgramEntryDto } from './dto/add-development-program-entry.dto';
 import { AddResearchEntryDto } from './dto/add-research-entry.dto';
@@ -29,14 +28,12 @@ import { UpdatePatentEntryDto } from './dto/update-patent-entry.dto';
 import { IqacFacultyDevelopmentService } from './iqac-faculty-development.service';
 
 /**
- * GET /api/v1/me/iqac/faculty-development/* — IQAC only, read-only.
+ * GET /api/v1/me/iqac/faculty-development/* — IQAC only.
  *
- * `publications/venues*`/`publications/departments` delegate straight to
- * PrincipalFacultyService — the exact same real faculty_publications data,
- * not a duplicate query. `publications/quality` and `publications/entries`
- * are new aggregates (see IqacFacultyDevelopmentService). FDP/STTP/
- * Certifications/Research/Patents have no route here at all — nothing
- * real backs them yet (see iqac_faculty_development_gaps.sql).
+ * `publications/departments` delegates to PrincipalFacultyService (same
+ * real data, not a duplicate query). Everything else under `publications/*`
+ * — including the venue detail drill-through, which now needs the full
+ * multi-contributor list — is owned by IqacFacultyDevelopmentService.
  */
 @Controller('me/iqac/faculty-development')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -54,7 +51,7 @@ export class IqacFacultyDevelopmentController {
 
   @Get('publications/venues/:venue')
   venuePublications(@Param('venue') venue: string) {
-    return this.faculty.venuePublications(venue);
+    return this.facultyDevelopment.venuePublicationsWithContributors(venue);
   }
 
   @Get('publications/departments')
@@ -70,11 +67,6 @@ export class IqacFacultyDevelopmentController {
   @Get('publications/quality')
   publicationsQuality() {
     return this.facultyDevelopment.publicationsQuality();
-  }
-
-  @Post('publications')
-  createPublication(@Body() dto: CreatePublicationDto) {
-    return this.faculty.createPublication(dto);
   }
 
   @Post('publications/entries')

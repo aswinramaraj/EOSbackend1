@@ -7,6 +7,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
+import { ROLES } from 'src/common/constants/roles.constant';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { AssignHodDto } from './dto/assign-hod.dto';
@@ -28,7 +30,10 @@ const HOD_SELECT = {
 export class DepartmentsService {
   private readonly logger = new Logger(DepartmentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   /**
    * POST /departments
@@ -37,7 +42,10 @@ export class DepartmentsService {
    *  409 DEPARTMENT_CODE_EXISTS – code already in use
    *  500 INTERNAL_ERROR         – unexpected DB failure
    */
-  async create(createDepartmentDto: CreateDepartmentDto) {
+  async create(
+    createDepartmentDto: CreateDepartmentDto,
+    performedByUserId: number,
+  ) {
     const existing = await this.prisma.departments.findUnique({
       where: {
         code: createDepartmentDto.code,
@@ -51,8 +59,9 @@ export class DepartmentsService {
       });
     }
 
+    let created: Awaited<ReturnType<typeof this.prisma.departments.create>>;
     try {
-      return await this.prisma.departments.create({
+      created = await this.prisma.departments.create({
         data: {
           name: createDepartmentDto.name,
           code: createDepartmentDto.code,
@@ -73,6 +82,16 @@ export class DepartmentsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    await this.auditLog.record({
+      entityType: 'department',
+      entityId: created.id,
+      action: 'department_created',
+      performedByUserId,
+      newValue: { name: created.name, code: created.code },
+    });
+
+    return created;
   }
 
   async findAll() {
@@ -114,7 +133,11 @@ export class DepartmentsService {
    *  409 DEPARTMENT_CODE_EXISTS – code already belongs to another department
    *  500 INTERNAL_ERROR        – unexpected DB failure
    */
-  async update(id: number, updateDepartmentDto: UpdateDepartmentDto) {
+  async update(
+    id: number,
+    updateDepartmentDto: UpdateDepartmentDto,
+    performedByUserId: number,
+  ) {
     const existing = await this.prisma.departments.findUnique({
       where: { id },
     });
@@ -148,7 +171,6 @@ export class DepartmentsService {
           code: updateDepartmentDto.code,
         },
       });
-      return this.findOne(id);
     } catch (err: unknown) {
       if (prismaErrorCode(err) === 'P2002') {
         throw new ConflictException({
@@ -164,6 +186,20 @@ export class DepartmentsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    await this.auditLog.record({
+      entityType: 'department',
+      entityId: id,
+      action: 'department_updated',
+      performedByUserId,
+      oldValue: { name: existing.name, code: existing.code },
+      newValue: {
+        name: updateDepartmentDto.name,
+        code: updateDepartmentDto.code,
+      },
+    });
+
+    return this.findOne(id);
   }
 
   /**
@@ -174,7 +210,7 @@ export class DepartmentsService {
    * reports exactly what's blocking it (course/class counts) rather than a
    * generic DB error, so the UI can show it before the click even happens.
    */
-  async remove(id: number) {
+  async remove(id: number, performedByUserId: number) {
     const existing = await this.prisma.departments.findUnique({
       where: { id },
     });
@@ -200,6 +236,13 @@ export class DepartmentsService {
 
     try {
       await this.prisma.departments.delete({ where: { id } });
+      await this.auditLog.record({
+        entityType: 'department',
+        entityId: id,
+        action: 'department_deleted',
+        performedByUserId,
+        oldValue: { name: existing.name, code: existing.code },
+      });
       return { message: 'Department deleted successfully' };
     } catch (err: unknown) {
       if (prismaErrorCode(err) === 'P2003') {
@@ -225,8 +268,19 @@ export class DepartmentsService {
    * as a separate implementation rather than widening that controller's
    * @Roles(PRINCIPAL) guard, since that controller's other routes are
    * Principal-only dashboard rollups this module has no business exposing.
+   * Also reachable from Academic Coordinator's Structure page
+   * (HodPickerDialog.tsx), so this is a real, live third entry point into
+   * HoD appointment, not just Admin.
+   *
+   * Keeps `users.role_id` in sync with this appointment (promotes the
+   * incoming HoD, reverts the outgoing one to faculty) and writes an
+   * audit_logs row — this sibling implementation previously did neither,
+   * which is the exact bug PrincipalDepartmentsService.assignHod() was
+   * fixed for; same fix, same reasoning, mirrored here since Prisma has no
+   * single shared base class between these two otherwise-identical methods
+   * to fix it in just once.
    */
-  async assignHod(id: number, dto: AssignHodDto) {
+  async assignHod(id: number, dto: AssignHodDto, performedByUserId: number) {
     const department = await this.prisma.departments.findUnique({
       where: { id },
     });
@@ -237,6 +291,7 @@ export class DepartmentsService {
       });
     }
 
+    let newHodUserId: number | null = null;
     if (dto.faculty_id != null) {
       const faculty = await this.prisma.faculty.findUnique({
         where: { id: dto.faculty_id },
@@ -253,12 +308,63 @@ export class DepartmentsService {
           errorCode: 'FACULTY_WRONG_DEPARTMENT',
         });
       }
+      newHodUserId = faculty.user_id;
     }
 
-    await this.prisma.departments.update({
-      where: { id },
-      data: { head_of_department_faculty_id: dto.faculty_id },
-    });
+    const previousHodFacultyId = department.head_of_department_faculty_id;
+    const hasChange = previousHodFacultyId !== dto.faculty_id;
+
+    let previousHodUserId: number | null = null;
+    if (hasChange && previousHodFacultyId != null) {
+      const previousHod = await this.prisma.faculty.findUnique({
+        where: { id: previousHodFacultyId },
+        select: { user_id: true },
+      });
+      previousHodUserId = previousHod?.user_id ?? null;
+    }
+
+    if (hasChange) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.departments.update({
+          where: { id },
+          data: { head_of_department_faculty_id: dto.faculty_id },
+        });
+
+        if (newHodUserId != null) {
+          const hodRole = await tx.roles.findUniqueOrThrow({
+            where: { name: ROLES.HOD },
+          });
+          await tx.users.update({
+            where: { id: newHodUserId },
+            data: { role_id: hodRole.id },
+          });
+        }
+        if (previousHodUserId != null) {
+          const facultyRole = await tx.roles.findUniqueOrThrow({
+            where: { name: ROLES.FACULTY },
+          });
+          await tx.users.update({
+            where: { id: previousHodUserId },
+            data: { role_id: facultyRole.id },
+          });
+        }
+      });
+
+      await this.auditLog.record({
+        entityType: 'department_hod',
+        entityId: id,
+        action:
+          dto.faculty_id == null
+            ? 'hod_cleared'
+            : previousHodFacultyId == null
+              ? 'hod_assigned'
+              : 'hod_changed',
+        performedByUserId,
+        oldValue: { faculty_id: previousHodFacultyId },
+        newValue: { faculty_id: dto.faculty_id },
+        reason: dto.reason,
+      });
+    }
 
     return this.findOne(id);
   }

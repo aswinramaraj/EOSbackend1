@@ -402,9 +402,28 @@ export class BorrowRecordsService {
   ) {
     const ownStudentId =
       (await this.resolveOwnStudentId(currentUser.sub)) ?? -1;
+    return this.computeBorrowRecords(ownStudentId, dto);
+  }
 
+  /**
+   * Same computation as findMyBorrowRecords, but for a student chosen by id
+   * rather than resolved from the caller's own JWT - used by ParentsService
+   * once it has verified (via parent_student_mapping) that the caller is
+   * actually this student's parent.
+   */
+  async findBorrowRecordsForStudentId(
+    studentId: number,
+    dto: GetMyBorrowRecordsDto,
+  ) {
+    return this.computeBorrowRecords(studentId, dto);
+  }
+
+  private async computeBorrowRecords(
+    studentId: number,
+    dto: GetMyBorrowRecordsDto,
+  ) {
     const where: Prisma.book_borrow_recordsWhereInput = {
-      student_id: ownStudentId,
+      student_id: studentId,
     };
 
     // 'overdue' isn't a value ever persisted in the status column (see the
