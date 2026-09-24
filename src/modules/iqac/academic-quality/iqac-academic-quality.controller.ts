@@ -62,21 +62,25 @@ export class IqacAcademicQualityController {
   }
 
   @Post('class-rows')
-  createClassRow(@Body() dto: CreateClassDto) {
-    return this.classesService.create(dto);
+  createClassRow(@Body() dto: CreateClassDto, @CurrentUser() user: JwtPayload) {
+    return this.classesService.create(dto, user.sub);
   }
 
   @Patch('class-rows/:id')
   updateClassRow(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateClassDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.classesService.update(id, dto);
+    return this.classesService.update(id, dto, user.sub);
   }
 
   @Delete('class-rows/:id')
-  removeClassRow(@Param('id', ParseIntPipe) id: number) {
-    return this.classesService.remove(id);
+  removeClassRow(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.classesService.remove(id, user.sub);
   }
 
   @Post('class-rows/:id/mentor')
