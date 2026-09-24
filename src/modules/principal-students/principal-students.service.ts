@@ -23,6 +23,9 @@ interface DirectoryRow {
   semester: number | null;
   class_id: number | null;
   section: string | null;
+  batch_name: string | null;
+  course_code: string | null;
+  photo_url: string | null;
   present_count: bigint | null;
   total_count: bigint | null;
   cgpa: string | null;
@@ -189,6 +192,8 @@ export class PrincipalStudentsService {
         soa.first_name, soa.last_name, u.email,
         d.code AS dept_code, d.name AS dept_name, cl.current_semester AS semester,
         cl.id AS class_id, cl.section AS section,
+        b.name AS batch_name, co.code AS course_code,
+        st.photo_url AS photo_url,
         sa.present_count, sa.total_count,
         sc.cgpa::text AS cgpa,
         sf.total_demand::text AS total_demand, sf.total_paid::text AS total_paid, sf.has_concession
@@ -197,6 +202,8 @@ export class PrincipalStudentsService {
       LEFT JOIN soa_applications soa ON soa.id = st.soa_application_id
       LEFT JOIN classes cl ON cl.id = st.class_id
       LEFT JOIN departments d ON d.id = cl.department_id
+      LEFT JOIN batches b ON b.id = cl.batch_id
+      LEFT JOIN courses co ON co.id = cl.course_id
       LEFT JOIN student_attendance sa ON sa.student_id = st.id
       LEFT JOIN student_cgpa sc ON sc.student_id = st.id
       LEFT JOIN student_fees sf ON sf.student_id = st.id
@@ -234,6 +241,9 @@ export class PrincipalStudentsService {
             semester: row.semester,
             class_id: row.class_id,
             section: row.section,
+            batch_name: row.batch_name,
+            course_code: row.course_code,
+            photo_url: row.photo_url,
             attendance_pct: resolveAttendancePct(row),
             cgpa: row.cgpa !== null ? Math.round(Number(row.cgpa) * 100) / 100 : null,
             fee_status: fee.status,

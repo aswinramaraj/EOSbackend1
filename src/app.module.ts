@@ -31,6 +31,7 @@ import { MeProfileModule } from './modules/admissions/students/me-profile/me-pro
 
 import { AnnouncementsModule } from './modules/announcements/announcements/announcements.module';
 import { ParentsModule } from './modules/parents/parents.module';
+import { FacultyHostelComplaintsModule } from './modules/faculty/hostel-complaints/faculty-hostel-complaints.module';
 import { PersonalCalendarModule } from './modules/personal-calendar/personal-calendar.module';
 import { StudentHigherEducationModule } from './modules/student-higher-education/student-higher-education.module';
 import { StudentEntrepreneurshipModule } from './modules/student-entrepreneurship/student-entrepreneurship.module';
@@ -57,6 +58,7 @@ import { EdcFundingModule } from './modules/edc-funding/edc-funding.module';
 import { PrincipalLibraryModule } from './modules/principal-library/principal-library.module';
 import { PrincipalMedicalModule } from './modules/principal-medical/principal-medical.module';
 import { PrincipalSportsModule } from './modules/principal-sports/principal-sports.module';
+import { PrincipalFeedbackModule } from './modules/principal-feedback/principal-feedback.module';
 import { SportsAdminModule } from './modules/sports-admin/sports-admin.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { MediaRoomModule } from './modules/media-room/media-room.module';
@@ -127,6 +129,7 @@ import { HolidaySlotsModule } from './modules/faculty/holiday-slots/holiday-slot
 import { LeaveTypesModule } from './modules/faculty/leave-types/leave-types.module';
 import { HrPayrollModule } from './modules/faculty/hr-payroll/hr-payroll.module';
 import { HrQueriesModule } from './modules/faculty/hr-queries/hr-queries.module';
+import { FacultyFeedbackModule } from './modules/faculty/faculty-feedback/faculty-feedback.module';
 import { LessonPlansModule } from './modules/faculty/lesson-plans/lesson-plans.module';
 import { LmsNotesModule } from './modules/faculty/lms-notes/lms-notes.module';
 import { MediaRequestsModule } from './modules/faculty/media-requests/media-requests.module';
@@ -196,6 +199,11 @@ import { AccreditationModule } from './modules/secretary-portal/accreditation/ac
 import { SettingsModule } from './modules/secretary-portal/settings/settings.module';
 
 import { WalletModule } from './modules/wallet/wallet.module';
+
+import { StationaryModule } from './modules/stationary/stationary.module';
+import { StationeryModule } from './modules/stationery/stationery.module';
+import { StudentTodosModule } from './modules/student-todos/student-todos.module';
+import { OnlineClassModule } from './modules/online-class/online-class.module';
 
 import { VenuesModule } from './modules/venues/venues/venues.module';
 import { ServiceRequestsModule as SecretaryServiceRequestsModule } from './modules/secretary/service-requests/service-requests.module';
@@ -305,6 +313,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     StudentsModule,
     MeProfileModule,
     ParentsModule,
+    FacultyHostelComplaintsModule,
     PersonalCalendarModule,
     StudentHigherEducationModule,
     PrincipalStudentsFlatModule,
@@ -320,6 +329,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     PrincipalLibraryModule,
     PrincipalMedicalModule,
     PrincipalSportsModule,
+    PrincipalFeedbackModule,
     SportsAdminModule,
     FinanceModule,
     MediaRoomModule,
@@ -398,6 +408,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     HolidaySlotsModule,
     HrPayrollModule,
     HrQueriesModule,
+    FacultyFeedbackModule,
     LessonPlansModule,
     LmsNotesModule,
     MediaRequestsModule,
@@ -466,6 +477,10 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     SettingsModule,
 
     WalletModule,
+    StationaryModule,
+    StationeryModule,
+    StudentTodosModule,
+    OnlineClassModule,
 
     VenuesModule,
     SecretaryServiceRequestsModule,

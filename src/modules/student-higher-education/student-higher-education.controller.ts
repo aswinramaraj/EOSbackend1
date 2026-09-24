@@ -3,6 +3,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -11,21 +12,27 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { InstitutionDirectoryQueryDto } from 'src/common/dto/institution-directory-query.dto';
 import { StudentHigherEducationService } from './student-higher-education.service';
 
 @Controller('student-higher-education')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
 export class StudentHigherEducationController {
   constructor(private readonly service: StudentHigherEducationService) {}
 
-  /** GET /student-higher-education — Principal only, every department at once. */
+  /**
+   * GET /student-higher-education — Principal/Correspondent (this screen is
+   * shared verbatim by both - see CorrespondentDashboard.tsx), every
+   * department at once by default; optionally filtered by Batch/Department/
+   * Class with Section + name-or-roll-no search (see InstitutionDirectoryQueryDto).
+   */
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query() query: InstitutionDirectoryQueryDto) {
+    return this.service.findAll(query);
   }
 
-  /** GET /student-higher-education/department/:departmentId — Principal only, any department. */
+  /** GET /student-higher-education/department/:departmentId — Principal/Correspondent, any department. */
   @Get('department/:departmentId')
   findAllByDepartment(
     @Param('departmentId', ParseIntPipe) departmentId: number,

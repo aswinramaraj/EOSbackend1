@@ -15,6 +15,8 @@ import { TimetableModule } from 'src/modules/faculty/timetable/timetable.module'
 import { LibrarySettingsModule } from 'src/modules/library/settings/settings.module';
 import { ExamResultsGridModule } from 'src/modules/academic-structure/exam-results/exam-results-grid.module';
 import { ClassesModule } from 'src/modules/academic-structure/classes/classes.module';
+import { FeedbackModule } from 'src/modules/feedback/feedback/feedback.module';
+import { MeProfileModule } from 'src/modules/admissions/students/me-profile/me-profile.module';
 
 import { HodController } from './hod.controller';
 import { HodService } from './hod.service';
@@ -50,6 +52,11 @@ import { HodEmployeeService } from './hod-employee.service';
 
 import { HodStudentProfileService } from './hod-student-profile.service';
 
+import { HodFacultyFeedbackController } from './hod-faculty-feedback.controller';
+import { HodFacultyFeedbackService } from './hod-faculty-feedback.service';
+import { HodStudentFeedbackController } from './hod-student-feedback.controller';
+import { HodStudentFeedbackService } from './hod-student-feedback.service';
+
 @Module({
   imports: [
     PrismaModule,
@@ -68,6 +75,8 @@ import { HodStudentProfileService } from './hod-student-profile.service';
     LibrarySettingsModule,
     ExamResultsGridModule,
     ClassesModule,
+    FeedbackModule,
+    MeProfileModule,
   ],
   controllers: [
     HodController,
@@ -79,6 +88,8 @@ import { HodStudentProfileService } from './hod-student-profile.service';
     HodAppraisalController,
     HodMyClassController,
     HodEmployeeController,
+    HodFacultyFeedbackController,
+    HodStudentFeedbackController,
   ],
   providers: [
     HodService,
@@ -99,6 +110,8 @@ import { HodStudentProfileService } from './hod-student-profile.service';
     HodMyClassService,
     HodEmployeeService,
     HodStudentProfileService,
+    HodFacultyFeedbackService,
+    HodStudentFeedbackService,
   ],
 })
 export class HodModule {}

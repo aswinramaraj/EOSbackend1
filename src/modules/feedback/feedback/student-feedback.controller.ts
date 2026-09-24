@@ -5,10 +5,12 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { FeedbackService } from './feedback.service';
 import { SubmitFeedbackResponsesDto } from './dto/submit-feedback-responses.dto';
+import { ListStudentFeedbackFormsQueryDto } from './dto/list-student-feedback-forms-query.dto';
 import { JwtAuthGuard } from '../../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../auth/guards/roles.guard';
 import { Roles } from '../../../auth/decorators/roles.decorator';
@@ -25,9 +27,10 @@ import type { JwtPayload } from '../../../auth/interfaces/jwt-payload.interface'
 export class StudentFeedbackController {
   constructor(private readonly feedbackService: FeedbackService) {}
 
+  /** ?service_type= narrows to that one Campus-tab service's own review form(s) instead of the academic list. */
   @Get('forms')
-  listForms(@CurrentUser() user: JwtPayload) {
-    return this.feedbackService.listFormsForStudent(user);
+  listForms(@CurrentUser() user: JwtPayload, @Query() query: ListStudentFeedbackFormsQueryDto) {
+    return this.feedbackService.listFormsForStudent(user, query.service_type);
   }
 
   @Get('forms/:id')

@@ -7,7 +7,7 @@ import { PrincipalMedicalService } from './principal-medical.service';
 
 @Controller('principal-medical')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
 export class PrincipalMedicalController {
   constructor(private readonly service: PrincipalMedicalService) {}
 

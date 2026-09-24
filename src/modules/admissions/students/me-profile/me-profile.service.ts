@@ -182,6 +182,7 @@ export class MeProfileService {
       quota_name: student.quotas.name,
       batch_name: student.batches.name,
       class_section: student.classes?.section ?? null,
+      current_semester: student.classes?.current_semester ?? null,
       student_type: student.student_type,
       gender: student.gender,
       date_of_birth: student.date_of_birth
@@ -211,7 +212,7 @@ export class MeProfileService {
           is_first_graduate: true,
           courses: { select: { name: true } },
           quotas: { select: { name: true } },
-          classes: { select: { section: true } },
+          classes: { select: { section: true, current_semester: true } },
           batches: { select: { name: true } },
           student_addresses: {
             select: {

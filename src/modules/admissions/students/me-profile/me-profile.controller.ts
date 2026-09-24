@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -9,13 +10,15 @@ import {
   Put,
   Query,
   Res,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { renderFeeReceiptPdf } from './receipt-pdf.util';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { renderMarksheetPdf } from './marksheet-pdf.util';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import { Roles } from 'src/auth/decorators/roles.decorator';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -60,6 +63,8 @@ import { MeFacultyDirectoryService } from './me-faculty-directory.service';
 import { MeFeesService } from './me-fees.service';
 import { MeExamScheduleService } from './me-exam-schedule.service';
 import { MeHostelRoomService } from './me-hostel-room.service';
+import { MeHostelNightAttendanceService } from './me-hostel-night-attendance.service';
+import { GetHostelNightAttendanceDto } from './dto/get-hostel-night-attendance.dto';
 import { MeHostelComplaintsService } from './me-hostel-complaints.service';
 import { MeMessFeedbackService } from './me-mess-feedback.service';
 import { MeAcademicCalendarService } from './me-academic-calendar.service';
@@ -89,6 +94,7 @@ export class MeController {
     private readonly meFeesService: MeFeesService,
     private readonly meExamScheduleService: MeExamScheduleService,
     private readonly meHostelRoomService: MeHostelRoomService,
+    private readonly meHostelNightAttendanceService: MeHostelNightAttendanceService,
     private readonly meHostelComplaintsService: MeHostelComplaintsService,
     private readonly meMessFeedbackService: MeMessFeedbackService,
     private readonly meAcademicCalendarService: MeAcademicCalendarService,
@@ -139,7 +145,7 @@ export class MeController {
    */
   @Get('profile')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.STUDENT)
+  @Roles(ROLES.STUDENT, ROLES.ALUMNI)
   getProfile(@CurrentUser() user: JwtPayload) {
     return this.meProfileService.getMyProfile(user.sub);
   }
@@ -204,12 +210,56 @@ export class MeController {
    */
   @Get('exam-results')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.STUDENT)
+  @Roles(ROLES.STUDENT, ROLES.ALUMNI)
   getExamResults(
     @CurrentUser() user: JwtPayload,
     @Query() dto: GetExamResultsDto,
   ) {
     return this.meExamResultsService.getMyExamResults(user.sub, dto);
+  }
+
+  /**
+   * GET /api/v1/me/exam-results/:semester/marksheet
+   *
+   * Self-scoped: student_id resolved from the JWT. Renders the requested
+   * semester's END SEMESTER exam results (not internals) as a PDF, in the
+   * same "Sri Eshwar College of Engineering" letterhead style as the fee
+   * receipt PDF (see receipt-pdf.util.ts / marksheet-pdf.util.ts). Returns
+   * a rendered PDF, not JSON — @Res() opts this handler out of the global
+   * response envelope, same pattern as getFeeReceipt above.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR             – semester out of range (1-8)
+   *  401 UNAUTHORIZED                 – missing/invalid JWT
+   *  403 FORBIDDEN                    – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND            – authenticated user has no linked student record
+   *  404 SEMESTER_EXAM_NOT_PUBLISHED  – this semester's end-semester exam has no published results yet
+   *  500 INTERNAL_ERROR               – unexpected server failure
+   */
+  @Get('exam-results/:semester/marksheet')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT, ROLES.ALUMNI)
+  async getMarksheet(
+    @Param('semester', new ParseIntPipe()) semester: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ) {
+    if (semester < 1 || semester > 8) {
+      throw new BadRequestException({
+        message: 'semester must be between 1 and 8',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+    const sheet = await this.meExamResultsService.getMyMarksheetData(
+      user.sub,
+      semester,
+    );
+    const buffer = await renderMarksheetPdf(sheet);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="Marksheet-Sem${semester}.pdf"`,
+    });
+    res.send(buffer);
   }
 
   /**
@@ -264,6 +314,27 @@ export class MeController {
   @Roles(ROLES.STUDENT)
   getLeaves(@CurrentUser() user: JwtPayload, @Query() dto: GetLeavesDto) {
     return this.meLeavesListService.getMyLeaves(user.sub, dto);
+  }
+
+  /**
+   * POST /api/v1/me/leaves/:id/attachment
+   *
+   * multipart/form-data: a single "certificate" file - the supporting
+   * document (e.g. a medical certificate) field the Leave tab's form
+   * already showed but never actually uploaded anywhere. Creator-only
+   * (unlike the OD attachment endpoint, a leave request has no team to
+   * share it with) - see MeLeavesService.uploadAttachment.
+   */
+  @Post('leaves/:id/attachment')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  @UseInterceptors(FileInterceptor('certificate'))
+  uploadLeaveAttachment(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.meLeavesService.uploadAttachment(id, user.sub, file);
   }
 
   /**
@@ -787,7 +858,7 @@ export class MeController {
    */
   @Get('exam-schedule')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.STUDENT)
+  @Roles(ROLES.STUDENT, ROLES.ALUMNI)
   getExamSchedule(@CurrentUser() user: JwtPayload) {
     return this.meExamScheduleService.getMyExamSchedule(user.sub);
   }
@@ -810,6 +881,30 @@ export class MeController {
   @Roles(ROLES.STUDENT)
   getHostelRoom(@CurrentUser() user: JwtPayload) {
     return this.meHostelRoomService.getMyHostelRoom(user.sub);
+  }
+
+  /**
+   * GET /api/v1/me/hostel-night-attendance?from=&to=
+   *
+   * Self-scoped: student_id resolved from the JWT. Only the warden's
+   * PUBLISHED night roll-call marks are returned (never an in-progress
+   * draft), most-recent-date first. Pass from/to (e.g. a calendar month's
+   * first/last day) to scope to that range; omit both for the last 90
+   * records. `is_hostel_resident: false` (empty records) is a normal
+   * response for a day scholar, not an error.
+   *
+   * Error responses:
+   *  400 VALIDATION_ERROR  – from/to present but not a valid date string
+   *  401 UNAUTHORIZED      – missing/invalid JWT
+   *  403 FORBIDDEN         – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND – authenticated user has no linked student record
+   *  500 INTERNAL_ERROR    – unexpected server failure
+   */
+  @Get('hostel-night-attendance')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT)
+  getHostelNightAttendance(@CurrentUser() user: JwtPayload, @Query() query: GetHostelNightAttendanceDto) {
+    return this.meHostelNightAttendanceService.getMyNightAttendance(user.sub, query);
   }
 
   /**

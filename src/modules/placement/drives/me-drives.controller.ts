@@ -120,6 +120,26 @@ export class MeDrivesController {
   }
 
   /**
+   * GET /me/department-drive-history (HoD only) — drive-centric department
+   * placement history: every concluded drive with at least one department
+   * applicant, each carrying the list of department students who
+   * applied/attended it. Distinct from department-students/:id/placement-
+   * history above (student-centric: pick a student, see their own drive
+   * history) - this is the other direction (pick a drive, see who from the
+   * department applied), scoped the same way (own department via faculty
+   * row) and optionally narrowed to one class via ?class_id=, same as
+   * department-students.
+   */
+  @Get('department-drive-history')
+  @Roles(ROLES.HOD)
+  getDepartmentDriveHistory(
+    @CurrentUser() user: JwtPayload,
+    @Query('class_id', new ParseIntPipe({ optional: true })) classId?: number,
+  ) {
+    return this.drivesService.getDriveHistoryForHod(user.sub, classId);
+  }
+
+  /**
    * GET /me/department-students/:studentId/profile (HoD only — student's
    * class must belong to the HoD's own department). Full profile — same
    * shape as the Placement Cell's own student detail page.

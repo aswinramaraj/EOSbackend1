@@ -36,6 +36,7 @@ const LEAVE_REQUEST_INCLUDE = {
   users_student_leaves_approved_by_warden_user_idTousers: {
     select: { email: true },
   },
+  leave_parent_acknowledgements: { select: { acknowledged_at: true } },
 } satisfies Prisma.student_leavesInclude;
 
 type LeaveRequestWithRelations = Prisma.student_leavesGetPayload<{
@@ -73,6 +74,9 @@ function toLeaveRequestResponse(request: LeaveRequestWithRelations) {
       request.users_student_leaves_approved_by_warden_user_idTousers?.email ??
       null,
     created_at: request.created_at.toISOString(),
+    parent_acknowledged: request.leave_parent_acknowledgements.some(
+      (a) => a.acknowledged_at !== null,
+    ),
   };
 }
 

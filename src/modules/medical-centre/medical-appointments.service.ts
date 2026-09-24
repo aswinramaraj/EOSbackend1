@@ -339,6 +339,45 @@ export class MedicalAppointmentsService {
   }
 
   /**
+   * GET /me/children/:studentId/medical-appointments (Parent only, via
+   * ParentsService - not directly HTTP-routed here). Filtered by the
+   * `student_id` column directly rather than `booked_by_user_id` - the
+   * child's own bookings regardless of who actually booked them, which is
+   * the more correct scope for "my child's medical appointment history"
+   * than resolving to the student's own user_id and matching the booker.
+   */
+  async listForStudentId(studentId: number) {
+    try {
+      await assertAppointmentsProvisioned(this.prisma);
+      return await this.prisma.$queryRaw<
+        {
+          id: number;
+          slot_date: string;
+          slot_start: string;
+          slot_end: string;
+          status: string;
+          reason: string | null;
+          decision_note: string | null;
+          created_at: Date;
+          visit_id: number | null;
+        }[]
+      >(Prisma.sql`
+        SELECT id,
+               to_char(slot_date, 'YYYY-MM-DD') AS slot_date,
+               to_char(slot_start, 'HH24:MI')   AS slot_start,
+               to_char(slot_end, 'HH24:MI')     AS slot_end,
+               status, reason, decision_note, created_at, visit_id
+        FROM medical_appointments
+        WHERE student_id = ${studentId}::int
+        ORDER BY slot_date DESC, slot_start DESC
+        LIMIT 100
+      `);
+    } catch (err) {
+      this.fail('listing a child\'s medical appointments', err);
+    }
+  }
+
+  /**
    * DELETE /:id — withdraw one's own booking.
    *
    * Scoped to the caller's own rows and to 'pending' only: once staff has

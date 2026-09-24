@@ -26,6 +26,9 @@ const FACULTY_LEAVE_SELECT = {
   hr_approval_status: true,
   created_at: true,
   staff_user_id: true,
+  correspondent_approval_status: true,
+  correspondent_remarks: true,
+  correspondent_decided_at: true,
   faculty: {
     select: {
       id: true,
@@ -75,6 +78,9 @@ interface FacultyLeaveRow {
   hod_approval_status: string;
   hr_approval_status: string;
   created_at: Date;
+  correspondent_approval_status: string | null;
+  correspondent_remarks: string | null;
+  correspondent_decided_at: Date | null;
   // Real column, added by the Secretary module completion migration — set
   // for Secretary-authored (non-Faculty) requests, null for Faculty/HoD
   // requests (which keep using faculty_id, unchanged).
@@ -106,10 +112,24 @@ interface FacultyLeaveRow {
   } | null;
 }
 
+// A Principal-authored request (correspondent_approval_status non-null,
+// see FacultyLeavesService.create) is decided ENTIRELY by the Correspondent
+// stage - the hod/hr columns are set to 'approved' at creation for these
+// rows purely because that's what the shared column defaults require, not
+// because HoD/HR actually reviewed anything, so overall_status must ignore
+// them and look at the Correspondent decision alone. Every other row (real
+// Faculty/HoD/Secretary/HR Payroll/Warden requests) keeps the original
+// hod+hr logic, unaffected.
 function computeOverallStatus(
   hod: string,
   hr: string,
+  correspondent: string | null,
 ): 'pending' | 'approved' | 'rejected' {
+  if (correspondent !== null) {
+    if (correspondent === 'rejected') return 'rejected';
+    if (correspondent === 'approved') return 'approved';
+    return 'pending';
+  }
   if (hod === 'rejected' || hr === 'rejected') {
     return 'rejected';
   }
@@ -128,9 +148,13 @@ function toResponse(leave: FacultyLeaveRow) {
     leave_type: leave.leave_types,
     hod_approval_status: leave.hod_approval_status,
     hr_approval_status: leave.hr_approval_status,
+    correspondent_approval_status: leave.correspondent_approval_status,
+    correspondent_remarks: leave.correspondent_remarks,
+    correspondent_decided_at: leave.correspondent_decided_at,
     overall_status: computeOverallStatus(
       leave.hod_approval_status,
       leave.hr_approval_status,
+      leave.correspondent_approval_status,
     ),
     created_at: leave.created_at,
     faculty: leave.faculty,
@@ -155,6 +179,19 @@ function resolveRequester(leave: FacultyLeaveRow) {
       name: `${leave.faculty.first_name} ${leave.faculty.last_name}`,
       designation: leave.faculty.designation,
       department: leave.faculty.departments?.code ?? null,
+    };
+  }
+  // correspondent_approval_status is only ever non-null for a Principal-
+  // authored request (see create()) - Principal has no faculty row and,
+  // unlike Secretary/HR Payroll/Warden, typically no non_teaching_staff row
+  // either, so it needs its own explicit label rather than falling through
+  // to the generic staff/unknown branches below.
+  if (leave.correspondent_approval_status !== null) {
+    return {
+      kind: 'principal' as const,
+      name: leave.users_faculty_leaves_staff_user_idTousers?.email ?? 'Principal',
+      designation: 'Principal',
+      department: null,
     };
   }
   const staff =
@@ -239,6 +276,14 @@ export class FacultyLeavesService {
       // caller demonstrably has. Demanding a personnel row as well added no
       // integrity and 404d real employees whose non_teaching_staff row was
       // never created.
+      //
+      // A Principal has no HoD and no HR Payroll reviewing them either - the
+      // Correspondent (Management) role is their sole, independent approval
+      // stage (see computeOverallStatus). hod/hr are pre-approved here (same
+      // as every other staff_user_id-keyed role) purely so those columns
+      // never block anything for this row; the real decision lives entirely
+      // in correspondent_approval_status.
+      const isPrincipal = currentUser.role === ROLES.PRINCIPAL;
       const leave = await this.prisma.faculty_leaves.create({
         data: {
           staff_user_id: currentUser.sub,
@@ -247,10 +292,22 @@ export class FacultyLeavesService {
           reason: dto.reason,
           leave_type_id: dto.leave_type_id,
           hod_approval_status: 'approved',
+          hr_approval_status: isPrincipal ? 'approved' : undefined,
+          correspondent_approval_status: isPrincipal ? 'pending' : undefined,
         },
         select: FACULTY_LEAVE_SELECT,
       });
-      this.logger.log(`Staff leave request created: id=${leave.id}`);
+      this.logger.log(
+        `${isPrincipal ? 'Principal' : 'Staff'} leave request created: id=${leave.id}`,
+      );
+      if (isPrincipal) {
+        await this.notifyCorrespondents(
+          'New leave request to review',
+          `The Principal requested leave from ${dto.from_date} to ${dto.to_date}.`,
+          'faculty_leave',
+          leave.id,
+        );
+      }
       return toResponse(leave);
     }
 
@@ -293,7 +350,69 @@ export class FacultyLeavesService {
       }
     }
 
+    // Principal's approval stage (faculty_leaves.principal_approval_status)
+    // is independent of the HoD/HR stages above - it's already "pending"
+    // for the Principal Approvals queue from the moment the request is
+    // created, not once HoD/HR have acted - so the Principal is notified
+    // right here too, same as the HoD is.
+    await this.notifyPrincipals(
+      'New leave request to review',
+      `${faculty.first_name} ${faculty.last_name} requested leave from ${dto.from_date} to ${dto.to_date}.`,
+      'faculty_leave',
+      leave.id,
+    );
+
     return toResponse(leave);
+  }
+
+  /** Every active user with the Correspondent role - same "not assumed to be exactly one" reasoning as notifyPrincipals below. */
+  private async notifyCorrespondents(
+    title: string,
+    message: string,
+    relatedEntityType: string,
+    relatedEntityId: number,
+  ): Promise<void> {
+    const correspondents = await this.prisma.users.findMany({
+      where: { roles: { name: ROLES.CORRESPONDENT }, status: 'active' },
+      select: { id: true },
+    });
+    await Promise.all(
+      correspondents.map((c) =>
+        this.notifications.notify({
+          user_id: c.id,
+          title,
+          message,
+          type: 'approval_request_pending',
+          related_entity_type: relatedEntityType,
+          related_entity_id: relatedEntityId,
+        }),
+      ),
+    );
+  }
+
+  /** Every active user with the Principal role - not assumed to be exactly one, so an officiating/second Principal account (if one exists) is notified too. */
+  private async notifyPrincipals(
+    title: string,
+    message: string,
+    relatedEntityType: string,
+    relatedEntityId: number,
+  ): Promise<void> {
+    const principals = await this.prisma.users.findMany({
+      where: { roles: { name: ROLES.PRINCIPAL }, status: 'active' },
+      select: { id: true },
+    });
+    await Promise.all(
+      principals.map((p) =>
+        this.notifications.notify({
+          user_id: p.id,
+          title,
+          message,
+          type: 'approval_request_pending',
+          related_entity_type: relatedEntityType,
+          related_entity_id: relatedEntityId,
+        }),
+      ),
+    );
   }
 
   /**
@@ -318,15 +437,39 @@ export class FacultyLeavesService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HOD && query.mine) {
+      // The HoD's own self-service "My Leave" screen, not their department
+      // review queue - same endpoint, explicitly asking for their personal
+      // requests only (see ListFacultyLeafQueryDto's doc comment on `mine`).
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      where.faculty_id = hod.id;
     } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty = { department_id: hod.department_id };
     } else if (currentUser.role === ROLES.HR_PAYROLL) {
       where.hod_approval_status = 'approved';
+      // Principal-authored requests never reach HR Payroll's queue - they're
+      // routed entirely to the independent Correspondent stage instead (see
+      // create()), even though hod/hr are both pre-approved as a bypass for
+      // those rows. Without this, every Principal leave request would show
+      // up here too, already-approved and unactionable.
+      where.correspondent_approval_status = null;
     } else if (currentUser.role === ROLES.SECRETARY) {
       // Own requests only, keyed by staff_user_id — no faculty row exists.
       delete where.faculty_id;
       where.staff_user_id = currentUser.sub;
+    } else if (currentUser.role === ROLES.PRINCIPAL) {
+      // Principal's own "Leave Request > History" tab - own requests only,
+      // same staff_user_id keying as Secretary above.
+      delete where.faculty_id;
+      where.staff_user_id = currentUser.sub;
+    } else if (currentUser.role === ROLES.CORRESPONDENT) {
+      // Correspondent's Leave Approval queue - only rows this stage
+      // actually applies to (Principal-authored requests), never HoD/HR's
+      // own faculty leave requests.
+      delete where.faculty_id;
+      where.correspondent_approval_status =
+        query.correspondent_approval_status ?? { not: null };
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -354,10 +497,16 @@ export class FacultyLeavesService {
       throw new NotFoundException('Faculty leave request not found');
     }
 
-    if (currentUser.role === ROLES.SECRETARY) {
+    if (currentUser.role === ROLES.SECRETARY || currentUser.role === ROLES.PRINCIPAL) {
       if (leave.staff_user_id !== currentUser.sub) {
         throw new ForbiddenException(
           'You may only view your own leave requests',
+        );
+      }
+    } else if (currentUser.role === ROLES.CORRESPONDENT) {
+      if (leave.correspondent_approval_status === null) {
+        throw new ForbiddenException(
+          'This leave request is not part of your review queue',
         );
       }
     } else if (currentUser.role === ROLES.FACULTY) {
@@ -399,9 +548,39 @@ export class FacultyLeavesService {
     const data: {
       hod_approval_status?: 'approved' | 'rejected';
       hr_approval_status?: 'approved' | 'rejected';
+      correspondent_approval_status?: 'approved' | 'rejected';
+      correspondent_remarks?: string;
+      correspondent_decided_by_user_id?: number;
+      correspondent_decided_at?: Date;
     } = {};
 
-    if (currentUser.role === ROLES.HOD) {
+    if (currentUser.role === ROLES.CORRESPONDENT) {
+      // Correspondent may only decide a Principal-authored request (this
+      // stage doesn't apply to anything else, see create()/findAll()), and
+      // only while it's still pending this stage - a request already
+      // decided by Correspondent can't be flipped back through this route.
+      if (existing.correspondent_approval_status === null) {
+        throw new ForbiddenException(
+          'This leave request is not part of your review queue',
+        );
+      }
+      if (existing.correspondent_approval_status !== 'pending') {
+        throw new ConflictException(
+          'This leave request has already been decided',
+        );
+      }
+      if (dto.correspondent_approval_status === undefined) {
+        throw new BadRequestException(
+          'correspondent_approval_status is required',
+        );
+      }
+      data.correspondent_approval_status = dto.correspondent_approval_status;
+      data.correspondent_decided_by_user_id = currentUser.sub;
+      data.correspondent_decided_at = new Date();
+      if (dto.correspondent_remarks !== undefined) {
+        data.correspondent_remarks = dto.correspondent_remarks;
+      }
+    } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
       if (existing.faculty_id === null) {
         throw new InternalServerErrorException({
@@ -456,20 +635,37 @@ export class FacultyLeavesService {
       select: FACULTY_LEAVE_SELECT,
     });
 
-    // Whichever of the two stages was just decided, tell the original
-    // requester - never the other stage's approver, since data only ever
-    // carries the one field the caller was permitted to set above.
-    const decidedStatus = data.hod_approval_status ?? data.hr_approval_status;
-    if (decidedStatus !== undefined && existing.faculty_id !== null) {
-      const requester = await this.prisma.faculty.findUnique({
-        where: { id: existing.faculty_id },
-        select: { user_id: true },
-      });
-      if (requester) {
+    // Whichever stage was just decided, tell the original requester - never
+    // the other stage's approver, since data only ever carries the one
+    // field the caller was permitted to set above.
+    const decidedStatus =
+      data.hod_approval_status ??
+      data.hr_approval_status ??
+      data.correspondent_approval_status;
+    if (decidedStatus !== undefined) {
+      // A Correspondent-decided row is always Principal-authored
+      // (staff_user_id-keyed, no faculty row) - every other decided row is
+      // Faculty/HoD-authored (faculty_id-keyed).
+      const requesterUserId =
+        data.correspondent_approval_status !== undefined
+          ? existing.staff_user_id
+          : existing.faculty_id !== null
+            ? (
+                await this.prisma.faculty.findUnique({
+                  where: { id: existing.faculty_id },
+                  select: { user_id: true },
+                })
+              )?.user_id
+            : null;
+      if (requesterUserId) {
         const stage =
-          data.hod_approval_status !== undefined ? 'HoD' : 'HR Payroll';
+          data.correspondent_approval_status !== undefined
+            ? 'Correspondent'
+            : data.hod_approval_status !== undefined
+              ? 'HoD'
+              : 'HR Payroll';
         await this.notifications.notify({
-          user_id: requester.user_id,
+          user_id: requesterUserId,
           title:
             decidedStatus === 'approved'
               ? 'Leave request approved'

@@ -7,7 +7,10 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { feedback_course_type_enum } from '../../../../../generated/prisma/enums';
+import {
+  feedback_course_type_enum,
+  feedback_service_type_enum,
+} from '../../../../../generated/prisma/enums';
 
 export class UpdateFeedbackFormDto {
   @IsOptional()
@@ -29,4 +32,8 @@ export class UpdateFeedbackFormDto {
   @IsOptional()
   @IsEnum(feedback_course_type_enum)
   category?: feedback_course_type_enum;
+
+  @IsOptional()
+  @IsEnum(feedback_service_type_enum)
+  service_type?: feedback_service_type_enum;
 }

@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { InstitutionDirectoryQueryDto } from 'src/common/dto/institution-directory-query.dto';
 import { CreateStudentEntrepreneurshipDto } from './dto/create-student-entrepreneurship.dto';
 import { UpdateStudentEntrepreneurshipDto } from './dto/update-student-entrepreneurship.dto';
 
@@ -55,9 +56,16 @@ function toStudentSummary(student: StudentSummarySource) {
 }
 
 interface StudentSummaryWithDeptSource extends StudentSummarySource {
+  // Optional - the newer institution-directory findAll() below selects
+  // these (for the Batch/Class filter row's own labels), but every other
+  // call site of toStudentSummaryWithDepartment in this file (venture
+  // detail, mentor-scoped lists, ...) doesn't need or select them.
+  class_id?: number | null;
   classes: {
     section: string;
     departments: { code: string; name: string };
+    batches?: { name: string };
+    courses?: { code: string };
   } | null;
 }
 
@@ -65,7 +73,26 @@ function toStudentSummaryWithDepartment(student: StudentSummaryWithDeptSource) {
   return {
     ...toStudentSummary(student),
     department: student.classes?.departments ?? null,
+    class_id: student.class_id ?? null,
+    batch_name: student.classes?.batches?.name ?? null,
+    course_code: student.classes?.courses?.code ?? null,
   };
+}
+
+// Same reasoning as DrivesService's own filterByStudentSearch - a two-word
+// query needs to match the CONCATENATED full name, not either half alone
+// via a Prisma `OR`, and rows are already narrowed by batch/department/
+// class first so filtering the remainder in memory is cheap.
+function filterByStudentSearch<
+  T extends { student: { name: string; student_id_no: string } },
+>(rows: T[], search?: string): T[] {
+  const term = search?.trim().toLowerCase();
+  if (!term) return rows;
+  return rows.filter(
+    (r) =>
+      r.student.name.toLowerCase().includes(term) ||
+      r.student.student_id_no.toLowerCase().includes(term),
+  );
 }
 
 const VENTURE_DETAIL_INCLUDE = {
@@ -200,15 +227,38 @@ export class StudentEntrepreneurshipService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** GET /student-entrepreneurship — every department at once, no picker. */
-  async findAll() {
+  /**
+   * GET /student-entrepreneurship — every department at once by default;
+   * optionally narrowed by the Batch/Department/Class-with-Section filter
+   * row + name-or-roll-no search box (see InstitutionDirectoryQueryDto).
+   */
+  async findAll(filters: InstitutionDirectoryQueryDto = {}) {
     try {
       const rows = await this.prisma.student_entrepreneurship.findMany({
+        where: {
+          students: {
+            ...(filters.class_id !== undefined && {
+              class_id: filters.class_id,
+            }),
+            ...((filters.batch_id !== undefined ||
+              filters.department_id !== undefined) && {
+              classes: {
+                ...(filters.department_id !== undefined && {
+                  department_id: filters.department_id,
+                }),
+                ...(filters.batch_id !== undefined && {
+                  batch_id: filters.batch_id,
+                }),
+              },
+            }),
+          },
+        },
         include: {
           students: {
             select: {
               id: true,
               student_id_no: true,
+              class_id: true,
               soa_applications: {
                 select: { first_name: true, last_name: true },
               },
@@ -217,6 +267,8 @@ export class StudentEntrepreneurshipService {
                 select: {
                   section: true,
                   departments: { select: { code: true, name: true } },
+                  batches: { select: { name: true } },
+                  courses: { select: { code: true } },
                 },
               },
             },
@@ -225,7 +277,7 @@ export class StudentEntrepreneurshipService {
         orderBy: { created_at: 'desc' },
       });
 
-      return rows.map((row) => ({
+      const mapped = rows.map((row) => ({
         id: row.id,
         business_name: row.business_name,
         business_description: row.business_description,
@@ -236,6 +288,7 @@ export class StudentEntrepreneurshipService {
         created_at: row.created_at,
         student: toStudentSummaryWithDepartment(row.students),
       }));
+      return filterByStudentSearch(mapped, filters.search);
     } catch (err) {
       this.logger.error('DB error listing all student_entrepreneurship', err);
       throw new InternalServerErrorException({
@@ -916,6 +969,79 @@ export class StudentEntrepreneurshipService {
       };
     } catch (err) {
       this.logger.error('DB error updating student_entrepreneurship', err);
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * Called by ClassMentorsService.findEntrepreneurshipForClassMentor, AFTER
+   * that method's own class_mentors mentor check. Scoped to ONE class only
+   * (no batch/programme picker, mirroring findAllForClass on
+   * StudentHigherEducationService for consistency between the two Advisor
+   * cards) — unlike findAllForMentor above, this does NOT also union in
+   * mentor_faculty_id-assigned ventures outside the class: this endpoint is
+   * specifically "who in MY mentee class has opted in", not "every venture
+   * I'm EDC-assigned to mentor". A smaller field set than toVentureDetail's
+   * full EDC shape, matching what the mobile Advisor list screen needs.
+   */
+  async findAllForClass(classId: number) {
+    try {
+      const rows = await this.prisma.student_entrepreneurship.findMany({
+        where: { students: { class_id: classId } },
+        select: {
+          id: true,
+          business_name: true,
+          business_description: true,
+          sector: true,
+          stage: true,
+          funding_required: true,
+          remarks: true,
+          created_at: true,
+          students: {
+            select: {
+              id: true,
+              student_id_no: true,
+              photo_url: true,
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
+              users: { select: { email: true } },
+            },
+          },
+        },
+        orderBy: { created_at: 'desc' },
+      });
+
+      return rows.map((row) => {
+        const name = row.students.soa_applications
+          ? `${row.students.soa_applications.first_name} ${row.students.soa_applications.last_name ?? ''}`.trim()
+          : row.students.users.email;
+        return {
+          id: row.id,
+          student: {
+            id: row.students.id,
+            name,
+            student_id_no: row.students.student_id_no,
+            photo_url: row.students.photo_url,
+          },
+          business_name: row.business_name,
+          business_description: row.business_description,
+          sector: row.sector,
+          stage: row.stage,
+          funding_required:
+            row.funding_required !== null ? Number(row.funding_required) : null,
+          remarks: row.remarks,
+          created_at: row.created_at,
+        };
+      });
+    } catch (err) {
+      this.logger.error(
+        `DB error listing student_entrepreneurship for class ${classId}`,
+        err,
+      );
       throw new InternalServerErrorException({
         message: 'Something went wrong. Please try again.',
         errorCode: 'INTERNAL_ERROR',

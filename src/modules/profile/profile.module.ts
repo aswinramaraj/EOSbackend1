@@ -8,5 +8,8 @@ import { ProfileController } from './profile.controller';
   imports: [PrismaModule, StorageModule],
   controllers: [ProfileController],
   providers: [ProfileService],
+  // ParentsModule reuses getStudentProfileByStudentId for the
+  // "child's full profile" endpoint - see ParentsService.getChildProfile.
+  exports: [ProfileService],
 })
 export class ProfileModule {}

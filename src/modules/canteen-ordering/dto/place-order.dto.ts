@@ -6,6 +6,7 @@ import {
   IsInt,
   IsOptional,
   IsPositive,
+  Matches,
   ValidateNested,
 } from 'class-validator';
 
@@ -28,4 +29,10 @@ export class PlaceOrderDto {
   @ValidateNested({ each: true })
   @Type(() => PlaceOrderItemDto)
   items: PlaceOrderItemDto[];
+
+  // Same 4-digit wallet PIN gate as every other real wallet debit
+  // (WalletService.debitForPurchase requires one) - matches
+  // CheckoutWalletDto's own @Matches convention in the Stationery Store.
+  @Matches(/^\d{4}$/)
+  pin: string;
 }

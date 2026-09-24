@@ -580,6 +580,7 @@ export class HodStudentProfileService {
         certificates: student.student_certificates.map((c) => ({
           id: c.id,
           name: c.certificate_types!.name,
+          verified: c.is_available,
           is_available: c.is_available,
           verified_at: c.verified_at,
           file_url: c.file_url,

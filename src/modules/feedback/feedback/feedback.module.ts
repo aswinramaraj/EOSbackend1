@@ -9,5 +9,9 @@ import { StudentFeedbackController } from './student-feedback.controller';
   imports: [PrismaModule, NotificationsModule],
   controllers: [FeedbackController, StudentFeedbackController],
   providers: [FeedbackService],
+  // Exported so HodModule can reuse getResults() for the HoD's own
+  // department-scoped faculty-feedback viewing endpoint, instead of
+  // duplicating that aggregation logic.
+  exports: [FeedbackService],
 })
 export class FeedbackModule {}

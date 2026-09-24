@@ -328,6 +328,113 @@ export class WalletService {
   }
 
   /**
+   * Debits a wallet for an in-app purchase at a campus outlet (e.g. the
+   * Stationery Store's checkoutWithWallet, or CanteenOrderingService's
+   * placeOrder). Not exposed as its own HTTP route - other modules call
+   * this in-process via Nest DI (WalletModule exports WalletService),
+   * same composition style as ParentsService reusing ProfileService.
+   *
+   * Same balance-check-and-lock pattern as transfer() above (a single
+   * `SELECT ... FOR UPDATE` on the payer's own wallet row - no counterparty
+   * wallet to lock in ascending-id order here, since the money's
+   * destination is an outlet, not another wallet), and the same
+   * trigger-applies-the-balance model (this only ever inserts a `success`
+   * wallet_transactions row; trg_apply_wallet_transaction does the actual
+   * arithmetic). PIN-gated like every other real debit in this module -
+   * every caller must collect a PIN from the user for this, the same way
+   * transfer() and the Stationery Store checkout already do; skipping this
+   * would let any authenticated request spend a user's wallet balance with
+   * no per-purchase authorization at all.
+   *
+   * `outletId` is required, not optional - a pre-existing DB constraint
+   * (`chk_wallet_transactions_source`) rejects any source='purchase' debit
+   * row with a null outlet_id. The caller resolves which `wallet_outlets`
+   * row represents it (e.g. the 'canteen' or 'stationary' one) - this
+   * generic wallet method doesn't hardcode any one caller's outlet.
+   *
+   * Returns the new transaction's id and the wallet's balance afterward -
+   * the caller links the transaction id onto its own order row for a
+   * two-way audit trail.
+   */
+  async debitForPurchase(
+    userId: number,
+    pin: string,
+    amount: number,
+    outletId: number,
+    remarks: string,
+  ): Promise<{ transactionId: number; balance: number }> {
+    const wallet = await this.findOrCreateWallet(userId);
+    await this.assertPinOk(wallet, pin);
+
+    const transactionId = await this.prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ balance: Prisma.Decimal }>>(
+        Prisma.sql`SELECT balance FROM wallets WHERE id = ${wallet.id} FOR UPDATE`,
+      );
+      if (!locked[0] || locked[0].balance.lessThan(amount)) {
+        throw new BadRequestException({
+          message: 'Insufficient balance',
+          errorCode: 'INSUFFICIENT_BALANCE',
+        });
+      }
+
+      const debitTxn = await tx.wallet_transactions.create({
+        data: {
+          wallet_id: wallet.id,
+          txn_type: 'debit',
+          source: 'purchase',
+          amount,
+          status: 'success',
+          outlet_id: outletId,
+          remarks,
+        },
+      });
+      return debitTxn.id;
+    });
+
+    const updated = await this.prisma.wallets.findUniqueOrThrow({ where: { id: wallet.id } });
+    this.logger.log(`Wallet purchase debit: ${amount} from wallet=${wallet.id} at outlet=${outletId} (txn=${transactionId})`);
+    return { transactionId, balance: Number(updated.balance) };
+  }
+
+  /**
+   * Reverses a prior debitForPurchase (e.g. an order cancelled after
+   * payment, or a purchase that couldn't go through after the wallet was
+   * already charged) by crediting the same amount back. No PIN needed - a
+   * credit never needs authorization the way spending does. source=
+   * 'adjustment' (a credit reversal, not a fresh 'purchase') with
+   * `related_transaction_id` pointing at the original debit, so either row
+   * leads straight to the other. Validates the original row really is a
+   * successful debit (not already refunded, not some other transaction
+   * type) rather than trusting the caller's id blindly.
+   */
+  async refundPurchase(originalTransactionId: number, remarks: string): Promise<{ transactionId: number; balance: number }> {
+    const original = await this.prisma.wallet_transactions.findUnique({
+      where: { id: originalTransactionId },
+    });
+    if (!original || original.txn_type !== 'debit' || original.status !== 'success') {
+      throw new BadRequestException({
+        message: 'No matching debit to refund',
+        errorCode: 'REFUND_SOURCE_NOT_FOUND',
+      });
+    }
+    const creditTxn = await this.prisma.wallet_transactions.create({
+      data: {
+        wallet_id: original.wallet_id,
+        txn_type: 'credit',
+        source: 'adjustment',
+        amount: original.amount,
+        status: 'success',
+        outlet_id: original.outlet_id,
+        related_transaction_id: original.id,
+        remarks,
+      },
+    });
+    const updated = await this.prisma.wallets.findUniqueOrThrow({ where: { id: original.wallet_id } });
+    this.logger.log(`Wallet purchase refund: ${original.amount} to wallet=${original.wallet_id} (txn=${creditTxn.id}, reverses txn=${original.id})`);
+    return { transactionId: creditTxn.id, balance: Number(updated.balance) };
+  }
+
+  /**
    * POST /me/wallet/topup/order — creates a Razorpay order and a matching
    * `pending` wallet_transactions row (source=razorpay). Returns what the
    * mobile Razorpay Checkout SDK needs to open its payment sheet; the
@@ -448,94 +555,6 @@ export class WalletService {
     }
 
     return { balance: Number(updatedWallet.balance) };
-  }
-
-  /**
-   * Debits a wallet for a purchase made elsewhere in the app (e.g. canteen
-   * ordering) - unlike transfer(), the payee isn't another wallet, so this
-   * is a plain debit row with no counterparty. Reuses the exact same
-   * lock-check-insert pattern as transfer(): a `SELECT ... FOR UPDATE` on
-   * the wallet row for the insufficient-balance guard, then an insert whose
-   * balance mutation is applied by the pre-existing DB trigger once the row
-   * commits with status='success' - see transfer()'s doc comment for why
-   * this code never updates `balance` directly.
-   *
-   * `outletId` is required, not optional - a pre-existing DB constraint
-   * (`chk_wallet_transactions_source`, discovered live via a real failed
-   * debit while building canteen ordering) rejects any source='purchase'
-   * debit row with a null outlet_id. The caller resolves which
-   * `wallet_outlets` row represents it (e.g. the 'canteen' one) - this
-   * generic wallet method doesn't hardcode any one caller's outlet.
-   */
-  async debitForPurchase(
-    userId: number,
-    amount: number,
-    remarks: string,
-    outletId: number,
-  ): Promise<{ transactionId: number; balance: number }> {
-    const wallet = await this.findOrCreateWallet(userId);
-
-    const transactionId = await this.prisma.$transaction(async (tx) => {
-      const locked = await tx.$queryRaw<
-        Array<{ id: number; balance: Prisma.Decimal }>
-      >(
-        Prisma.sql`SELECT id, balance FROM wallets WHERE id = ${wallet.id} FOR UPDATE`,
-      );
-      const row = locked[0];
-      if (!row || row.balance.lessThan(amount)) {
-        throw new BadRequestException({
-          message: 'Insufficient wallet balance',
-          errorCode: 'INSUFFICIENT_BALANCE',
-        });
-      }
-      const txn = await tx.wallet_transactions.create({
-        data: {
-          wallet_id: wallet.id,
-          txn_type: 'debit',
-          source: 'purchase',
-          amount,
-          status: 'success',
-          remarks,
-          outlet_id: outletId,
-        },
-      });
-      return txn.id;
-    });
-
-    const updated = await this.prisma.wallets.findUniqueOrThrow({
-      where: { id: wallet.id },
-    });
-    return { transactionId, balance: Number(updated.balance) };
-  }
-
-  /**
-   * Reverses a debitForPurchase() when the purchase it paid for couldn't
-   * actually go through (e.g. the order failed after the wallet was
-   * charged) - a fresh linked credit row rather than deleting/mutating the
-   * original debit, so the ledger stays a complete, honest history.
-   */
-  async refundPurchase(
-    walletTransactionId: number,
-    remarks: string,
-  ): Promise<{ transactionId: number; balance: number }> {
-    const debitTxn = await this.prisma.wallet_transactions.findUniqueOrThrow({
-      where: { id: walletTransactionId },
-    });
-    const creditTxn = await this.prisma.wallet_transactions.create({
-      data: {
-        wallet_id: debitTxn.wallet_id,
-        txn_type: 'credit',
-        source: 'adjustment',
-        amount: debitTxn.amount,
-        status: 'success',
-        related_transaction_id: debitTxn.id,
-        remarks,
-      },
-    });
-    const updated = await this.prisma.wallets.findUniqueOrThrow({
-      where: { id: debitTxn.wallet_id },
-    });
-    return { transactionId: creditTxn.id, balance: Number(updated.balance) };
   }
 
   /**

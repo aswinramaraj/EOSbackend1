@@ -54,6 +54,9 @@ const FACULTY_OD_SELECT = {
   email_body: true,
   admin_remarks: true,
   staff_user_id: true,
+  correspondent_approval_status: true,
+  correspondent_remarks: true,
+  correspondent_decided_at: true,
   // faculty_od.faculty_id is NULLABLE - an OD raised by non-teaching staff
   // (Secretary / HR Payroll / warden) has staff_user_id set and faculty null.
   // Without a name here every client had to guess, and the mobile HR queue
@@ -120,6 +123,9 @@ interface FacultyOdRow {
   // for Secretary-authored (non-Faculty) requests, null for Faculty/HoD
   // requests (which keep using faculty_id, unchanged).
   staff_user_id: number | null;
+  correspondent_approval_status: string | null;
+  correspondent_remarks: string | null;
+  correspondent_decided_at: Date | null;
   // Nullable only because faculty_id was relaxed for an unrelated
   // Secretary-facing feature (see the Secretary module completion
   // migration) — every row Faculty/HoD create/read still always has
@@ -147,10 +153,25 @@ interface FacultyOdRow {
   } | null;
 }
 
+// A Principal-authored request (correspondent_approval_status non-null, see
+// FacultyOdService.create) is decided ENTIRELY by the Correspondent stage -
+// the hod/hr columns are set to 'approved' at creation for these rows purely
+// because that's what the shared column defaults require, not because
+// HoD/HR actually reviewed anything, so overall_status must ignore them and
+// look at the Correspondent decision alone. Every other row (real
+// Faculty/HoD/Secretary/HR Payroll/Warden requests) keeps the original
+// hod+hr logic, unaffected. Mirrors faculty-leaves.service.ts's identical
+// function exactly.
 function computeOverallStatus(
   hod: string,
   hr: string,
+  correspondent: string | null,
 ): 'pending' | 'approved' | 'rejected' {
+  if (correspondent !== null) {
+    if (correspondent === 'rejected') return 'rejected';
+    if (correspondent === 'approved') return 'approved';
+    return 'pending';
+  }
   if (hod === 'rejected' || hr === 'rejected') {
     return 'rejected';
   }
@@ -169,9 +190,13 @@ function toResponse(od: FacultyOdRow) {
     purpose: od.purpose,
     hod_approval_status: od.hod_approval_status,
     hr_approval_status: od.hr_approval_status,
+    correspondent_approval_status: od.correspondent_approval_status,
+    correspondent_remarks: od.correspondent_remarks,
+    correspondent_decided_at: od.correspondent_decided_at,
     overall_status: computeOverallStatus(
       od.hod_approval_status,
       od.hr_approval_status,
+      od.correspondent_approval_status,
     ),
     organization_visited: od.organization_visited,
     students_guided: od.students_guided,
@@ -224,6 +249,19 @@ function resolveOdRequester(od: FacultyOdRow) {
       name: `${od.faculty.first_name} ${od.faculty.last_name}`,
       designation: od.faculty.designation,
       department: od.faculty.departments?.code ?? null,
+    };
+  }
+  // correspondent_approval_status is only ever non-null for a Principal-
+  // authored request (see create()) - Principal has no faculty row and,
+  // unlike Secretary/HR Payroll/Warden, typically no non_teaching_staff row
+  // either, so it needs its own explicit label rather than falling through
+  // to the generic staff/unknown branches below.
+  if (od.correspondent_approval_status !== null) {
+    return {
+      kind: 'principal' as const,
+      name: od.users_faculty_od_requests_staff_user_idTousers?.email ?? 'Principal',
+      designation: 'Principal',
+      department: null,
     };
   }
   const staff =
@@ -295,6 +333,15 @@ export class FacultyOdService {
       // caller demonstrably has. Demanding a personnel row as well added no
       // integrity and 404d real employees whose non_teaching_staff row was
       // never created.
+      //
+      // A Principal has no HoD and no HR Payroll reviewing them either - the
+      // Correspondent (Management) role is their sole, independent approval
+      // stage (see computeOverallStatus). hod/hr are pre-approved here (same
+      // as every other staff_user_id-keyed role) purely so those columns
+      // never block anything for this row; the real decision lives entirely
+      // in correspondent_approval_status. Mirrors
+      // faculty-leaves.service.ts's create() exactly.
+      const isPrincipal = currentUser.role === ROLES.PRINCIPAL;
       const od = await this.prisma.faculty_od_requests.create({
         data: {
           staff_user_id: currentUser.sub,
@@ -303,10 +350,22 @@ export class FacultyOdService {
           place: dto.place,
           purpose: dto.purpose,
           hod_approval_status: 'approved',
+          hr_approval_status: isPrincipal ? 'approved' : undefined,
+          correspondent_approval_status: isPrincipal ? 'pending' : undefined,
         },
         select: FACULTY_OD_SELECT,
       });
-      this.logger.log(`Staff OD request created: id=${od.id}`);
+      this.logger.log(
+        `${isPrincipal ? 'Principal' : 'Staff'} OD request created: id=${od.id}`,
+      );
+      if (isPrincipal) {
+        await this.notifyCorrespondents(
+          'New on-duty request to review',
+          `The Principal requested on-duty from ${dto.from_date} to ${dto.to_date}.`,
+          'faculty_od',
+          od.id,
+        );
+      }
       return toResponse(od);
     }
 
@@ -329,7 +388,70 @@ export class FacultyOdService {
     });
 
     this.logger.log(`Faculty OD request created: id=${od.id}`);
+
+    // faculty_od_requests.principal_approval_status is independent of the
+    // HoD/HR stages - it's "pending" for the Principal Approvals queue from
+    // the moment the request is created, so every active Principal is
+    // notified right here (same trigger point faculty-leaves.create() uses
+    // for its own principal_approval_status notification).
+    await this.notifyPrincipals(
+      'New on-duty request to review',
+      `${faculty.first_name} ${faculty.last_name} requested on-duty from ${dto.from_date} to ${dto.to_date}.`,
+      'faculty_od',
+      od.id,
+    );
+
     return toResponse(od);
+  }
+
+  /** Every active user with the Correspondent role - same "not assumed to be exactly one" reasoning as notifyPrincipals below. */
+  private async notifyCorrespondents(
+    title: string,
+    message: string,
+    relatedEntityType: string,
+    relatedEntityId: number,
+  ): Promise<void> {
+    const correspondents = await this.prisma.users.findMany({
+      where: { roles: { name: ROLES.CORRESPONDENT }, status: 'active' },
+      select: { id: true },
+    });
+    await Promise.all(
+      correspondents.map((c) =>
+        this.notificationsService.notify({
+          user_id: c.id,
+          title,
+          message,
+          type: 'approval_request_pending',
+          related_entity_type: relatedEntityType,
+          related_entity_id: relatedEntityId,
+        }),
+      ),
+    );
+  }
+
+  /** Every active user with the Principal role - not assumed to be exactly one, so an officiating/second Principal account (if one exists) is notified too. */
+  private async notifyPrincipals(
+    title: string,
+    message: string,
+    relatedEntityType: string,
+    relatedEntityId: number,
+  ): Promise<void> {
+    const principals = await this.prisma.users.findMany({
+      where: { roles: { name: ROLES.PRINCIPAL }, status: 'active' },
+      select: { id: true },
+    });
+    await Promise.all(
+      principals.map((p) =>
+        this.notificationsService.notify({
+          user_id: p.id,
+          title,
+          message,
+          type: 'approval_request_pending',
+          related_entity_type: relatedEntityType,
+          related_entity_id: relatedEntityId,
+        }),
+      ),
+    );
   }
 
   /**
@@ -357,14 +479,39 @@ export class FacultyOdService {
     if (currentUser.role === ROLES.FACULTY) {
       const faculty = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty_id = faculty.id;
+    } else if (currentUser.role === ROLES.HOD && query.mine) {
+      // The HoD's own self-service "My OD" screen, not their department
+      // review queue - same endpoint, explicitly asking for their personal
+      // requests only (see ListFacultyOdQueryDto's doc comment on `mine`).
+      const hod = await this.resolveFacultyByUserId(currentUser.sub);
+      where.faculty_id = hod.id;
     } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
       where.faculty = { department_id: hod.department_id };
     } else if (currentUser.role === ROLES.HR_PAYROLL) {
       where.hod_approval_status = 'approved';
+      // Principal-authored requests never reach HR Payroll's queue - they're
+      // routed entirely to the independent Correspondent stage instead (see
+      // create()), even though hod/hr are both pre-approved as a bypass for
+      // those rows. Without this, every Principal OD request would show up
+      // here too, already-approved and unactionable.
+      where.correspondent_approval_status = null;
     } else if (currentUser.role === ROLES.SECRETARY) {
       delete where.faculty_id;
       where.staff_user_id = currentUser.sub;
+    } else if (currentUser.role === ROLES.PRINCIPAL) {
+      // Principal's own self-service "My OD" - no faculty row, no
+      // department to review, so this is always the caller's own requests
+      // only, same staff_user_id-keyed scoping as Secretary above.
+      delete where.faculty_id;
+      where.staff_user_id = currentUser.sub;
+    } else if (currentUser.role === ROLES.CORRESPONDENT) {
+      // Correspondent's OD Approval queue - only rows this stage actually
+      // applies to (Principal-authored requests), never HoD/HR's own faculty
+      // OD requests.
+      delete where.faculty_id;
+      where.correspondent_approval_status =
+        query.correspondent_approval_status ?? { not: null };
     }
 
     if (currentUser.role === ROLES.IQAC) {
@@ -402,12 +549,14 @@ export class FacultyOdService {
   }
 
   /**
-   * PATCH /me/faculty-od/:id (HoD or HR Payroll only).
+   * PATCH /me/faculty-od/:id (HoD, HR Payroll, or Correspondent).
    * HoD may only set hod_approval_status. HR Payroll may only set
    * hr_approval_status, and only once hod_approval_status is 'approved'.
-   * Mirrors FacultyLeavesService.update() exactly — same two-column,
-   * two-role gate, same HoD-must-approve-before-HR ordering, same
-   * department scoping and self-review guard for HoD.
+   * Correspondent may only decide a Principal-authored request via
+   * correspondent_approval_status, an independent stage never gated on
+   * hod/hr. Mirrors FacultyLeavesService.update() exactly — same
+   * three-column, three-role gate, same HoD-must-approve-before-HR
+   * ordering, same department scoping and self-review guard for HoD.
    */
   async update(id: number, dto: UpdateFacultyOdDto, currentUser: JwtPayload) {
     if (!dto || Object.keys(dto).length === 0) {
@@ -424,9 +573,39 @@ export class FacultyOdService {
     const data: {
       hod_approval_status?: 'approved' | 'rejected';
       hr_approval_status?: 'approved' | 'rejected';
+      correspondent_approval_status?: 'approved' | 'rejected';
+      correspondent_remarks?: string;
+      correspondent_decided_by_user_id?: number;
+      correspondent_decided_at?: Date;
     } = {};
 
-    if (currentUser.role === ROLES.HOD) {
+    if (currentUser.role === ROLES.CORRESPONDENT) {
+      // Correspondent may only decide a Principal-authored request (this
+      // stage doesn't apply to anything else, see create()/findAll()), and
+      // only while it's still pending this stage - a request already
+      // decided by Correspondent can't be flipped back through this route.
+      if (existing.correspondent_approval_status === null) {
+        throw new ForbiddenException(
+          'This OD request is not part of your review queue',
+        );
+      }
+      if (existing.correspondent_approval_status !== 'pending') {
+        throw new ConflictException(
+          'This OD request has already been decided',
+        );
+      }
+      if (dto.correspondent_approval_status === undefined) {
+        throw new BadRequestException(
+          'correspondent_approval_status is required',
+        );
+      }
+      data.correspondent_approval_status = dto.correspondent_approval_status;
+      data.correspondent_decided_by_user_id = currentUser.sub;
+      data.correspondent_decided_at = new Date();
+      if (dto.correspondent_remarks !== undefined) {
+        data.correspondent_remarks = dto.correspondent_remarks;
+      }
+    } else if (currentUser.role === ROLES.HOD) {
       const hod = await this.resolveFacultyByUserId(currentUser.sub);
       if (existing.faculty_id === null) {
         throw new InternalServerErrorException({
@@ -480,6 +659,26 @@ export class FacultyOdService {
       data,
       select: FACULTY_OD_SELECT,
     });
+
+    // Only the new Correspondent stage notifies the requester here - HoD/HR
+    // Payroll decisions never did before this change, so that established
+    // behavior is left untouched rather than silently expanded.
+    if (data.correspondent_approval_status !== undefined && existing.staff_user_id) {
+      await this.notificationsService.notify({
+        user_id: existing.staff_user_id,
+        title:
+          data.correspondent_approval_status === 'approved'
+            ? 'On-duty request approved'
+            : 'On-duty request rejected',
+        message: `Your on-duty request (${existing.from_date.toISOString().slice(0, 10)} to ${existing.to_date.toISOString().slice(0, 10)}) was ${data.correspondent_approval_status} by Correspondent.`,
+        type:
+          data.correspondent_approval_status === 'approved'
+            ? 'approval_request_approved'
+            : 'approval_request_rejected',
+        related_entity_type: 'faculty_od',
+        related_entity_id: id,
+      });
+    }
 
     return toResponse(od);
   }

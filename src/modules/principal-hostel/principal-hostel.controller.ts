@@ -7,7 +7,7 @@ import { PrincipalHostelService } from './principal-hostel.service';
 
 @Controller('principal-hostel')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
 export class PrincipalHostelController {
   constructor(private readonly service: PrincipalHostelService) {}
 

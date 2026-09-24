@@ -1,0 +1,22 @@
+-- NOT NEEDED — superseded, do not run.
+--
+-- This was written when faculty_od_requests.faculty_id looked like the only
+-- way in (NOT NULL, no staff column). After re-checking the schema,
+-- faculty_od_requests / faculty_leaves / payslip_requests / appraisal_requests
+-- all actually have a `staff_user_id` column (added in a later migration
+-- alongside the original faculty_id, now nullable), and book_borrow_records'
+-- borrower_type_enum gained a `staff` value — a genuine non-teaching-staff
+-- path on each real table. media_room now uses staff_user_id / borrower_type
+-- = 'staff' directly, with no faculty row and no Administration department.
+--
+-- Kept here only as a record of the abandoned approach — safe to delete.
+
+-- INSERT INTO departments (name, code)
+-- SELECT 'Administration', 'ADMIN'
+-- WHERE NOT EXISTS (SELECT 1 FROM departments WHERE code = 'ADMIN');
+
+-- INSERT INTO faculty (user_id, first_name, last_name, designation, department_id, status)
+-- SELECT 25, 'Media Room', 'Head', 'Media Room Head', d.id, 'active'
+-- FROM departments d
+-- WHERE d.code = 'ADMIN'
+--   AND NOT EXISTS (SELECT 1 FROM faculty WHERE user_id = 25);

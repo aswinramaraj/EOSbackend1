@@ -5,12 +5,17 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
+import Razorpay from 'razorpay';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CanteenSettingsService } from 'src/modules/canteen-admin/canteen-settings.service';
 import { WalletService } from 'src/modules/wallet/wallet.service';
 import { CanteenQueuePushService } from 'src/modules/canteen-queue/canteen-queue-push.service';
 import { PlaceOrderDto } from './dto/place-order.dto';
+import { CreateRazorpayOrderDto } from './dto/create-razorpay-order.dto';
+import { VerifyRazorpayOrderDto } from './dto/verify-razorpay-order.dto';
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -70,6 +75,22 @@ function isTokenCollisionError(err: unknown): boolean {
 @Injectable()
 export class CanteenOrderingService {
   private readonly logger = new Logger(CanteenOrderingService.name);
+  private razorpay: Razorpay | null = null;
+
+  private getRazorpay(): Razorpay {
+    if (!this.razorpay) {
+      const key_id = process.env.RAZORPAY_KEY_ID;
+      const key_secret = process.env.RAZORPAY_KEY_SECRET;
+      if (!key_id || !key_secret) {
+        throw new InternalServerErrorException({
+          message: 'Razorpay is not configured',
+          errorCode: 'RAZORPAY_NOT_CONFIGURED',
+        });
+      }
+      this.razorpay = new Razorpay({ key_id, key_secret });
+    }
+    return this.razorpay;
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -78,14 +99,23 @@ export class CanteenOrderingService {
     private readonly queuePush: CanteenQueuePushService,
   ) {}
 
-  async placeOrder(userId: number, dto: PlaceOrderDto) {
-    const dishIds = [...new Set(dto.items.map((i) => i.dish_id))];
+  /**
+   * Shared validation + pricing for every checkout path (wallet, and the
+   * two-step Razorpay flow below) - re-fetches dishes/settings fresh from
+   * the DB and never trusts a client-supplied price, same "price server-side,
+   * always" rule as StationeryService.priceCart. Availability/parcel/stock
+   * are checked here too, but this alone does NOT reserve stock - only the
+   * real decrement inside a DB transaction (in placeOrder, or in
+   * verifyRazorpayPayment) does that.
+   */
+  private async priceCart(items: PlaceOrderDto['items']) {
+    const dishIds = [...new Set(items.map((i) => i.dish_id))];
     const dishes = await this.prisma.canteen_dishes.findMany({
       where: { id: { in: dishIds } },
     });
     const dishMap = new Map(dishes.map((d) => [d.id, d]));
 
-    for (const item of dto.items) {
+    for (const item of items) {
       const dish = dishMap.get(item.dish_id);
       if (!dish) {
         throw new NotFoundException({
@@ -108,7 +138,7 @@ export class CanteenOrderingService {
     }
 
     const qtyByDish = new Map<number, number>();
-    for (const item of dto.items) {
+    for (const item of items) {
       qtyByDish.set(
         item.dish_id,
         (qtyByDish.get(item.dish_id) ?? 0) + item.quantity,
@@ -124,12 +154,11 @@ export class CanteenOrderingService {
       }
     }
 
-    const { gst_percentage: gstPercentage, parcel_charge: parcelCharge } =
-      await this.settings.get();
+    const { parcel_charge: parcelCharge } = await this.settings.get();
 
     let subtotal = 0;
     let parcelTotal = 0;
-    const lines = dto.items.map((item) => {
+    const lines = items.map((item) => {
       const dish = dishMap.get(item.dish_id)!;
       const price = Number(dish.price);
       subtotal += price * item.quantity;
@@ -143,8 +172,19 @@ export class CanteenOrderingService {
         is_parcel: !!item.is_parcel,
       };
     });
-    const gstAmount = round2(subtotal * (gstPercentage / 100));
-    const totalAmount = round2(subtotal + parcelTotal + gstAmount);
+    // GST removed from student checkout entirely (per product decision) -
+    // gstPercentage/gstAmount are kept as always-0 fields in the response
+    // shape rather than deleted, so callers built against them don't break.
+    const gstPercentage = 0;
+    const gstAmount = 0;
+    const totalAmount = round2(subtotal + parcelTotal);
+
+    return { qtyByDish, lines, subtotal, parcelTotal, gstPercentage, gstAmount, totalAmount };
+  }
+
+  async placeOrder(userId: number, dto: PlaceOrderDto) {
+    const { qtyByDish, lines, subtotal, parcelTotal, gstPercentage, gstAmount, totalAmount } =
+      await this.priceCart(dto.items);
 
     const canteenOutlet = await this.prisma.wallet_outlets.findFirstOrThrow({
       where: { outlet_type: 'canteen' },
@@ -153,9 +193,10 @@ export class CanteenOrderingService {
     const summaryText = lines.map((l) => `${l.name} x${l.quantity}`).join(', ');
     const { transactionId, balance } = await this.wallet.debitForPurchase(
       userId,
+      dto.pin,
       totalAmount,
-      `Canteen order: ${summaryText}`,
       canteenOutlet.id,
+      `Canteen order: ${summaryText}`,
     );
 
     const today = startOfDay(new Date());
@@ -203,6 +244,7 @@ export class CanteenOrderingService {
                 placed_by_user_id: userId,
                 status: 'placed',
                 payment_method: 'wallet',
+                payment_status: 'paid',
                 total_amount: totalAmount,
                 order_source: 'self',
                 wallet_transaction_id: transactionId,
@@ -219,9 +261,9 @@ export class CanteenOrderingService {
               { id: number; pickup_token: string; status: string }[]
             >`
               INSERT INTO canteen_orders
-                (placed_by_user_id, status, payment_method, total_amount, order_source, wallet_transaction_id, pickup_token, token_date)
+                (placed_by_user_id, status, payment_method, payment_status, total_amount, order_source, wallet_transaction_id, pickup_token, token_date)
               VALUES
-                (${userId}, 'placed', 'wallet', ${totalAmount}, 'self', ${transactionId}, ${token}, ${today})
+                (${userId}, 'placed', 'wallet', 'paid', ${totalAmount}, 'self', ${transactionId}, ${token}, ${today})
               RETURNING id, pickup_token, status
             `;
             order = rows[0];
@@ -299,12 +341,238 @@ export class CanteenOrderingService {
     });
   }
 
+  // ── Checkout: Razorpay (two-step, same shape as the Stationery Store) ───
+
+  /**
+   * POST /me/canteen-ordering/checkout/razorpay-order — stages a Razorpay
+   * order and a matching `pending` canteen_orders row (items written now,
+   * so verifyRazorpayPayment never has to trust anything the client sends
+   * back). Deliberately does NOT touch stock yet - only verifyRazorpayPayment
+   * does, once payment is confirmed, so an abandoned/failed Razorpay
+   * checkout never reserves inventory.
+   */
+  async createRazorpayOrder(userId: number, dto: CreateRazorpayOrderDto) {
+    const { lines, totalAmount } = await this.priceCart(dto.items);
+
+    const razorpay = this.getRazorpay();
+    const order = await razorpay.orders.create({
+      amount: Math.round(totalAmount * 100), // rupees -> paise
+      currency: 'INR',
+      receipt: `canteen-${userId}-${Date.now()}`,
+    });
+
+    const staged = await this.prisma.canteen_orders.create({
+      data: {
+        placed_by_user_id: userId,
+        status: 'pending',
+        payment_method: 'razorpay',
+        payment_status: 'pending',
+        total_amount: totalAmount,
+        order_source: 'self',
+        razorpay_order_id: order.id,
+      },
+    });
+    await this.prisma.canteen_order_items.createMany({
+      data: lines.map((l) => ({
+        order_id: staged.id,
+        dish_id: l.dish_id,
+        category_id: l.category_id,
+        quantity: l.quantity,
+        price: l.price,
+        is_parcel: l.is_parcel,
+      })),
+    });
+
+    return {
+      order_id: order.id,
+      amount: totalAmount,
+      currency: 'INR',
+      key_id: process.env.RAZORPAY_KEY_ID,
+    };
+  }
+
+  /**
+   * POST /me/canteen-ordering/checkout/razorpay-verify — recomputes the
+   * HMAC-SHA256 signature server-side (never trusts the client's claim of
+   * success), then decrements stock and allocates the pickup token under
+   * the same race-safe transaction + collision-retry loop as placeOrder's
+   * wallet path, re-reading the items staged at createRazorpayOrder time
+   * rather than anything the client sends now.
+   */
+  async verifyRazorpayPayment(userId: number, dto: VerifyRazorpayOrderDto) {
+    const order = await this.prisma.canteen_orders.findUnique({
+      where: { razorpay_order_id: dto.razorpay_order_id },
+      include: { canteen_order_items: true },
+    });
+    if (!order || order.placed_by_user_id !== userId) {
+      throw new NotFoundException({
+        message: 'No matching order found for your account',
+        errorCode: 'GATEWAY_ORDER_NOT_FOUND',
+      });
+    }
+    if (order.payment_status !== 'pending') {
+      throw new BadRequestException({
+        message: 'This order has already been processed',
+        errorCode: 'ALREADY_PROCESSED',
+      });
+    }
+
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (!secret) {
+      throw new InternalServerErrorException({
+        message: 'Razorpay is not configured',
+        errorCode: 'RAZORPAY_NOT_CONFIGURED',
+      });
+    }
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(`${dto.razorpay_order_id}|${dto.razorpay_payment_id}`)
+      .digest('hex');
+
+    if (expectedSignature !== dto.razorpay_signature) {
+      await this.prisma.canteen_orders.update({
+        where: { id: order.id },
+        data: {
+          payment_status: 'failed',
+          razorpay_payment_id: dto.razorpay_payment_id,
+          razorpay_signature: dto.razorpay_signature,
+        },
+      });
+      throw new BadRequestException({
+        message: "Payment verification failed - signature doesn't match",
+        errorCode: 'PAYMENT_VERIFICATION_FAILED',
+      });
+    }
+
+    if (order.canteen_order_items.length === 0) {
+      // Defensive - should be unreachable once createRazorpayOrder always
+      // writes items (see that method).
+      throw new InternalServerErrorException({
+        message: 'Order has no items to fulfil',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+
+    const qtyByDish = new Map<number, number>();
+    for (const item of order.canteen_order_items) {
+      if (item.dish_id == null) continue;
+      qtyByDish.set(
+        item.dish_id,
+        (qtyByDish.get(item.dish_id) ?? 0) + item.quantity,
+      );
+    }
+
+    const today = startOfDay(new Date());
+    let useLegacyToken = false;
+
+    for (let attempt = 1; attempt <= MAX_TOKEN_ATTEMPTS; attempt++) {
+      const token = String(100 + Math.floor(Math.random() * 900));
+      try {
+        const result = await this.prisma.$transaction(async (tx) => {
+          for (const [dishId, qty] of qtyByDish) {
+            const decremented = await tx.canteen_dishes.updateMany({
+              where: { id: dishId, stock_quantity: { gte: qty } },
+              data: { stock_quantity: { decrement: qty } },
+            });
+            if (decremented.count === 0) {
+              throw new UnprocessableEntityException({
+                message: 'Stock changed while your payment was processing - your payment will be refunded',
+                errorCode: 'INSUFFICIENT_STOCK',
+              });
+            }
+          }
+
+          if (useLegacyToken) {
+            return tx.canteen_orders.update({
+              where: { id: order.id },
+              data: {
+                status: 'placed',
+                payment_status: 'paid',
+                pickup_token: `CV${String(order.id).padStart(5, '0')}`,
+                razorpay_payment_id: dto.razorpay_payment_id,
+                razorpay_signature: dto.razorpay_signature,
+              },
+            });
+          }
+          await tx.$executeRaw`
+            UPDATE canteen_orders
+            SET status = 'placed', payment_status = 'paid', pickup_token = ${token}, token_date = ${today},
+                razorpay_payment_id = ${dto.razorpay_payment_id}, razorpay_signature = ${dto.razorpay_signature}
+            WHERE id = ${order.id}
+          `;
+          return tx.canteen_orders.findUniqueOrThrow({ where: { id: order.id } });
+        });
+
+        this.queuePush.pushKitchenUpdate();
+        // Re-derive the same breakdown placeOrder's own return uses (this
+        // table only stores total_amount, not the subtotal/GST split) -
+        // from the items staged at createRazorpayOrder time, never from
+        // anything the client sends at verify time.
+        const priced = await this.priceCart(
+          order.canteen_order_items
+            .filter((i) => i.dish_id != null)
+            .map((i) => ({ dish_id: i.dish_id!, quantity: i.quantity, is_parcel: i.is_parcel })),
+        );
+        return {
+          order_id: result.id,
+          pickup_token: result.pickup_token,
+          status: result.status,
+          subtotal: round2(priced.subtotal),
+          parcel_total: round2(priced.parcelTotal),
+          gst_percentage: priced.gstPercentage,
+          gst_amount: priced.gstAmount,
+          total_amount: Number(result.total_amount),
+        };
+      } catch (err) {
+        if (!useLegacyToken && isUndefinedColumnError(err)) {
+          useLegacyToken = true;
+          attempt--;
+          continue;
+        }
+        if (isTokenCollisionError(err) && attempt < MAX_TOKEN_ATTEMPTS) {
+          continue;
+        }
+        // The money has already been charged by Razorpay - mark the order
+        // failed for manual reconciliation/refund rather than leaving it
+        // stuck 'pending' forever, same as the Stationery Store's identical
+        // catch block.
+        await this.prisma.canteen_orders.update({
+          where: { id: order.id },
+          data: {
+            payment_status: 'failed',
+            razorpay_payment_id: dto.razorpay_payment_id,
+            razorpay_signature: dto.razorpay_signature,
+          },
+        });
+        if (err instanceof UnprocessableEntityException || err instanceof BadRequestException) throw err;
+        this.logger.error('DB error verifying canteen Razorpay payment', err);
+        throw new InternalServerErrorException({
+          message: 'Something went wrong. Please try again.',
+          errorCode: 'INTERNAL_ERROR',
+        });
+      }
+    }
+
+    await this.prisma.canteen_orders.update({
+      where: { id: order.id },
+      data: { payment_status: 'failed' },
+    });
+    throw new InternalServerErrorException({
+      message: 'Could not allocate a pickup token. Please try again.',
+      errorCode: 'TOKEN_ALLOCATION_FAILED',
+    });
+  }
+
   async listMyOrders(userId: number) {
     const todayStart = startOfDay(new Date());
     const orders = await this.prisma.canteen_orders.findMany({
       where: {
         placed_by_user_id: userId,
         order_source: 'self',
+        // Never surface an abandoned/never-completed Razorpay checkout
+        // attempt (staged but never verified) in order history - same
+        // exclusion the Stationery Store applies for the identical reason.
+        NOT: { status: 'pending', payment_status: 'pending' },
         OR: [
           // Placed today (customer-facing "today's orders" scope)...
           { created_at: { gte: todayStart } },
@@ -321,6 +589,31 @@ export class CanteenOrderingService {
       },
       orderBy: { created_at: 'desc' },
       take: 50,
+    });
+    return orders.map((o) => this.toOrderSummary(o));
+  }
+
+  /**
+   * GET /me/children/:studentId/craveo-orders (Parent only, via
+   * ParentsService - not directly HTTP-routed here). Full order history,
+   * not the today/still-active scope listMyOrders applies for the
+   * student's own "Orders" tab - a parent's read-only view is meant to be
+   * a genuine history, not a live-session view.
+   */
+  async listOrdersForStudentUserId(userId: number) {
+    const orders = await this.prisma.canteen_orders.findMany({
+      where: {
+        placed_by_user_id: userId,
+        order_source: 'self',
+        NOT: { status: 'pending', payment_status: 'pending' },
+      },
+      include: {
+        canteen_order_items: {
+          include: { canteen_dishes: { select: { name: true } } },
+        },
+      },
+      orderBy: { created_at: 'desc' },
+      take: 100,
     });
     return orders.map((o) => this.toOrderSummary(o));
   }
@@ -351,12 +644,23 @@ export class CanteenOrderingService {
       }
       await tx.canteen_orders.update({
         where: { id: order.id },
-        data: { status: 'cancelled' },
+        data: {
+          status: 'cancelled',
+          payment_status: order.wallet_transaction_id ? 'refunded' : order.payment_status,
+        },
       });
       if (order.wallet_transaction_id) {
         await this.wallet.refundPurchase(
           order.wallet_transaction_id,
           `Refund: order #${order.id} cancelled`,
+        );
+      } else if (order.payment_method === 'razorpay' && order.payment_status === 'paid') {
+        // No live Razorpay refund API call here (a real gateway refund
+        // integration is a separate, larger scope) - flagged for finance to
+        // action manually, same "surface it, don't silently swallow it"
+        // philosophy as the Stationery Store's identical cancel path.
+        this.logger.warn(
+          `Canteen order ${order.id} cancelled after Razorpay payment — needs a manual gateway refund (no live refund API call made here)`,
         );
       }
       return { success: true };
@@ -394,6 +698,8 @@ export class CanteenOrderingService {
     total_amount: unknown;
     pickup_token: string | null;
     created_at: Date;
+    payment_method: string | null;
+    payment_status: string | null;
     canteen_order_items: {
       quantity: number;
       is_parcel: boolean;
@@ -404,6 +710,8 @@ export class CanteenOrderingService {
     return {
       id: order.id,
       status: order.status,
+      payment_method: order.payment_method,
+      payment_status: order.payment_status,
       total_amount: Number(order.total_amount),
       pickup_token: order.pickup_token,
       created_at: order.created_at.toISOString(),

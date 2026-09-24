@@ -9,7 +9,7 @@ import { PrincipalApprovalsService } from './principal-approvals.service';
 
 @Controller('principal-approvals')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
 export class PrincipalApprovalsController {
   constructor(private readonly service: PrincipalApprovalsService) {}
 

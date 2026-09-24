@@ -7,7 +7,7 @@ import { PrincipalLibraryService } from './principal-library.service';
 
 @Controller('principal-library')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
 export class PrincipalLibraryController {
   constructor(private readonly service: PrincipalLibraryService) {}
 

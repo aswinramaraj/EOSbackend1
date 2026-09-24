@@ -6,6 +6,7 @@ import { AdminAlumniGroupsService } from './admin-alumni-groups.service';
 import { MeAlumniGroupService } from './me-alumni-group.service';
 import { MeAlumniMessagesService } from './me-alumni-messages.service';
 import { AlumniAnnouncementsService } from './alumni-announcements.service';
+import { MeAlumniExamStatusService } from './me-alumni-exam-status.service';
 import { AdminAlumniController } from './admin-alumni.controller';
 import { MeAlumniController } from './me-alumni.controller';
 
@@ -19,6 +20,7 @@ import { MeAlumniController } from './me-alumni.controller';
     MeAlumniGroupService,
     MeAlumniMessagesService,
     AlumniAnnouncementsService,
+    MeAlumniExamStatusService,
   ],
 })
 export class AlumniModule {}

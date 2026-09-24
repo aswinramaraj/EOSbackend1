@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { GetStaffAttendanceDto } from './dto/get-staff-attendance.dto';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ROLES } from 'src/common/constants/roles.constant';
 
 export type StaffAttendanceDayStatus =
   'present' | 'absent' | 'onDuty' | 'holiday';
@@ -219,6 +221,7 @@ export class MeStaffAttendanceService {
   async getStaffAttendanceForFacultyId(
     facultyId: number,
     dto: GetStaffAttendanceDto,
+    caller?: JwtPayload,
   ) {
     const faculty = await this.prisma.faculty.findUnique({
       where: { id: facultyId },
@@ -227,10 +230,22 @@ export class MeStaffAttendanceService {
         first_name: true,
         last_name: true,
         designation: true,
+        department_id: true,
       },
     });
     if (!faculty) {
       throw new NotFoundException('Faculty not found');
+    }
+
+    // A HoD only ever sees their own department's faculty here - HR Payroll
+    // stays institution-wide (unchanged). Treated the same as "doesn't
+    // exist" rather than a 403, so this can't be used to confirm a faculty
+    // id belongs to some other department either.
+    if (caller?.role === ROLES.HOD) {
+      const callerDepartmentId = await this.resolveCallerDepartmentId(caller.sub);
+      if (faculty.department_id !== callerDepartmentId) {
+        throw new NotFoundException('Faculty not found');
+      }
     }
 
     const { year, month, monthStart, monthEnd } = this.resolvePeriod(dto);
@@ -247,7 +262,8 @@ export class MeStaffAttendanceService {
       monthEnd,
     );
 
-    return { year, month, stats, marks, faculty };
+    const { department_id: _departmentId, ...facultyPublic } = faculty;
+    return { year, month, stats, marks, faculty: facultyPublic };
   }
 
   /**
@@ -258,11 +274,21 @@ export class MeStaffAttendanceService {
    * faculty) and groups them in memory before applying the exact same
    * precedence rules as the self-scoped lookup.
    */
-  async listStaffAttendanceForReview(dto: GetStaffAttendanceDto) {
+  async listStaffAttendanceForReview(
+    dto: GetStaffAttendanceDto,
+    caller?: JwtPayload,
+  ) {
     const { year, month, monthStart, monthEnd } = this.resolvePeriod(dto);
 
+    // HoD sees only their own department's faculty here; HR Payroll stays
+    // institution-wide (unchanged - that's genuinely their job).
+    const departmentId =
+      caller?.role === ROLES.HOD
+        ? await this.resolveCallerDepartmentId(caller.sub)
+        : undefined;
+
     const [faculties, dailyRecords, leaves, holidayMappings] =
-      await this.fetchAllFacultySources(monthStart, monthEnd);
+      await this.fetchAllFacultySources(monthStart, monthEnd, departmentId);
 
     const dailyByFaculty = groupBy(dailyRecords, (r) => r.faculty_id);
     const leavesByFaculty = groupBy(leaves, (r) => r.faculty_id);
@@ -391,21 +417,33 @@ export class MeStaffAttendanceService {
     }
   }
 
-  private async fetchAllFacultySources(monthStart: Date, monthEnd: Date) {
+  private async fetchAllFacultySources(
+    monthStart: Date,
+    monthEnd: Date,
+    departmentId?: number,
+  ) {
     try {
-      return await Promise.all([
-        this.prisma.faculty.findMany({
-          where: { status: 'active' },
-          select: {
-            id: true,
-            first_name: true,
-            last_name: true,
-            designation: true,
-          },
-          orderBy: [{ first_name: 'asc' }, { last_name: 'asc' }],
-        }),
+      const faculties = await this.prisma.faculty.findMany({
+        where: {
+          status: 'active',
+          ...(departmentId !== undefined ? { department_id: departmentId } : {}),
+        },
+        select: {
+          id: true,
+          first_name: true,
+          last_name: true,
+          designation: true,
+        },
+        orderBy: [{ first_name: 'asc' }, { last_name: 'asc' }],
+      });
+      const facultyIds = faculties.map((f) => f.id);
+
+      const [dailyRecords, leaves, holidayMappings] = await Promise.all([
         this.prisma.faculty_daily_attendance.findMany({
-          where: { attendance_date: { gte: monthStart, lte: monthEnd } },
+          where: {
+            attendance_date: { gte: monthStart, lte: monthEnd },
+            ...(departmentId !== undefined ? { faculty_id: { in: facultyIds } } : {}),
+          },
           select: { faculty_id: true, attendance_date: true, status: true },
         }),
         this.prisma.faculty_leaves.findMany({
@@ -414,6 +452,7 @@ export class MeStaffAttendanceService {
             hr_approval_status: 'approved',
             from_date: { lte: monthEnd },
             to_date: { gte: monthStart },
+            ...(departmentId !== undefined ? { faculty_id: { in: facultyIds } } : {}),
           },
           select: { faculty_id: true, from_date: true, to_date: true },
         }),
@@ -423,6 +462,7 @@ export class MeStaffAttendanceService {
               from_date: { lte: monthEnd },
               to_date: { gte: monthStart },
             },
+            ...(departmentId !== undefined ? { faculty_id: { in: facultyIds } } : {}),
           },
           select: {
             faculty_id: true,
@@ -430,6 +470,7 @@ export class MeStaffAttendanceService {
           },
         }),
       ]);
+      return [faculties, dailyRecords, leaves, holidayMappings] as const;
     } catch (err) {
       this.logger.error('Failed to fetch all-faculty attendance sources', err);
       throw new InternalServerErrorException({
@@ -437,5 +478,18 @@ export class MeStaffAttendanceService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+  }
+
+  private async resolveCallerDepartmentId(userId: number): Promise<number> {
+    const faculty = await this.prisma.faculty.findUnique({
+      where: { user_id: userId },
+      select: { department_id: true },
+    });
+    if (!faculty) {
+      throw new NotFoundException(
+        'No faculty record found for this account.',
+      );
+    }
+    return faculty.department_id;
   }
 }

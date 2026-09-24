@@ -15,6 +15,7 @@ import {
   feedback_form_type_enum,
   feedback_question_type_enum,
   feedback_rating_label_enum,
+  feedback_service_type_enum,
   notification_type_enum,
 } from '../../../../generated/prisma/enums';
 import { CreateFeedbackFormDto } from './dto/create-feedback-form.dto';
@@ -80,6 +81,7 @@ export class FeedbackService {
         form_type: formType,
         rating_scale_id: ratingScaleId,
         category: dto.category,
+        service_type: dto.service_type,
         is_published: false,
         created_by_user_id: user.sub,
         feedback_questions: {
@@ -218,6 +220,7 @@ export class FeedbackService {
         class_id: dto.class_id,
         batch_id: dto.batch_id,
         category: dto.category,
+        service_type: dto.service_type,
       },
     });
 
@@ -498,18 +501,42 @@ export class FeedbackService {
 
   // ───────────────────────────── Student: fill feedback ─────────────────────────────
 
-  async listFormsForStudent(user: JwtPayload) {
+  /**
+   * `serviceType` set narrows to that one Campus-tab service's own review
+   * form(s) - institute-wide by nature (never class/batch scoped), so the
+   * usual class/batch targeting is skipped entirely for that branch. Left
+   * unset (the academic Feedback list, now reached from the Academics tab),
+   * service_type forms are explicitly excluded so the two lists never mix.
+   */
+  async listFormsForStudent(
+    user: JwtPayload,
+    serviceType?: feedback_service_type_enum,
+  ) {
     const student = await this.getStudentOrThrow(user.sub);
 
     const forms = await this.prisma.feedback_forms.findMany({
-      where: {
-        ...this.buildFormsTargetingStudentWhere(
-          student.class_id,
-          student.batch_id,
-        ),
-        is_published: true,
+      where: serviceType
+        ? { service_type: serviceType, is_published: true }
+        : {
+            ...this.buildFormsTargetingStudentWhere(
+              student.class_id,
+              student.batch_id,
+            ),
+            service_type: null,
+            is_published: true,
+          },
+      include: {
+        _count: { select: { feedback_questions: true } },
+        // Who posted it - lets the student app group HoD-posted forms
+        // separately from the Academic Coordinator's.
+        users: {
+          select: {
+            email: true,
+            roles: { select: { name: true } },
+            faculty: { select: { first_name: true, last_name: true } },
+          },
+        },
       },
-      include: { _count: { select: { feedback_questions: true } } },
       orderBy: { created_at: 'desc' },
     });
 
@@ -539,6 +566,10 @@ export class FeedbackService {
           title: form.title,
           form_type: form.form_type,
           question_count: form._count.feedback_questions,
+          posted_by_role: form.users.roles.name,
+          posted_by_name: form.users.faculty
+            ? `${form.users.faculty.first_name} ${form.users.faculty.last_name}`
+            : null,
           completed: isMatrix
             ? answered > 0
             : form._count.feedback_questions > 0 &&

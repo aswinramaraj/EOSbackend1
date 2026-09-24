@@ -7,7 +7,7 @@ import { PrincipalSportsService } from './principal-sports.service';
 
 @Controller('principal-sports')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLES.PRINCIPAL)
+@Roles(ROLES.PRINCIPAL, ROLES.CORRESPONDENT)
 export class PrincipalSportsController {
   constructor(private readonly service: PrincipalSportsService) {}
 

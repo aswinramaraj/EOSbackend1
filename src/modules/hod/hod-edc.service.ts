@@ -58,6 +58,7 @@ export class HodEdcService {
     search?: string,
     batchId?: number,
     otherDepartmentId?: number,
+    classId?: number,
   ) {
     const departmentId = await this.resolveDepartmentId(user);
     try {
@@ -82,6 +83,11 @@ export class HodEdcService {
             classes: {
               department_id: scopeDepartmentId,
               ...(batchId ? { batch_id: batchId } : {}),
+              // Class/section-level narrowing (the mobile HoD screen's
+              // "Class" dropdown), same pattern as
+              // HodHigherEducationService.getOverview - id is scoped by the
+              // department_id condition above.
+              ...(classId ? { id: classId } : {}),
             },
             ...(search
               ? {

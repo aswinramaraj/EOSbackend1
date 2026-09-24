@@ -62,12 +62,17 @@ export class StudentLeavesController {
   }
 
   /**
-   * PATCH /api/v1/me/student-leaves/:id/faculty-approve — Faculty only (the
-   * student's assigned mentor). First stage of the two-stage approval chain.
+   * PATCH /api/v1/me/student-leaves/:id/faculty-approve — Faculty/HoD (the
+   * student's assigned mentor). First stage of the two-stage approval
+   * chain. HOD included so an HoD who also mentors a class (Switch
+   * Account's "Class Advisor" mode) can approve as that mentor - the
+   * service resolves the caller via faculty.user_id and still requires the
+   * leave's own mentor faculty_id to match, so this never lets an HoD
+   * approve as someone else's mentor.
    */
   @Patch('student-leaves/:id/faculty-approve')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(ROLES.FACULTY)
+  @Roles(ROLES.FACULTY, ROLES.HOD)
   facultyApprove(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: FacultyApproveLeaveDto,

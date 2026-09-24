@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { InstitutionDirectoryQueryDto } from 'src/common/dto/institution-directory-query.dto';
 
 interface StudentSummarySource {
   id: number;
@@ -32,9 +33,12 @@ function toStudentSummary(student: StudentSummarySource) {
 }
 
 interface StudentSummaryWithDeptSource extends StudentSummarySource {
+  class_id: number | null;
   classes: {
     section: string;
     departments: { code: string; name: string };
+    batches: { name: string };
+    courses: { code: string };
   } | null;
 }
 
@@ -42,7 +46,25 @@ function toStudentSummaryWithDepartment(student: StudentSummaryWithDeptSource) {
   return {
     ...toStudentSummary(student),
     department: student.classes?.departments ?? null,
+    class_id: student.class_id,
+    batch_name: student.classes?.batches?.name ?? null,
+    course_code: student.classes?.courses?.code ?? null,
   };
+}
+
+// Same reasoning as DrivesService's own filterByStudentSearch - a two-word
+// query needs to match the CONCATENATED full name, not either half alone
+// via a Prisma `OR`, and rows are already narrowed by batch/department/
+// class first so filtering the remainder in memory is cheap.
+function filterByStudentSearch<T extends { student: { name: string; student_id_no: string } }>(
+  rows: T[],
+  search?: string,
+): T[] {
+  const term = search?.trim().toLowerCase();
+  if (!term) return rows;
+  return rows.filter(
+    (r) => r.student.name.toLowerCase().includes(term) || r.student.student_id_no.toLowerCase().includes(term),
+  );
 }
 
 /**
@@ -58,15 +80,31 @@ export class StudentHigherEducationService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** GET /student-higher-education — every department at once, no picker. */
-  async findAll() {
+  /**
+   * GET /student-higher-education — every department at once by default;
+   * optionally narrowed by the Batch/Department/Class-with-Section filter
+   * row + name-or-roll-no search box (see InstitutionDirectoryQueryDto).
+   */
+  async findAll(filters: InstitutionDirectoryQueryDto = {}) {
     try {
       const rows = await this.prisma.student_higher_education.findMany({
+        where: {
+          students: {
+            ...(filters.class_id !== undefined && { class_id: filters.class_id }),
+            ...((filters.batch_id !== undefined || filters.department_id !== undefined) && {
+              classes: {
+                ...(filters.department_id !== undefined && { department_id: filters.department_id }),
+                ...(filters.batch_id !== undefined && { batch_id: filters.batch_id }),
+              },
+            }),
+          },
+        },
         include: {
           students: {
             select: {
               id: true,
               student_id_no: true,
+              class_id: true,
               soa_applications: {
                 select: { first_name: true, last_name: true },
               },
@@ -75,6 +113,8 @@ export class StudentHigherEducationService {
                 select: {
                   section: true,
                   departments: { select: { code: true, name: true } },
+                  batches: { select: { name: true } },
+                  courses: { select: { code: true } },
                 },
               },
             },
@@ -83,7 +123,7 @@ export class StudentHigherEducationService {
         orderBy: { created_at: 'desc' },
       });
 
-      return rows.map((row) => ({
+      const mapped = rows.map((row) => ({
         id: row.id,
         preferred_course: row.preferred_course,
         preferred_country: row.preferred_country,
@@ -92,6 +132,7 @@ export class StudentHigherEducationService {
         created_at: row.created_at,
         student: toStudentSummaryWithDepartment(row.students),
       }));
+      return filterByStudentSearch(mapped, filters.search);
     } catch (err) {
       this.logger.error('DB error listing all student_higher_education', err);
       throw new InternalServerErrorException({
@@ -279,6 +320,74 @@ export class StudentHigherEducationService {
     } catch (err) {
       this.logger.error(
         'DB error listing student_higher_education for mentor',
+        err,
+      );
+      throw new InternalServerErrorException({
+        message: 'Something went wrong. Please try again.',
+        errorCode: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  /**
+   * Called by ClassMentorsService.findHigherEducationForClassMentor, AFTER
+   * that method's own class_mentors mentor check. Unlike findAllForMentor
+   * above (every class this faculty mentors, unioned), this is scoped to
+   * ONE class — the mentee-class Academics page has no class picker (a
+   * class advisor mentors exactly one class), so there's nothing to union.
+   * Deliberately a smaller field set than HodHigherEducationService.
+   * getOverview's rows (no batch/programme filters or scholarship/admission
+   * status — the mobile Advisor screen just needs "who opted in and to
+   * what", not the HoD dashboard's full triage view).
+   */
+  async findAllForClass(classId: number) {
+    try {
+      const rows = await this.prisma.student_higher_education.findMany({
+        where: { students: { class_id: classId } },
+        select: {
+          id: true,
+          preferred_course: true,
+          preferred_country: true,
+          preferred_university: true,
+          remarks: true,
+          created_at: true,
+          students: {
+            select: {
+              id: true,
+              student_id_no: true,
+              photo_url: true,
+              soa_applications: {
+                select: { first_name: true, last_name: true },
+              },
+              users: { select: { email: true } },
+            },
+          },
+        },
+        orderBy: { created_at: 'desc' },
+      });
+
+      return rows.map((row) => {
+        const name = row.students.soa_applications
+          ? `${row.students.soa_applications.first_name} ${row.students.soa_applications.last_name ?? ''}`.trim()
+          : row.students.users.email;
+        return {
+          id: row.id,
+          student: {
+            id: row.students.id,
+            name,
+            student_id_no: row.students.student_id_no,
+            photo_url: row.students.photo_url,
+          },
+          preferred_course: row.preferred_course,
+          preferred_country: row.preferred_country,
+          preferred_university: row.preferred_university,
+          remarks: row.remarks,
+          created_at: row.created_at,
+        };
+      });
+    } catch (err) {
+      this.logger.error(
+        `DB error listing student_higher_education for class ${classId}`,
         err,
       );
       throw new InternalServerErrorException({

@@ -43,15 +43,29 @@ export class FacultyLeavesController {
     // the service branches on whether a faculty row exists, not on role.
     ROLES.HR_PAYROLL,
     ROLES.WARDEN,
+    // Principal's own Leave Request (Request tab) - routed to the
+    // independent Correspondent approval stage, see FacultyLeavesService.create.
+    ROLES.PRINCIPAL,
   )
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateFacultyLeafDto, @CurrentUser() user: JwtPayload) {
     return this.facultyLeavesService.create(dto, user);
   }
 
-  /** GET /api/v1/faculty-leaves — Faculty (own only)/HoD/HR Payroll. Paginated, filterable. */
+  /**
+   * GET /api/v1/faculty-leaves — Faculty (own only)/HoD/HR Payroll/Principal
+   * (own only, "Leave Request > History")/Correspondent ("Leave Approval"
+   * queue). Paginated, filterable.
+   */
   @Get('faculty-leaves')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.HR_PAYROLL,
+    ROLES.SECRETARY,
+    ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
+  )
   findAll(
     @Query() query: ListFacultyLeafQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -59,9 +73,16 @@ export class FacultyLeavesController {
     return this.facultyLeavesService.findAll(query, user);
   }
 
-  /** GET /api/v1/faculty-leaves/:id — Faculty (own only)/HoD/HR Payroll. */
+  /** GET /api/v1/faculty-leaves/:id — Faculty (own only)/HoD/HR Payroll/Principal (own only)/Correspondent (queue only). */
   @Get('faculty-leaves/:id')
-  @Roles(ROLES.FACULTY, ROLES.HOD, ROLES.HR_PAYROLL, ROLES.SECRETARY)
+  @Roles(
+    ROLES.FACULTY,
+    ROLES.HOD,
+    ROLES.HR_PAYROLL,
+    ROLES.SECRETARY,
+    ROLES.PRINCIPAL,
+    ROLES.CORRESPONDENT,
+  )
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
@@ -69,9 +90,17 @@ export class FacultyLeavesController {
     return this.facultyLeavesService.findOne(id, user);
   }
 
-  /** PATCH /api/v1/faculty-leaves/:id — HoD (hod_approval_status) or HR Payroll (hr_approval_status, after HoD). */
+  /**
+   * PATCH /api/v1/faculty-leaves/:id — HoD (hod_approval_status), HR
+   * Payroll (hr_approval_status, after HoD), or Correspondent
+   * (correspondent_approval_status — Principal's Leave Approval, an
+   * independent stage, never gated on hod/hr). Principal is deliberately
+   * NOT included here — only ever a CREATE role on this table, so it can
+   * never approve/reject its own or anyone else's request through this API,
+   * enforced at the role-guard level, not just in the UI.
+   */
   @Patch('faculty-leaves/:id')
-  @Roles(ROLES.HOD, ROLES.HR_PAYROLL)
+  @Roles(ROLES.HOD, ROLES.HR_PAYROLL, ROLES.CORRESPONDENT)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateFacultyLeafDto,

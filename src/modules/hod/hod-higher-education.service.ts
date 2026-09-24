@@ -57,6 +57,7 @@ export class HodHigherEducationService {
     search?: string,
     batchId?: number,
     programme?: string,
+    classId?: number,
   ) {
     const departmentId = await this.resolveDepartmentId(user);
     try {
@@ -86,6 +87,12 @@ export class HodHigherEducationService {
             classes: {
               department_id: departmentId,
               ...(batchId ? { batch_id: batchId } : {}),
+              // Class/section-level narrowing (the mobile HoD screen's
+              // "Class" dropdown) - id must belong to this department, same
+              // as batchId above; not cross-checked separately since the
+              // department_id condition above already scopes the whole
+              // `classes` relation filter.
+              ...(classId ? { id: classId } : {}),
             },
             ...(search
               ? {

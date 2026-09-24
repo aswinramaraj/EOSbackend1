@@ -21,6 +21,7 @@ import { MeFacultyDirectoryService } from './me-faculty-directory.service';
 import { MeFeesService } from './me-fees.service';
 import { MeExamScheduleService } from './me-exam-schedule.service';
 import { MeHostelRoomService } from './me-hostel-room.service';
+import { MeHostelNightAttendanceService } from './me-hostel-night-attendance.service';
 import { MeHostelComplaintsService } from './me-hostel-complaints.service';
 import { MeMessFeedbackService } from './me-mess-feedback.service';
 import { MeAcademicCalendarService } from './me-academic-calendar.service';
@@ -50,6 +51,7 @@ import { MeCareerPathService } from './me-career-path.service';
     MeFeesService,
     MeExamScheduleService,
     MeHostelRoomService,
+    MeHostelNightAttendanceService,
     MeHostelComplaintsService,
     MeMessFeedbackService,
     MeAcademicCalendarService,
@@ -68,6 +70,7 @@ import { MeCareerPathService } from './me-career-path.service';
     MeHostelOutingsService,
     MeCampusOutingsService,
     MeCareerPathService,
+    MeHostelNightAttendanceService,
   ],
 })
 export class MeProfileModule {}
