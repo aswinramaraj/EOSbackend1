@@ -9,9 +9,14 @@ jobs:
   backend:
     name: Backend (build, typecheck, lint, test)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: EOSbackend1
+    # This repository IS the backend (package.json / package-lock.json live
+    # at the repo root), so every step runs from the checkout root. Pointing
+    # at an EOSbackend1/ subfolder made setup-node fail with "Some specified
+    # paths were not resolved, unable to cache dependencies."
+    env:
+      # The generated Prisma client is large enough that `nest build` / tsc
+      # can exceed Node's default ~2 GB heap ("JavaScript heap out of memory").
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@v4
 
@@ -19,7 +24,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: EOSbackend1/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
