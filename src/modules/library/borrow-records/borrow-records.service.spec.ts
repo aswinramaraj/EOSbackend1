@@ -192,6 +192,7 @@ describe('BorrowRecordsService', () => {
             borrower_type: 'student',
             student_id: 5,
             faculty_id: null,
+            staff_user_id: null,
             due_date: new Date('2026-08-15'),
           },
           include: expect.any(Object),
@@ -1217,8 +1218,9 @@ describe('BorrowRecordsService', () => {
       );
     });
 
-    it('scopes to an unmatched sentinel id (empty result, not an error) when the caller has no linked student profile', async () => {
+    it('falls through to staff_user_id (empty result, not an error) when the caller has no linked student or faculty profile', async () => {
       mockPrismaService.students.findUnique.mockResolvedValue(null);
+      mockPrismaService.faculty.findUnique.mockResolvedValue(null);
       mockPrismaService.book_borrow_records.findMany.mockResolvedValue([]);
 
       const result = await service.findMyBorrowRecords({}, studentUser);
@@ -1226,7 +1228,7 @@ describe('BorrowRecordsService', () => {
       expect(
         mockPrismaService.book_borrow_records.findMany,
       ).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { student_id: -1 } }),
+        expect.objectContaining({ where: { staff_user_id: studentUser.sub } }),
       );
       expect(result.data).toEqual([]);
     });
