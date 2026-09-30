@@ -10,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsDateString, IsInt } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
@@ -28,6 +28,12 @@ class AttendanceDraftQueryDto {
 
   @IsDateString()
   date: string;
+
+  /** See MarkClassAttendanceDto's own doc comment (attendance_periods.query.md). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  period_number?: number;
 }
 
 class PublishClassAttendanceDto {
@@ -36,6 +42,17 @@ class PublishClassAttendanceDto {
 
   @IsDateString()
   attendance_date: string;
+}
+
+class ReviewClassAttendanceDto {
+  @IsInt()
+  subject_id: number;
+
+  @IsDateString()
+  attendance_date: string;
+
+  @IsIn(['approve', 'send_back'])
+  decision: 'approve' | 'send_back';
 }
 
 /**
@@ -96,6 +113,7 @@ export class MeClassesAttendanceController {
       query.subject_id,
       query.date,
       user.sub,
+      query.period_number,
     );
   }
 
@@ -117,6 +135,52 @@ export class MeClassesAttendanceController {
       dto.subject_id,
       dto.attendance_date,
       user.sub,
+    );
+  }
+
+  /**
+   * POST /api/v1/me/classes/:class_id/attendance/submit-for-review —
+   * Faculty only. The optional alternative to Publish above: hands the
+   * saved draft to the Class Advisor/HoD for sign-off instead of making it
+   * visible immediately.
+   */
+  @Post(':class_id/attendance/submit-for-review')
+  @Roles(ROLES.FACULTY)
+  @HttpCode(HttpStatus.OK)
+  submitForReview(
+    @Param('class_id', ParseIntPipe) classId: number,
+    @Body() dto: PublishClassAttendanceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.attendanceService.submitForReview(
+      classId,
+      dto.subject_id,
+      dto.attendance_date,
+      user.sub,
+    );
+  }
+
+  /**
+   * POST /api/v1/me/classes/:class_id/attendance/review — the class's
+   * Class Advisor (class_mentors) or the HoD of its department only.
+   * Faculty is included in the guard because a Class Advisor is a Faculty
+   * member (no separate "advisor" role) — AttendanceService.
+   * assertCanReviewClass enforces the actual mentor-or-HoD check.
+   */
+  @Post(':class_id/attendance/review')
+  @Roles(ROLES.FACULTY, ROLES.HOD)
+  @HttpCode(HttpStatus.OK)
+  review(
+    @Param('class_id', ParseIntPipe) classId: number,
+    @Body() dto: ReviewClassAttendanceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.attendanceService.reviewForClass(
+      classId,
+      dto.subject_id,
+      dto.attendance_date,
+      dto.decision,
+      user,
     );
   }
 }

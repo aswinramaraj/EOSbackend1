@@ -217,8 +217,10 @@ export class ExamResultsGridService {
    * uses for its department-wide report cards, just scoped down to this one
    * exam's own mappings (already resolved above in buildGrid) instead of a
    * whole department+semester. Pass/fail is attempt-based (one subject paper
-   * = one attempt), matching that same existing convention; absentees are
-   * excluded from the denominator, not counted as fails, again matching it.
+   * = one attempt) and excludes absentees from the denominator — they didn't
+   * attempt the paper. average_cgpa does NOT exclude them: an absent-but-
+   * published result is a final RA/0 outcome (this used to wrongly exclude
+   * absentees here too, disagreeing with every other CGPA figure in the app).
    */
   async buildKpis(classId: number, examTypeId: number, semester: number) {
     try {
@@ -240,29 +242,38 @@ export class ExamResultsGridService {
         };
       }
 
+      // Fetches absentees too (unlike a plain `is_absent = false` filter) —
+      // an absent-but-published result is a final RA/0 outcome, not a
+      // not-yet-graded one, so it must count toward average_cgpa the same
+      // way it counts toward every student's own stored CGPA (see
+      // GpaRecomputeService). Pass/fail % stays attempt-based and excludes
+      // absentees below, in JS, rather than at the query level, so both
+      // metrics can be derived from one query.
       const attempts = await this.prisma.$queryRaw<
         {
           student_id: number;
+          is_absent: boolean;
           is_pass: boolean | null;
           grade_point: string | null;
           credits: number;
         }[]
       >`
-        SELECT em.student_id, gb.is_pass, gb.grade_point::text AS grade_point, COALESCE(sub.credits, 1) AS credits
+        SELECT em.student_id, em.is_absent, gb.is_pass, gb.grade_point::text AS grade_point, COALESCE(sub.credits, 1) AS credits
         FROM exam_marks em
         JOIN exam_subject_mapping esm ON esm.id = em.exam_subject_mapping_id
         JOIN subjects sub ON sub.id = esm.subject_id
         LEFT JOIN LATERAL (
           SELECT is_pass, grade_point FROM grade_bands gb2
-          WHERE gb2.min_percentage <= (em.marks_obtained / NULLIF(em.max_marks, 0) * 100)
+          WHERE gb2.min_percentage <= (CASE WHEN em.is_absent THEN 0 ELSE em.marks_obtained / NULLIF(em.max_marks, 0) * 100 END)
           ORDER BY gb2.min_percentage DESC LIMIT 1
         ) gb ON true
         WHERE esm.exam_id = ${exam.id} AND esm.class_id = ${classId}
-          AND em.is_absent = false AND em.marks_obtained IS NOT NULL
+          AND (em.is_absent OR em.marks_obtained IS NOT NULL)
       `;
 
-      const totalAttempts = attempts.length;
-      const passedAttempts = attempts.filter((a) => a.is_pass === true).length;
+      const gradedAttempts = attempts.filter((a) => !a.is_absent);
+      const totalAttempts = gradedAttempts.length;
+      const passedAttempts = gradedAttempts.filter((a) => a.is_pass === true).length;
       const passPercent =
         totalAttempts > 0
           ? Math.round((passedAttempts / totalAttempts) * 1000) / 10

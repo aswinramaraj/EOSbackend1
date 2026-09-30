@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { isAttendedStatus } from 'src/common/utils/attendance-percentage.util';
+import { gradeForPercentage } from 'src/common/utils/grade-lookup.util';
 import { SubjectRecordsService } from 'src/modules/faculty/subject-records/subject-records.service';
 import { NoDueService } from 'src/modules/faculty/no-due/no-due.service';
 import { SubjectNoDueService } from 'src/modules/faculty/subject-no-due/subject-no-due.service';
@@ -438,40 +440,6 @@ function toMenteeClassResponse(row: MenteeClassRow) {
   };
 }
 
-// Anna University-style absolute grading bands, same convention already
-// used for the "Subject Records" feature (subject-records.service.ts) -
-// there is no stored letter-grade column anywhere, so this is re-derived
-// from marks_obtained/max_marks here too.
-const GRADE_POINTS: { min: number; point: number }[] = [
-  { min: 91, point: 10 }, // O
-  { min: 81, point: 9 }, // A+
-  { min: 71, point: 8 }, // A
-  { min: 61, point: 7 }, // B+
-  { min: 50, point: 6 }, // B
-  { min: 0, point: 0 }, // RA (arrear)
-];
-
-function gradePointForPercentage(percentage: number): number {
-  const band = GRADE_POINTS.find((b) => percentage >= b.min);
-  return band ? band.point : 0;
-}
-
-// Same bands as GRADE_POINTS, letter form — matches subject-records.service.ts's
-// GRADE_BANDS exactly (the letters faculty already publish results with).
-const GRADE_LETTERS: { min: number; grade: string }[] = [
-  { min: 91, grade: 'O' },
-  { min: 81, grade: 'A+' },
-  { min: 71, grade: 'A' },
-  { min: 61, grade: 'B+' },
-  { min: 50, grade: 'B' },
-  { min: 0, grade: 'RA' },
-];
-
-function gradeLetterForPercentage(percentage: number): string {
-  const band = GRADE_LETTERS.find((b) => percentage >= b.min);
-  return band ? band.grade : 'RA';
-}
-
 interface ClassResultStudentRow {
   id: number;
   student_id_no: string;
@@ -642,7 +610,7 @@ export class ClassMentorsService {
 
     const todayDate = new Date(new Date().toISOString().slice(0, 10));
 
-    const [attendanceRecords, marks] = await Promise.all([
+    const [attendanceRecords, marks, gradeBands] = await Promise.all([
       this.prisma.attendance_records.findMany({
         where: {
           student_id: { in: studentIds },
@@ -667,19 +635,21 @@ export class ClassMentorsService {
           },
         },
       }),
+      this.prisma.grade_bands.findMany({ orderBy: { display_order: 'asc' } }),
     ]);
 
     const attendanceByStudent = new Map<
       number,
-      { total: number; present: number }
+      { total: number; attended: number }
     >();
     for (const record of attendanceRecords) {
       const entry = attendanceByStudent.get(record.student_id) ?? {
         total: 0,
-        present: 0,
+        attended: 0,
       };
       entry.total += 1;
-      if (record.status === 'present') entry.present += 1;
+      // present+on_duty counted as attended — see attendance-percentage.util.ts.
+      if (isAttendedStatus(record.status)) entry.attended += 1;
       attendanceByStudent.set(record.student_id, entry);
     }
 
@@ -705,11 +675,14 @@ export class ClassMentorsService {
       const max = Number(mark.max_marks);
       const percentage = max > 0 ? (obtained / max) * 100 : 0;
       const credits = mark.exam_subject_mapping.subjects.credits ?? 1;
-      const gradePoint = gradePointForPercentage(percentage);
+      const { point: gradePoint, isPass } = gradeForPercentage(
+        percentage,
+        gradeBands,
+      );
 
-      entry.weightedPoints += gradePoint * credits;
+      entry.weightedPoints += (gradePoint ?? 0) * credits;
       entry.totalCredits += credits;
-      if (gradePoint === 0) entry.arrears += 1;
+      if (!isPass) entry.arrears += 1;
       resultByStudent.set(mark.student_id, entry);
 
       const semester = mark.exam_subject_mapping.exams.semester;
@@ -721,7 +694,7 @@ export class ClassMentorsService {
         weightedPoints: 0,
         totalCredits: 0,
       };
-      semEntry.weightedPoints += gradePoint * credits;
+      semEntry.weightedPoints += (gradePoint ?? 0) * credits;
       semEntry.totalCredits += credits;
       bySemester.set(semester, semEntry);
     }
@@ -758,7 +731,7 @@ export class ClassMentorsService {
           roll_no: student.roll_no,
           register_no: student.register_no,
           attendance_percent: attendance
-            ? Math.round((attendance.present / attendance.total) * 10000) / 100
+            ? Math.round((attendance.attended / attendance.total) * 10000) / 100
             : null,
           cgpa:
             result && result.totalCredits > 0
@@ -980,53 +953,59 @@ export class ClassMentorsService {
       });
     }
 
-    const [marks, attendanceRecords, disciplineIncidents, sportsAchievements] =
-      await Promise.all([
-        this.prisma.exam_marks.findMany({
-          where: { student_id: studentId, marks_obtained: { not: null } },
-          select: {
-            marks_obtained: true,
-            max_marks: true,
-            exam_subject_mapping: {
-              select: {
-                subjects: {
-                  select: {
-                    id: true,
-                    name: true,
-                    subject_code: true,
-                    credits: true,
-                  },
+    const [
+      marks,
+      attendanceRecords,
+      disciplineIncidents,
+      sportsAchievements,
+      gradeBands,
+    ] = await Promise.all([
+      this.prisma.exam_marks.findMany({
+        where: { student_id: studentId, marks_obtained: { not: null } },
+        select: {
+          marks_obtained: true,
+          max_marks: true,
+          exam_subject_mapping: {
+            select: {
+              subjects: {
+                select: {
+                  id: true,
+                  name: true,
+                  subject_code: true,
+                  credits: true,
                 },
-                exams: {
-                  select: {
-                    semester: true,
-                    exam_types: { select: { name: true } },
-                  },
+              },
+              exams: {
+                select: {
+                  semester: true,
+                  exam_types: { select: { name: true } },
                 },
               },
             },
           },
-        }),
-        this.prisma.attendance_records.findMany({
-          where: { student_id: studentId },
-          select: { attendance_date: true, status: true, subject_id: true },
-        }),
-        this.prisma.malpractice_incidents.findMany({
-          where: { student_id: studentId },
-          orderBy: { incident_date: 'desc' },
-          select: { incident_date: true, nature: true, action_taken: true },
-        }),
-        this.prisma.sports_achievements.findMany({
-          where: { athlete_student_id: studentId },
-          orderBy: { achievement_date: 'desc' },
-          select: {
-            event_name: true,
-            result: true,
-            level: true,
-            achievement_date: true,
-          },
-        }),
-      ]);
+        },
+      }),
+      this.prisma.attendance_records.findMany({
+        where: { student_id: studentId },
+        select: { attendance_date: true, status: true, subject_id: true },
+      }),
+      this.prisma.malpractice_incidents.findMany({
+        where: { student_id: studentId },
+        orderBy: { incident_date: 'desc' },
+        select: { incident_date: true, nature: true, action_taken: true },
+      }),
+      this.prisma.sports_achievements.findMany({
+        where: { athlete_student_id: studentId },
+        orderBy: { achievement_date: 'desc' },
+        select: {
+          event_name: true,
+          result: true,
+          level: true,
+          achievement_date: true,
+        },
+      }),
+      this.prisma.grade_bands.findMany({ orderBy: { display_order: 'asc' } }),
+    ]);
 
     // --- Semester-wise GPA + per-subject rows ---
     type SubjectAgg = {
@@ -1067,16 +1046,17 @@ export class ClassMentorsService {
 
     const subjectAttendance = new Map<
       number,
-      { present: number; total: number }
+      { attended: number; total: number }
     >();
     for (const r of attendanceRecords) {
       if (r.subject_id === null) continue;
       const entry = subjectAttendance.get(r.subject_id) ?? {
-        present: 0,
+        attended: 0,
         total: 0,
       };
       entry.total += 1;
-      if (r.status === 'present') entry.present += 1;
+      // present+on_duty counted as attended — see attendance-percentage.util.ts.
+      if (isAttendedStatus(r.status)) entry.attended += 1;
       subjectAttendance.set(r.subject_id, entry);
     }
 
@@ -1096,9 +1076,12 @@ export class ClassMentorsService {
             : null;
 
           const gradingPercent = endSemPercent ?? ciaPercent;
-          if (gradingPercent !== null) {
-            weightedPoints +=
-              gradePointForPercentage(gradingPercent) * s.credits;
+          const grading =
+            gradingPercent !== null
+              ? gradeForPercentage(gradingPercent, gradeBands)
+              : null;
+          if (grading !== null) {
+            weightedPoints += (grading.point ?? 0) * s.credits;
             totalCredits += s.credits;
           }
 
@@ -1113,12 +1096,9 @@ export class ClassMentorsService {
               endSemPercent !== null
                 ? Math.round(endSemPercent * 100) / 100
                 : null,
-            grade:
-              gradingPercent !== null
-                ? gradeLetterForPercentage(gradingPercent)
-                : null,
+            grade: grading?.label ?? null,
             attendance_percent: att
-              ? Math.round((att.present / att.total) * 10000) / 100
+              ? Math.round((att.attended / att.total) * 10000) / 100
               : null,
           };
         });
@@ -1134,19 +1114,20 @@ export class ClassMentorsService {
       });
 
     // --- Monthly attendance (all records, not subject-scoped) ---
-    const byMonth = new Map<string, { present: number; total: number }>();
+    // present+on_duty counted as attended — see attendance-percentage.util.ts.
+    const byMonth = new Map<string, { attended: number; total: number }>();
     for (const r of attendanceRecords) {
       const monthKey = r.attendance_date.toISOString().slice(0, 7); // "YYYY-MM"
-      const entry = byMonth.get(monthKey) ?? { present: 0, total: 0 };
+      const entry = byMonth.get(monthKey) ?? { attended: 0, total: 0 };
       entry.total += 1;
-      if (r.status === 'present') entry.present += 1;
+      if (isAttendedStatus(r.status)) entry.attended += 1;
       byMonth.set(monthKey, entry);
     }
     const monthly_attendance = [...byMonth.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, { present, total }]) => ({
+      .map(([month, { attended, total }]) => ({
         month,
-        present_percent: Math.round((present / total) * 10000) / 100,
+        present_percent: Math.round((attended / total) * 10000) / 100,
       }));
 
     // --- Hostel + scholarship (College/ERP record section) ---

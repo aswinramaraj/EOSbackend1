@@ -6,6 +6,8 @@ import { MeController } from './me-profile.controller';
 import { MeProfileService } from './me-profile.service';
 import { MeAttendanceService } from './me-attendance.service';
 import { MeExamResultsService } from './me-exam-results.service';
+import { MeCareerPathService } from './me-career-path.service';
+import { MeHostelNightAttendanceService } from './me-hostel-night-attendance.service';
 import { MeLeavesService } from './me-leaves.service';
 import { MeLeavesListService } from './me-leaves-list.service';
 import { MeOdTeamsService } from './me-od-teams.service';
@@ -72,6 +74,13 @@ describe('MeController', () => {
   };
   const meExamResultsService = {
     getMyExamResults: jest.fn(),
+    getMyGpa: jest.fn(),
+  };
+  const meCareerPathService = {
+    getMyCareerPath: jest.fn(),
+  };
+  const meHostelNightAttendanceService = {
+    getMyNightAttendance: jest.fn(),
   };
   const meOdTeamsListService = {
     getMyOdTeams: jest.fn(),
@@ -111,6 +120,8 @@ describe('MeController', () => {
         { provide: MeProfileService, useValue: meProfileService },
         { provide: MeAttendanceService, useValue: meAttendanceService },
         { provide: MeExamResultsService, useValue: meExamResultsService },
+        { provide: MeCareerPathService, useValue: meCareerPathService },
+        { provide: MeHostelNightAttendanceService, useValue: meHostelNightAttendanceService },
         { provide: MeLeavesService, useValue: meLeavesService },
         { provide: MeLeavesListService, useValue: meLeavesListService },
         { provide: MeOdTeamsService, useValue: meOdTeamsService },
@@ -178,11 +189,11 @@ describe('MeController', () => {
     expect(meProfileService.updateMyProfile).toHaveBeenCalledWith(7, dto);
   });
 
-  it('restricts getProfile() to the student role', () => {
+  it('restricts getProfile() to the student/alumni roles', () => {
     const reflector = new Reflector();
     // eslint-disable-next-line @typescript-eslint/unbound-method -- reading decorator metadata off the method, never invoking it detached from `controller`
     const roles = reflector.get<string[]>(ROLES_KEY, controller.getProfile);
-    expect(roles).toEqual([ROLES.STUDENT]);
+    expect(roles).toEqual([ROLES.STUDENT, ROLES.ALUMNI]);
   });
 
   it('resolves student_id from the JWT and delegates getProfile() to MeProfileService', () => {
@@ -211,6 +222,19 @@ describe('MeController', () => {
     );
 
     expect(meAttendanceService.getMyAttendance).toHaveBeenCalledWith(7, dto);
+  });
+
+  it('restricts getMyGpa() to the student/alumni roles', () => {
+    const reflector = new Reflector();
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- reading decorator metadata off the method, never invoking it detached from `controller`
+    const roles = reflector.get<string[]>(ROLES_KEY, controller.getMyGpa);
+    expect(roles).toEqual([ROLES.STUDENT, ROLES.ALUMNI]);
+  });
+
+  it('resolves student_id from the JWT and delegates getMyGpa() to MeExamResultsService', () => {
+    void controller.getMyGpa({ sub: 7, email: 'a@b.com', role: 'student', roleId: 4 });
+
+    expect(meExamResultsService.getMyGpa).toHaveBeenCalledWith(7);
   });
 
   it('restricts createLeave() to the student role', () => {

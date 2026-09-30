@@ -283,11 +283,77 @@ export class ClassesService {
         department_id: existing.department_id,
         course_id: existing.course_id,
         section: existing.section,
+        current_semester: existing.current_semester,
       },
-      newValue: { batch_id, department_id, course_id, section },
+      newValue: { batch_id, department_id, course_id, section, current_semester: nextSemester },
     });
 
     return this.findOne(id);
+  }
+
+  /**
+   * POST /batches/:id/promote — bulk-advances every class under a batch to
+   * its next semester in one action, instead of an admin opening each
+   * section's own Edit Class dialog one at a time (today's only path —
+   * classes.current_semester lives on the class row itself, shared by every
+   * student whose class_id points to it, so "promoting a batch" means
+   * bumping that one shared field per section, not moving individual
+   * students between class rows). Reuses this.update() per class so the
+   * exact same validation (semester-in-range) and audit trail
+   * (class_updated, now including current_semester — see above) apply
+   * identically to a bulk promotion as to a manual single-class edit; no
+   * separate history table needed. A class already at its course's final
+   * semester, or with no current_semester set yet, is skipped and reported
+   * rather than erroring the whole batch.
+   */
+  async promoteBatch(batchId: number, performedByUserId: number) {
+    const batch = await this.prisma.batches.findUnique({
+      where: { id: batchId },
+    });
+    if (!batch) {
+      throw new NotFoundException({
+        message: 'Batch not found',
+        errorCode: 'BATCH_NOT_FOUND',
+      });
+    }
+
+    const classes = await this.prisma.classes.findMany({
+      where: { batch_id: batchId },
+      include: { courses: true },
+    });
+    if (classes.length === 0) {
+      throw new NotFoundException({
+        message: 'No classes exist for this batch yet',
+        errorCode: 'NO_CLASSES_FOR_BATCH',
+      });
+    }
+
+    const promoted: { class_id: number; from_semester: number; to_semester: number }[] = [];
+    const skipped: { class_id: number; section: string; reason: string }[] = [];
+
+    for (const klass of classes) {
+      if (klass.current_semester === null) {
+        skipped.push({ class_id: klass.id, section: klass.section, reason: 'No current semester set' });
+        continue;
+      }
+      const maxSemester = klass.courses.duration_years * 2;
+      if (klass.current_semester >= maxSemester) {
+        skipped.push({ class_id: klass.id, section: klass.section, reason: 'Already at final semester' });
+        continue;
+      }
+      await this.update(
+        klass.id,
+        { current_semester: klass.current_semester + 1 },
+        performedByUserId,
+      );
+      promoted.push({
+        class_id: klass.id,
+        from_semester: klass.current_semester,
+        to_semester: klass.current_semester + 1,
+      });
+    }
+
+    return { batch_id: batchId, promoted, skipped };
   }
 
   /**

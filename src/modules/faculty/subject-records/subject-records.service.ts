@@ -6,22 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-
-// Anna University-style absolute grading, matching the frontend's fixed
-// grade labels (O, A+, A, B+, B, RA) exactly.
-const GRADE_BANDS: { grade: string; min: number }[] = [
-  { grade: 'O', min: 91 },
-  { grade: 'A+', min: 81 },
-  { grade: 'A', min: 71 },
-  { grade: 'B+', min: 61 },
-  { grade: 'B', min: 50 },
-  { grade: 'RA', min: 0 },
-];
-
-function gradeForPercentage(percentage: number): string {
-  const band = GRADE_BANDS.find((b) => percentage >= b.min);
-  return band ? band.grade : 'RA';
-}
+import { gradeForPercentage } from 'src/common/utils/grade-lookup.util';
 
 function resolveStudentName(student: {
   soa_applications: { first_name: string; last_name: string | null } | null;
@@ -198,10 +183,13 @@ export class SubjectRecordsService {
   /**
    * Shared grade-distribution/toppers computation behind both findOne
    * (personally-teaching faculty) and findAllForClass (class mentor,
-   * every subject) — kept in one place so the Anna University grading
-   * bands above are never duplicated.
+   * every subject) — kept in one place so grade_bands is only read once.
    */
   private async computeMappingDetail(mapping: MappingRow) {
+    const bands = await this.prisma.grade_bands.findMany({
+      orderBy: { display_order: 'asc' },
+    });
+
     const roster = await this.prisma.students.findMany({
       where: { class_id: mapping.classes.id },
       select: { id: true },
@@ -238,14 +226,14 @@ export class SubjectRecordsService {
       };
     });
 
-    const distributionByGrade = new Map(GRADE_BANDS.map((b) => [b.grade, 0]));
+    const distributionByGrade = new Map(bands.map((b) => [b.grade_label, 0]));
     for (const row of scored) {
-      const grade = gradeForPercentage(row.percentage);
+      const grade = gradeForPercentage(row.percentage, bands).label;
       distributionByGrade.set(grade, (distributionByGrade.get(grade) ?? 0) + 1);
     }
-    const grade_distribution = GRADE_BANDS.map((b) => ({
-      grade: b.grade,
-      count: distributionByGrade.get(b.grade) ?? 0,
+    const grade_distribution = bands.map((b) => ({
+      grade: b.grade_label,
+      count: distributionByGrade.get(b.grade_label) ?? 0,
     }));
 
     const toppers = [...scored]

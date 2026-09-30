@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/common/storage/storage.service';
 import { SmsService } from 'src/common/sms/sms.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import {
   dayscholar_mode_enum,
   soa_status_enum,
@@ -17,6 +18,7 @@ function prismaModel(prisma: unknown, name: string): { findUnique: jest.Mock } {
 
 describe('SoaApplicationsService', () => {
   let service: SoaApplicationsService;
+  let auditLog: { record: jest.Mock };
   let prisma: {
     soa_applications: {
       create: jest.Mock;
@@ -65,6 +67,7 @@ describe('SoaApplicationsService', () => {
       admission_profile_drafts: { deleteMany: jest.fn() },
       $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(prisma)),
     };
+    auditLog = { record: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -75,6 +78,7 @@ describe('SoaApplicationsService', () => {
           useValue: { upload: jest.fn(), getSignedDownloadUrl: jest.fn() },
         },
         { provide: SmsService, useValue: { send: jest.fn() } },
+        { provide: AuditLogService, useValue: auditLog },
       ],
     }).compile();
 
@@ -641,6 +645,108 @@ describe('SoaApplicationsService', () => {
         status: 409,
         response: { errorCode: 'PERFECT_ENTRY_ALREADY_DONE' },
       });
+    });
+  });
+
+  describe('bulkImport', () => {
+    function validRow(overrides: Partial<Record<string, unknown>> = {}) {
+      return {
+        first_name: 'Arjun',
+        last_name: 'K',
+        email: 'arjun.k@student.college.edu',
+        student_id_no: 'AIDS2026041',
+        course_code: 'AIDS',
+        quota_name: 'Government',
+        batch_name: '2026-2030',
+        student_type: 'dayscholar',
+        dayscholar_mode: 'own_vehicle',
+        vehicle_number: 'TN01AB1234',
+        ...overrides,
+      } as any;
+    }
+
+    it('creates every row, reusing create() -> updateStatus() x2 -> perfectEntry(), and audits the run', async () => {
+      prisma.courses.findUnique.mockResolvedValue({ id: 8 });
+      prisma.quotas.findUnique.mockResolvedValue({ id: 2 });
+      prisma.batches.findUnique.mockResolvedValue({ id: 4 });
+      prisma.soa_applications.create.mockResolvedValue({ id: 1042, status: 'applied' });
+      prisma.soa_applications.findUnique
+        .mockResolvedValueOnce({ id: 1042, status: 'applied' }) // updateStatus -> fees_paid
+        .mockResolvedValueOnce({ id: 1042, status: 'fees_paid' }) // updateStatus -> admission_confirmed
+        .mockResolvedValueOnce({ id: 1042, status: 'admission_confirmed' }); // perfectEntry's own check
+      prisma.soa_applications.update.mockResolvedValue({ id: 1042 });
+      prisma.students.findUnique.mockResolvedValue(null);
+      prisma.users.findUnique.mockResolvedValue(null);
+      prisma.roles.findUnique.mockResolvedValue({ id: 4, name: 'student' });
+      prisma.users.create.mockResolvedValue({ id: 890 });
+      prisma.students.create.mockResolvedValue({
+        id: 3310,
+        user_id: 890,
+        student_id_no: 'AIDS2026041',
+        status: 'active',
+      });
+
+      const result = await service.bulkImport([validRow()], 99);
+
+      expect(result.total).toBe(1);
+      expect(result.created).toBe(1);
+      expect(result.failed).toBe(0);
+      expect(result.results[0]).toMatchObject({ row: 0, status: 'created', student_id: 3310 });
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'bulk_import_run',
+          performedByUserId: 99,
+          newValue: { total: 1, created: 1, failed: 0 },
+        }),
+      );
+    });
+
+    it("reports a row with an unknown course_code as a failure without creating an application for it", async () => {
+      prisma.courses.findUnique.mockResolvedValue(null);
+      prisma.quotas.findUnique.mockResolvedValue({ id: 2 });
+      prisma.batches.findUnique.mockResolvedValue({ id: 4 });
+
+      const result = await service.bulkImport([validRow({ course_code: 'NOPE' })], 99);
+
+      expect(result.created).toBe(0);
+      expect(result.failed).toBe(1);
+      expect(result.results[0]).toMatchObject({
+        row: 0,
+        status: 'error',
+        message: expect.stringContaining("course_code 'NOPE'"),
+      });
+      expect(prisma.soa_applications.create).not.toHaveBeenCalled();
+    });
+
+    it('keeps processing remaining rows when one fails', async () => {
+      prisma.quotas.findUnique.mockResolvedValue({ id: 2 });
+      prisma.batches.findUnique.mockResolvedValue({ id: 4 });
+      prisma.courses.findUnique
+        .mockResolvedValueOnce(null) // row 0 fails
+        .mockResolvedValueOnce({ id: 8 }) // row 1 succeeds
+        .mockResolvedValue({ id: 8 });
+      prisma.soa_applications.create.mockResolvedValue({ id: 1042, status: 'applied' });
+      prisma.soa_applications.findUnique
+        .mockResolvedValueOnce({ id: 1042, status: 'applied' })
+        .mockResolvedValueOnce({ id: 1042, status: 'fees_paid' })
+        .mockResolvedValueOnce({ id: 1042, status: 'admission_confirmed' });
+      prisma.soa_applications.update.mockResolvedValue({ id: 1042 });
+      prisma.students.findUnique.mockResolvedValue(null);
+      prisma.users.findUnique.mockResolvedValue(null);
+      prisma.roles.findUnique.mockResolvedValue({ id: 4, name: 'student' });
+      prisma.users.create.mockResolvedValue({ id: 890 });
+      prisma.students.create.mockResolvedValue({ id: 3310, user_id: 890, status: 'active' });
+
+      const result = await service.bulkImport(
+        [validRow({ course_code: 'NOPE', student_id_no: 'ROW0' }), validRow({ student_id_no: 'ROW1' })],
+        99,
+      );
+
+      expect(result.total).toBe(2);
+      expect(result.created).toBe(1);
+      expect(result.failed).toBe(1);
+      expect(result.results[0]).toMatchObject({ row: 0, status: 'error' });
+      expect(result.results[1]).toMatchObject({ row: 1, status: 'created' });
     });
   });
 });

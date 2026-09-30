@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -11,6 +12,7 @@ import crypto from 'node:crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StorageService } from 'src/common/storage/storage.service';
 import { SmsService } from 'src/common/sms/sms.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
@@ -25,6 +27,7 @@ import { CreateSoaApplicationDto } from './dto/create-soa-application.dto';
 import { UpdateSoaApplicationDto } from './dto/update-soa-application.dto';
 import { UpdateSoaStatusDto } from './dto/update-soa-status.dto';
 import { CreatePerfectEntryDto } from './dto/create-perfect-entry.dto';
+import { BulkImportStudentRowDto } from './dto/bulk-import-students.dto';
 import { ListSoaApplicationsQueryDto } from './dto/list-soa-applications-query.dto';
 import { SaveProfileDraftDto } from './dto/save-profile-draft.dto';
 import { paginate } from 'src/common/dto/pagination.dto';
@@ -102,6 +105,7 @@ export class SoaApplicationsService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly sms: SmsService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   /**
@@ -409,6 +413,107 @@ export class SoaApplicationsService {
         };
 
     return { ...createdStudent, password: plainPassword, sms };
+  }
+
+  /**
+   * POST /soa-applications/bulk-import — real counselling-authority data
+   * (course/quota/batch given as human-readable code/name, not this app's
+   * internal ids) arriving pre-vetted, not a fresh applicant who still needs
+   * review. Reuses the exact same three service methods a single admission
+   * already goes through — create() → updateStatus() ×2 (applied →
+   * fees_paid → admission_confirmed, the real state machine, not a bypass)
+   * → perfectEntry() — so a bulk-imported student is indistinguishable in
+   * every downstream system from one entered by hand. One row's failure
+   * (duplicate email, unknown course code, ...) is reported and skipped,
+   * never aborting the rows around it — not wrapped in one transaction,
+   * since each row is a fully independent application.
+   */
+  async bulkImport(rows: BulkImportStudentRowDto[], performedByUserId: number) {
+    const results: Array<
+      | { row: number; status: 'created'; student_id: number; student_id_no: string }
+      | { row: number; status: 'error'; student_id_no: string; message: string }
+    > = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      try {
+        const [course, quota, batch] = await Promise.all([
+          this.prisma.courses.findUnique({ where: { code: row.course_code } }),
+          this.prisma.quotas.findUnique({ where: { name: row.quota_name } }),
+          this.prisma.batches.findUnique({ where: { name: row.batch_name } }),
+        ]);
+        if (!course) {
+          throw new NotFoundException({
+            message: `course_code '${row.course_code}' does not reference an existing course`,
+            errorCode: 'COURSE_NOT_FOUND',
+          });
+        }
+        if (!quota) {
+          throw new NotFoundException({
+            message: `quota_name '${row.quota_name}' does not reference an existing quota`,
+            errorCode: 'QUOTA_NOT_FOUND',
+          });
+        }
+        if (!batch) {
+          throw new NotFoundException({
+            message: `batch_name '${row.batch_name}' does not reference an existing batch`,
+            errorCode: 'BATCH_NOT_FOUND',
+          });
+        }
+
+        const application = await this.create({
+          first_name: row.first_name,
+          last_name: row.last_name,
+        } as CreateSoaApplicationDto);
+
+        await this.updateStatus(application.id, {
+          status: soa_status_enum.fees_paid,
+        } as UpdateSoaStatusDto);
+        await this.updateStatus(application.id, {
+          status: soa_status_enum.admission_confirmed,
+        } as UpdateSoaStatusDto);
+
+        const student = await this.perfectEntry(application.id, {
+          email: row.email,
+          student_id_no: row.student_id_no,
+          roll_no: row.roll_no,
+          register_no: row.register_no,
+          course_id: course.id,
+          quota_id: quota.id,
+          batch_id: batch.id,
+          student_type: row.student_type,
+          dayscholar_mode: row.dayscholar_mode,
+          vehicle_number: row.vehicle_number,
+          gender: row.gender,
+          date_of_birth: row.date_of_birth,
+        } as CreatePerfectEntryDto);
+
+        results.push({
+          row: i,
+          status: 'created',
+          student_id: student.id,
+          student_id_no: row.student_id_no,
+        });
+      } catch (err: unknown) {
+        const message =
+          err instanceof HttpException
+            ? ((err.getResponse() as { message?: string })?.message ?? err.message)
+            : 'Something went wrong for this row. Please try again.';
+        results.push({ row: i, status: 'error', student_id_no: row.student_id_no, message });
+      }
+    }
+
+    const created = results.filter((r) => r.status === 'created').length;
+
+    await this.auditLog.record({
+      entityType: 'soa_application_bulk_import',
+      entityId: performedByUserId,
+      action: 'bulk_import_run',
+      performedByUserId,
+      newValue: { total: rows.length, created, failed: rows.length - created },
+    });
+
+    return { total: rows.length, created, failed: rows.length - created, results };
   }
 
   /** Just the DB-writing half of perfectEntry, split out so the SMS step above can run after a real commit instead of inside the same try/catch. */

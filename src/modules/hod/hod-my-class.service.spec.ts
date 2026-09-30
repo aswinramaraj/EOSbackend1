@@ -17,6 +17,7 @@ describe('HodMyClassService', () => {
     exam_subject_mapping: { findMany: jest.Mock };
     exam_marks: { findMany: jest.Mock };
     students: { findMany: jest.Mock };
+    grade_bands: { findMany: jest.Mock };
   };
   const user: JwtPayload = {
     sub: 1,
@@ -31,6 +32,16 @@ describe('HodMyClassService', () => {
       exam_subject_mapping: { findMany: jest.fn().mockResolvedValue([]) },
       exam_marks: { findMany: jest.fn().mockResolvedValue([]) },
       students: { findMany: jest.fn().mockResolvedValue([]) },
+      grade_bands: {
+        findMany: jest.fn().mockResolvedValue([
+          { grade_label: 'O', grade_point: 10, is_pass: true, min_percentage: 90 },
+          { grade_label: 'A+', grade_point: 9, is_pass: true, min_percentage: 80 },
+          { grade_label: 'A', grade_point: 8, is_pass: true, min_percentage: 70 },
+          { grade_label: 'B+', grade_point: 7, is_pass: true, min_percentage: 60 },
+          { grade_label: 'B', grade_point: 6, is_pass: true, min_percentage: 50 },
+          { grade_label: 'RA', grade_point: 0, is_pass: false, min_percentage: 0 },
+        ]),
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -139,6 +150,48 @@ describe('HodMyClassService', () => {
         class_id: 20,
         subject_id: 10,
       });
+    });
+
+    it('grades a student from the live grade_bands table, not a hardcoded scale (90% -> O)', async () => {
+      prisma.faculty.findUnique.mockResolvedValue({ id: 5 });
+      prisma.faculty_subject_class_mapping.findMany.mockResolvedValue([
+        {
+          class_id: 20,
+          subject_id: 10,
+          academic_year: '2026-2027',
+          classes: { section: 'A', current_semester: 5, departments: { name: 'CSE' } },
+          subjects: { name: 'Cryptography', subject_code: 'CS8792' },
+        },
+      ]);
+      prisma.exam_subject_mapping.findMany.mockResolvedValue([
+        {
+          id: 100,
+          exams: { semester: 5, exam_types: { name: 'End Semester' } },
+        },
+      ]);
+      prisma.exam_marks.findMany.mockResolvedValue([
+        {
+          student_id: 1,
+          exam_subject_mapping_id: 100,
+          marks_obtained: 90,
+          max_marks: 100,
+          is_absent: false,
+        },
+      ]);
+      prisma.students.findMany.mockResolvedValue([
+        {
+          id: 1,
+          student_id_no: '22CSE01',
+          soa_applications: { first_name: 'Test', last_name: 'Student' },
+          users: { email: 's@eos.test' },
+        },
+      ]);
+
+      const result = await service.getSubjectRecords(user, 20, 10);
+
+      // 90% is O (min 90) on the live scale — the old hardcoded 91/81/.../0
+      // scale would have wrongly graded this A+.
+      expect(result.students[0].grade).toBe('O');
     });
   });
 });

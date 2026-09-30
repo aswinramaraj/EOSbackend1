@@ -59,6 +59,18 @@ export class AdminAlumniController {
     return this.batchesService.listBatches(query);
   }
 
+  /** GET /admin/alumni-batches/reconciliation-status — how many alumni logins are out of sync with their alumni_members row. */
+  @Get('alumni-batches/reconciliation-status')
+  reconciliationStatus() {
+    return this.graduationService.getReconciliationStatus();
+  }
+
+  /** POST /admin/alumni-batches/reconcile-roles — fixes every out-of-sync login found above. */
+  @Post('alumni-batches/reconcile-roles')
+  reconcileRoles(@CurrentUser() user: JwtPayload) {
+    return this.graduationService.reconcileMemberRoles(user.sub);
+  }
+
   /** GET /admin/alumni-batches/:alumniBatchId — a specific group's header info. */
   @Get('alumni-batches/:alumniBatchId')
   @Roles(ROLES.ADMIN, ROLES.PRINCIPAL)

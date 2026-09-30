@@ -12,8 +12,9 @@ describe('SecretaryDashboardService', () => {
   let service: SecretaryDashboardService;
 
   const mockPrismaService = {
+    non_teaching_staff: { findFirst: jest.fn() },
     secretary_product_requests: { count: jest.fn() },
-    secretary_service_requests: { count: jest.fn() },
+    service_order_proposals: { count: jest.fn() },
     venue_bookings: { count: jest.fn() },
     media_requests: { count: jest.fn() },
     faculty_daily_attendance: { findMany: jest.fn() },
@@ -34,6 +35,7 @@ describe('SecretaryDashboardService', () => {
     mockPrismaService.$transaction.mockImplementation((ops: unknown[]) =>
       Promise.all(ops),
     );
+    mockPrismaService.non_teaching_staff.findFirst.mockResolvedValue({ department_id: 2 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -51,7 +53,7 @@ describe('SecretaryDashboardService', () => {
 
   it('scopes pending-request counts to the caller and sums them into a total', async () => {
     mockPrismaService.secretary_product_requests.count.mockResolvedValue(2);
-    mockPrismaService.secretary_service_requests.count.mockResolvedValue(1);
+    mockPrismaService.service_order_proposals.count.mockResolvedValue(1);
     mockPrismaService.venue_bookings.count.mockResolvedValue(1);
     mockPrismaService.media_requests.count.mockResolvedValue(0);
     mockPrismaService.faculty_daily_attendance.findMany.mockResolvedValue([]);
@@ -77,7 +79,7 @@ describe('SecretaryDashboardService', () => {
 
   it('splits faculty_daily_attendance rows into on_leave/on_duty lists', async () => {
     mockPrismaService.secretary_product_requests.count.mockResolvedValue(0);
-    mockPrismaService.secretary_service_requests.count.mockResolvedValue(0);
+    mockPrismaService.service_order_proposals.count.mockResolvedValue(0);
     mockPrismaService.venue_bookings.count.mockResolvedValue(0);
     mockPrismaService.media_requests.count.mockResolvedValue(0);
     mockPrismaService.faculty_daily_attendance.findMany.mockResolvedValue([
@@ -119,7 +121,7 @@ describe('SecretaryDashboardService', () => {
 
   it('computes attendance completion percentage from scheduled vs marked sessions', async () => {
     mockPrismaService.secretary_product_requests.count.mockResolvedValue(0);
-    mockPrismaService.secretary_service_requests.count.mockResolvedValue(0);
+    mockPrismaService.service_order_proposals.count.mockResolvedValue(0);
     mockPrismaService.venue_bookings.count.mockResolvedValue(0);
     mockPrismaService.media_requests.count.mockResolvedValue(0);
     mockPrismaService.faculty_daily_attendance.findMany.mockResolvedValue([]);
@@ -148,7 +150,7 @@ describe('SecretaryDashboardService', () => {
 
   it('returns a null completion percentage when nothing is scheduled today', async () => {
     mockPrismaService.secretary_product_requests.count.mockResolvedValue(0);
-    mockPrismaService.secretary_service_requests.count.mockResolvedValue(0);
+    mockPrismaService.service_order_proposals.count.mockResolvedValue(0);
     mockPrismaService.venue_bookings.count.mockResolvedValue(0);
     mockPrismaService.media_requests.count.mockResolvedValue(0);
     mockPrismaService.faculty_daily_attendance.findMany.mockResolvedValue([]);

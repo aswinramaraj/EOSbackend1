@@ -468,7 +468,35 @@ export class SeatingPlansService {
     const byRegNo = new Map(students.map((s) => [s.register_no ?? s.student_id_no, s]));
     const ordered = registerNumbers.map((r) => byRegNo.get(r)).filter((s): s is (typeof students)[number] => !!s);
     const notFound = registerNumbers.filter((r) => !byRegNo.has(r));
-    const toSeat = ordered.slice(0, capacity);
+
+    // Same version_id, a DIFFERENT venue — allocateAutomatic() already
+    // avoids double-seating via its own alreadySeatedIds filter; this venue's
+    // own existing rows are about to be replaced below, so only a match in
+    // another hall_plan_id within this version is a real conflict.
+    const seatedElsewhere = ordered.length
+      ? await this.prisma.seating_arrangements.findMany({
+          where: {
+            version_id: version.id,
+            student_id: { in: ordered.map((s) => s.id) },
+            hall_plan_id: { not: versionVenue.hall_plan_id! },
+          },
+          select: {
+            student_id: true,
+            hall_plans: { select: { venues: { select: { name: true } } } },
+          },
+        })
+      : [];
+    const conflictVenueByStudentId = new Map(
+      seatedElsewhere.map((s) => [s.student_id, s.hall_plans.venues.name]),
+    );
+
+    const conflicts = ordered
+      .filter((s) => conflictVenueByStudentId.has(s.id))
+      .map((s) => ({
+        register_no: s.register_no ?? s.student_id_no,
+        already_seated_in: conflictVenueByStudentId.get(s.id)!,
+      }));
+    const toSeat = ordered.filter((s) => !conflictVenueByStudentId.has(s.id)).slice(0, capacity);
 
     await this.prisma.$transaction([
       this.prisma.seating_arrangements.deleteMany({ where: { hall_plan_id: versionVenue.hall_plan_id!, version_id: version.id } }),
@@ -486,7 +514,13 @@ export class SeatingPlansService {
         : []),
     ]);
 
-    return { seated: toSeat.length, capacity, carried_forward: ordered.length - toSeat.length, not_found: notFound };
+    return {
+      seated: toSeat.length,
+      capacity,
+      carried_forward: ordered.length - toSeat.length - conflicts.length,
+      not_found: notFound,
+      conflicts,
+    };
   }
 
   async clearVenue(dto: TargetVenueDto) {

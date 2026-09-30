@@ -8,5 +8,6 @@ import { AuditLogModule } from 'src/common/audit-log/audit-log.module';
   imports: [PrismaModule, AuditLogModule],
   controllers: [DepartmentsController],
   providers: [DepartmentsService],
+  exports: [DepartmentsService],
 })
 export class DepartmentsModule {}

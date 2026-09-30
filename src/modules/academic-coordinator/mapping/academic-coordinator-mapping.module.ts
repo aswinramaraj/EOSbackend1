@@ -7,5 +7,6 @@ import { AcademicCoordinatorMappingService } from './academic-coordinator-mappin
   imports: [PrismaModule],
   controllers: [AcademicCoordinatorMappingController],
   providers: [AcademicCoordinatorMappingService],
+  exports: [AcademicCoordinatorMappingService],
 })
 export class AcademicCoordinatorMappingModule {}

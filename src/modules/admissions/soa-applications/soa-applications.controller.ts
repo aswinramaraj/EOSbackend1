@@ -20,12 +20,15 @@ import { CreateSoaApplicationDto } from './dto/create-soa-application.dto';
 import { UpdateSoaApplicationDto } from './dto/update-soa-application.dto';
 import { UpdateSoaStatusDto } from './dto/update-soa-status.dto';
 import { CreatePerfectEntryDto } from './dto/create-perfect-entry.dto';
+import { BulkImportStudentsDto } from './dto/bulk-import-students.dto';
 import { ListSoaApplicationsQueryDto } from './dto/list-soa-applications-query.dto';
 import { SaveProfileDraftDto } from './dto/save-profile-draft.dto';
 import { UploadDocumentDto } from './dto/upload-document.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -101,6 +104,23 @@ export class SoaApplicationsController {
     @Body() dto: CreatePerfectEntryDto,
   ) {
     return this.soaApplicationsService.perfectEntry(id, dto);
+  }
+
+  /**
+   * POST /api/v1/soa-applications/bulk-import — Admin only. Real
+   * counselling-authority data (course code / quota name / batch name, not
+   * this app's internal ids), one row per student. Reuses create() →
+   * updateStatus() ×2 → perfectEntry() per row — the exact same path a
+   * single admission goes through, not a separate shortcut.
+   */
+  @Post('bulk-import')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.ADMIN)
+  bulkImport(
+    @Body() dto: BulkImportStudentsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.soaApplicationsService.bulkImport(dto.rows, user.sub);
   }
 
   /**

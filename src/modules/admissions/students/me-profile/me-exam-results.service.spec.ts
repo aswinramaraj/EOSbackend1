@@ -8,6 +8,7 @@ describe('MeExamResultsService', () => {
     students: { findUnique: jest.Mock };
     exam_marks: { findMany: jest.Mock };
     faculty_subject_class_mapping: { findFirst: jest.Mock; findMany: jest.Mock };
+    student_semester_gpa: { findMany: jest.Mock };
   };
 
   beforeEach(async () => {
@@ -15,6 +16,7 @@ describe('MeExamResultsService', () => {
       students: { findUnique: jest.fn() },
       exam_marks: { findMany: jest.fn() },
       faculty_subject_class_mapping: { findFirst: jest.fn(), findMany: jest.fn() },
+      student_semester_gpa: { findMany: jest.fn() },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -29,6 +31,75 @@ describe('MeExamResultsService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  describe('getMyGpa', () => {
+    it('throws 404 STUDENT_NOT_FOUND when the JWT user has no linked student record', async () => {
+      prisma.students.findUnique.mockResolvedValue(null);
+
+      await expect(service.getMyGpa(999)).rejects.toMatchObject({
+        status: 404,
+        response: { errorCode: 'STUDENT_NOT_FOUND' },
+      });
+    });
+
+    it('returns an empty array, not an error, when nothing is stored yet', async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 42 });
+      prisma.student_semester_gpa.findMany.mockResolvedValue([]);
+
+      await expect(service.getMyGpa(1)).resolves.toEqual([]);
+    });
+
+    it("returns the caller's own stored rows, ordered by semester, with Decimal fields converted to numbers", async () => {
+      prisma.students.findUnique.mockResolvedValue({ id: 42 });
+      prisma.student_semester_gpa.findMany.mockResolvedValue([
+        {
+          semester: 1,
+          total_credits: 20,
+          sgpa: '8.20' as any,
+          cumulative_credits: 20,
+          cgpa: '8.20' as any,
+          is_provisional: false,
+          computed_at: new Date('2026-01-01'),
+        },
+        {
+          semester: 2,
+          total_credits: 22,
+          sgpa: '8.50' as any,
+          cumulative_credits: 42,
+          cgpa: '8.36' as any,
+          is_provisional: true,
+          computed_at: new Date('2026-06-01'),
+        },
+      ]);
+
+      const result = await service.getMyGpa(1);
+
+      expect(prisma.student_semester_gpa.findMany).toHaveBeenCalledWith({
+        where: { student_id: 42 },
+        orderBy: { semester: 'asc' },
+      });
+      expect(result).toEqual([
+        {
+          semester: 1,
+          total_credits: 20,
+          sgpa: 8.2,
+          cumulative_credits: 20,
+          cgpa: 8.2,
+          is_provisional: false,
+          computed_at: new Date('2026-01-01'),
+        },
+        {
+          semester: 2,
+          total_credits: 22,
+          sgpa: 8.5,
+          cumulative_credits: 42,
+          cgpa: 8.36,
+          is_provisional: true,
+          computed_at: new Date('2026-06-01'),
+        },
+      ]);
+    });
   });
 
   it('throws 404 STUDENT_NOT_FOUND when the JWT user has no linked student record', async () => {

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 
 /**
  * Graduates batches into the alumni system. A batch is "due" once its
@@ -22,7 +23,10 @@ import { PrismaService } from 'src/prisma/prisma.service';
 export class AlumniGraduationService {
   private readonly logger = new Logger(AlumniGraduationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async runDailyGraduation() {
@@ -151,5 +155,67 @@ export class AlumniGraduationService {
         graduated_students: students.length,
       };
     });
+  }
+
+  /**
+   * POST /admin/alumni-batches/reconcile-roles — a real, live data drift:
+   * a bulk historical seed created 800 alumni_members rows directly,
+   * without going through graduateBatch()'s role-flip step, so those
+   * students' users.role_id never actually became 'alumni' (they still log
+   * in with student-role access despite being marked inactive alumni
+   * members). Idempotent — finds only the rows still out of sync each time
+   * it's run, so a second run safely does nothing.
+   */
+  async reconcileMemberRoles(performedByUserId: number) {
+    const alumniRole = await this.prisma.roles.upsert({
+      where: { name: 'alumni' },
+      update: {},
+      create: { name: 'alumni', description: 'Alumni' },
+    });
+
+    const outOfSync = await this.prisma.alumni_members.findMany({
+      where: {
+        students: { users: { role_id: { not: alumniRole.id } } },
+      },
+      select: { student_id: true, students: { select: { user_id: true } } },
+    });
+
+    if (outOfSync.length === 0) {
+      return { fixed: 0 };
+    }
+
+    const userIds = outOfSync.map((m) => m.students.user_id);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.users.updateMany({
+        where: { id: { in: userIds } },
+        data: { role_id: alumniRole.id },
+      });
+    });
+
+    await this.auditLog.record({
+      entityType: 'alumni_role_reconciliation',
+      entityId: performedByUserId,
+      action: 'alumni_roles_reconciled',
+      performedByUserId,
+      newValue: { fixed_count: outOfSync.length, student_ids: outOfSync.map((m) => m.student_id) },
+    });
+
+    this.logger.log(`Alumni role reconciliation: fixed ${outOfSync.length} account(s)`);
+
+    return { fixed: outOfSync.length };
+  }
+
+  /** GET /admin/alumni-batches/reconciliation-status — how many accounts are currently out of sync, for the admin banner. */
+  async getReconciliationStatus() {
+    const alumniRole = await this.prisma.roles.findUnique({
+      where: { name: 'alumni' },
+    });
+    if (!alumniRole) {
+      return { out_of_sync: 0 };
+    }
+    const outOfSync = await this.prisma.alumni_members.count({
+      where: { students: { users: { role_id: { not: alumniRole.id } } } },
+    });
+    return { out_of_sync: outOfSync };
   }
 }

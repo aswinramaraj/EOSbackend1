@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from 'src/prisma/prisma.module';
+import { AuditLogModule } from 'src/common/audit-log/audit-log.module';
 import { AlumniGraduationService } from './alumni-graduation.service';
 import { AdminAlumniBatchesService } from './admin-alumni-batches.service';
 import { AdminAlumniGroupsService } from './admin-alumni-groups.service';
@@ -11,7 +12,7 @@ import { AdminAlumniController } from './admin-alumni.controller';
 import { MeAlumniController } from './me-alumni.controller';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, AuditLogModule],
   controllers: [AdminAlumniController, MeAlumniController],
   providers: [
     AlumniGraduationService,

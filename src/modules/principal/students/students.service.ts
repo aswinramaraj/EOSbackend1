@@ -96,22 +96,25 @@ export class PrincipalStudentsService {
    * rather than forced open — same tradeoff this codebase already makes for
    * MeFeesService.computeFees()'s reuse-by-pattern, not by import).
    *
-   * This summary() endpoint doesn't compute mean CGPA or arrears itself —
-   * list() below does, via cgpaByStudent(), reusing the same
-   * grade_bands.is_pass/grade_point percentage rule IqacAcademicQualityService's
-   * Results/Grade-distribution pages already treat as authoritative
-   * (exam_pass_rules_settings.min_external_marks still can't be applied,
-   * for the same no-internal/external-split reason).
+   * Arrears aren't summarised here — list() computes those per-student, via
+   * cgpaByStudent(), reusing the same grade_bands.is_pass/grade_point
+   * percentage rule IqacAcademicQualityService's Results/Grade-distribution
+   * pages already treat as authoritative (exam_pass_rules_settings.
+   * min_external_marks still can't be applied, for the same
+   * no-internal/external-split reason). Mean CGPA below reuses that same
+   * formula too, via meanCgpa() — same relationship
+   * PrincipalDepartmentsService.meanCgpaForStudents() has to its own
+   * per-student CGPA query, just institution-wide instead of per-department.
    */
   async summary() {
-    const [todayStats, termStats, feeStats, placementStats] = await Promise.all(
-      [
+    const [todayStats, termStats, feeStats, placementStats, meanCgpa] =
+      await Promise.all([
         this.dashboard.summary(),
         this.dashboard.summaryForPeriod('term'),
         this.feesOutstanding(),
         this.placementCounts(),
-      ],
-    );
+        this.meanCgpa(),
+      ]);
 
     return {
       on_roll: todayStats.students.total_active,
@@ -122,6 +125,7 @@ export class PrincipalStudentsService {
       students_below_threshold: termStats.attendance.students_below_threshold,
       fees: feeStats,
       placement: placementStats,
+      mean_cgpa: meanCgpa,
     };
   }
 
@@ -554,5 +558,45 @@ export class PrincipalStudentsService {
       });
     }
     return result;
+  }
+
+  /**
+   * Institution-wide Mean CGPA for the students summary stat card — same
+   * credit-weighted grade_bands formula as cgpaByStudent(), just AVG'd
+   * across every active student instead of returned per-row.
+   */
+  private async meanCgpa(): Promise<number | null> {
+    const students = await this.prisma.students.findMany({
+      where: { status: 'active' },
+      select: { id: true },
+    });
+    if (students.length === 0) return null;
+    const studentIds = students.map((s) => s.id);
+
+    const rows = await this.prisma.$queryRaw<{ mean_cgpa: string | null }[]>(
+      Prisma.sql`
+        WITH subject_grades AS (
+          SELECT em.student_id, COALESCE(sub.credits, 1) AS credits, gb.grade_point
+          FROM exam_marks em
+          JOIN exam_subject_mapping esm ON esm.id = em.exam_subject_mapping_id
+          JOIN exams e ON e.id = esm.exam_id
+          JOIN subjects sub ON sub.id = esm.subject_id
+          ${GRADE_LOOKUP}
+          WHERE e.status = 'results_published' AND em.is_absent = false AND em.marks_obtained IS NOT NULL
+            AND em.student_id IN (${Prisma.join(studentIds)})
+        ),
+        student_cgpa AS (
+          SELECT student_id,
+            SUM(grade_point * credits) FILTER (WHERE grade_point IS NOT NULL)
+              / NULLIF(SUM(credits) FILTER (WHERE grade_point IS NOT NULL), 0) AS cgpa
+          FROM subject_grades
+          GROUP BY student_id
+        )
+        SELECT AVG(cgpa)::text AS mean_cgpa FROM student_cgpa
+      `,
+    );
+
+    const value = rows[0]?.mean_cgpa;
+    return value != null ? Math.round(Number(value) * 100) / 100 : null;
   }
 }

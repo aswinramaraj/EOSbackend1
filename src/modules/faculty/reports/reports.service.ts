@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { isAttendedStatus } from 'src/common/utils/attendance-percentage.util';
 
 const WEEKS_RETURNED = 8;
 
@@ -77,20 +78,21 @@ export class FacultyReportsService {
       select: { attendance_date: true, status: true },
     });
 
-    const byWeek = new Map<string, { present: number; total: number }>();
+    // present+on_duty counted as attended — see attendance-percentage.util.ts.
+    const byWeek = new Map<string, { attended: number; total: number }>();
     for (const r of records) {
       const weekStart = mondayOf(r.attendance_date);
-      const entry = byWeek.get(weekStart) ?? { present: 0, total: 0 };
+      const entry = byWeek.get(weekStart) ?? { attended: 0, total: 0 };
       entry.total += 1;
-      if (r.status === 'present') entry.present += 1;
+      if (isAttendedStatus(r.status)) entry.attended += 1;
       byWeek.set(weekStart, entry);
     }
 
     const sorted = [...byWeek.entries()].sort(([a], [b]) => a.localeCompare(b));
     const weeks = (hasRange ? sorted : sorted.slice(-WEEKS_RETURNED)).map(
-      ([week_start, { present, total }]) => ({
+      ([week_start, { attended, total }]) => ({
         week_start,
-        present_percent: Math.round((present / total) * 10000) / 100,
+        present_percent: Math.round((attended / total) * 10000) / 100,
         marked_count: total,
       }),
     );

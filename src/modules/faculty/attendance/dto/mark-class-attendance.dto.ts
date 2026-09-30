@@ -9,6 +9,8 @@ import {
   IsString,
   IsUrl,
   Matches,
+  Max,
+  Min,
   ValidateNested,
 } from 'class-validator';
 
@@ -55,6 +57,21 @@ export class MarkClassAttendanceDto {
 
   @IsDateString({}, { message: 'attendance_date must be a valid ISO date' })
   attendance_date: string;
+
+  /**
+   * Which occurrence of this subject on this day, e.g. a 2-period lab
+   * scheduled at period 3 and again at period 6 (see
+   * attendance_periods.query.md — Domain 06 checklist item A0). Defaults to
+   * 1, so ordinary once-a-day subjects never need to send this at all.
+   * Until that migration runs, the service silently ignores any value here
+   * beyond 1 (falls back to today's one-row-per-subject-per-day behavior)
+   * rather than erroring.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  period_number?: number;
 
   /**
    * The Cloudinary URL returned by POST …/attendance/recognize's response

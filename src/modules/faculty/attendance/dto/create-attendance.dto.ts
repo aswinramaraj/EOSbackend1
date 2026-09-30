@@ -6,6 +6,8 @@ import {
   IsIn,
   IsInt,
   IsOptional,
+  Max,
+  Min,
   ValidateNested,
 } from 'class-validator';
 
@@ -42,6 +44,14 @@ export class CreateAttendanceDto {
 
   @IsDateString({}, { message: 'date must be a valid ISO date' })
   date: string;
+
+  /** See MarkClassAttendanceDto's own doc comment — same optional,
+   * default-1, pre-migration-safe field (attendance_periods.query.md). */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  period_number?: number;
 
   @IsArray()
   @ArrayMinSize(1)

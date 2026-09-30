@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { ReportTable } from 'src/common/utils/report-export.util';
+import {
+  deriveStatus,
+  type ProposalRow,
+} from 'src/modules/procurement/service-requests/service-requests.service';
 
 /** Shared `{gte, lte}` builder — same shape used by every findAll() in this codebase. */
 function dateRangeWhere(
@@ -49,8 +53,8 @@ export class SecretaryReportsService {
       this.prisma.secretary_product_requests.count({
         where: { requested_by_user_id: userId, created_at: { gte: monthStart } },
       }),
-      this.prisma.secretary_service_requests.count({
-        where: { requested_by_user_id: userId, created_at: { gte: monthStart } },
+      this.prisma.service_order_proposals.count({
+        where: { service_indents: { requested_by_user_id: userId, created_at: { gte: monthStart } } },
       }),
       this.prisma.venue_bookings.count({
         where: { booked_by_user_id: userId, created_at: { gte: monthStart } },
@@ -61,8 +65,11 @@ export class SecretaryReportsService {
       this.prisma.secretary_product_requests.count({
         where: { requested_by_user_id: userId, status: 'pending' },
       }),
-      this.prisma.secretary_service_requests.count({
-        where: { requested_by_user_id: userId, status: 'pending' },
+      this.prisma.service_order_proposals.count({
+        where: {
+          status: { in: ['pending', 'hod_approved', 'principal_approved'] },
+          service_indents: { requested_by_user_id: userId },
+        },
       }),
       this.prisma.venue_bookings.count({
         where: { booked_by_user_id: userId, status: 'pending' },
@@ -132,45 +139,59 @@ export class SecretaryReportsService {
     };
   }
 
-  /** 2. PROPOSALS — Service Order Proposals (SOP) submitted by this secretary. */
+  /**
+   * 2. PROPOSALS — Service Order Proposals (SOP) submitted by this
+   * secretary. Reads `service_order_proposals`/`service_indents` — the real
+   * HoD→Finance module (retired the disconnected `secretary_service_requests`
+   * table 2026-09-26, see sop_legacy_migration.query.md). `status`, if
+   * given, is one of the derived labels this same module's own API returns
+   * (`pending_hod`/`pending_finance`/`approved`/`rejected_by_hod`/
+   * `rejected_by_finance`/`converted`), matched via the same deriveStatus()
+   * the live SOP screens use — not the raw DB enum, which has no
+   * HoD-vs-Finance distinction of its own.
+   */
   async serviceRequests(
     userId: number,
     from?: string,
     to?: string,
     status?: string,
   ): Promise<ReportTable> {
-    const requests = await this.prisma.secretary_service_requests.findMany({
+    const proposals = await this.prisma.service_order_proposals.findMany({
       where: {
-        requested_by_user_id: userId,
-        status: status as never,
-        created_at: dateRangeWhere(from, to),
+        service_indents: {
+          requested_by_user_id: userId,
+          created_at: dateRangeWhere(from, to),
+        },
       },
       include: {
-        secretary_service_request_items: { select: { service_name: true } },
+        service_indents: { select: { title: true, service_description: true, created_at: true } },
+        service_orders: true,
       },
-      orderBy: { created_at: 'desc' },
+      orderBy: { id: 'desc' },
     });
+
+    const rows = proposals
+      .map((p) => ({
+        id: p.id,
+        title: p.service_indents.title ?? p.service_indents.service_description,
+        description: p.service_indents.service_description,
+        status: deriveStatus(p as unknown as ProposalRow),
+        submitted: formatDate(p.service_indents.created_at),
+        reviewed: formatDate(p.finance_reviewed_at ?? p.hod_reviewed_at),
+      }))
+      .filter((r) => !status || r.status === status);
 
     return {
       title: 'Service Order Proposals (SOP) report',
       columns: [
         { header: 'ID', key: 'id', width: 8 },
         { header: 'Title', key: 'title', width: 30 },
-        { header: 'Services', key: 'services', width: 40 },
-        { header: 'Status', key: 'status', width: 12 },
+        { header: 'Description', key: 'description', width: 40 },
+        { header: 'Status', key: 'status', width: 16 },
         { header: 'Submitted', key: 'submitted', width: 14 },
         { header: 'Reviewed', key: 'reviewed', width: 14 },
       ],
-      rows: requests.map((r) => ({
-        id: r.id,
-        title: r.title,
-        services: r.secretary_service_request_items
-          .map((i) => i.service_name)
-          .join(', '),
-        status: r.status,
-        submitted: formatDate(r.created_at),
-        reviewed: formatDate(r.reviewed_at),
-      })),
+      rows,
     };
   }
 

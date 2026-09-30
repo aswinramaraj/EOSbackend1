@@ -8,6 +8,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { CreateMarkDto } from './dto/create-mark.dto';
 import { UpdateMarkDto } from './dto/update-mark.dto';
 import { ListExamMarksQueryDto } from './dto/list-exam-marks-query.dto';
@@ -16,7 +17,10 @@ import { ListExamMarksQueryDto } from './dto/list-exam-marks-query.dto';
 export class MarksService {
   private readonly logger = new Logger(MarksService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
 
   private assertValidMarks(
     marksObtained: number | undefined,
@@ -191,7 +195,11 @@ export class MarksService {
     return mark;
   }
 
-  async update(id: number, updateMarkDto: UpdateMarkDto) {
+  async update(
+    id: number,
+    updateMarkDto: UpdateMarkDto,
+    performedByUserId: number,
+  ) {
     const existing = await this.prisma.exam_marks.findUnique({ where: { id } });
 
     if (!existing) {
@@ -224,7 +232,7 @@ export class MarksService {
     this.assertValidMarks(marksObtained, maxMarks);
 
     try {
-      return await this.prisma.exam_marks.update({
+      const updated = await this.prisma.exam_marks.update({
         where: { id },
         data: {
           marks_obtained: updateMarkDto.marks_obtained,
@@ -232,6 +240,27 @@ export class MarksService {
           entered_by_faculty_id: updateMarkDto.entered_by_faculty_id,
         },
       });
+      await this.auditLog.record({
+        entityType: 'exam_marks',
+        entityId: id,
+        action: 'update',
+        performedByUserId,
+        oldValue: {
+          marks_obtained:
+            existing.marks_obtained !== null
+              ? Number(existing.marks_obtained)
+              : null,
+          max_marks: Number(existing.max_marks),
+        },
+        newValue: {
+          marks_obtained:
+            updated.marks_obtained !== null
+              ? Number(updated.marks_obtained)
+              : null,
+          max_marks: Number(updated.max_marks),
+        },
+      });
+      return updated;
     } catch (err: any) {
       if (err?.code === 'P2002') {
         throw new ConflictException({
