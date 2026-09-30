@@ -17,6 +17,8 @@ import { ListExamMarksQueryDto } from './dto/list-exam-marks-query.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
+import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
+import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ApiResponse, ROLES } from 'src/common';
 
 @Controller('exam-marks')
@@ -62,8 +64,12 @@ export class MarksController {
 
   @Patch(':id')
   @Roles(ROLES.FACULTY, ROLES.COE)
-  async update(@Param('id') id: string, @Body() updateMarkDto: UpdateMarkDto) {
-    const mark = await this.marksService.update(+id, updateMarkDto);
+  async update(
+    @Param('id') id: string,
+    @Body() updateMarkDto: UpdateMarkDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const mark = await this.marksService.update(+id, updateMarkDto, user.sub);
     return ApiResponse.ok(mark, 'Marks updated successfully.');
   }
 

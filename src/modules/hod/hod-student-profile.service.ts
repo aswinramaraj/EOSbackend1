@@ -221,11 +221,13 @@ export class HodStudentProfileService {
           }
         : null;
 
-      // Attendance % (cumulative, real attendance_records).
+      // Attendance % (cumulative, real attendance_records). status !=
+      // 'absent' counts present+on_duty as attended — see
+      // attendance-percentage.util.ts (applies to every pct query below too).
       const [attendanceRow] = await this.prisma.$queryRaw<
         { pct: string | null }[]
       >(Prisma.sql`
-        SELECT (COUNT(*) FILTER (WHERE status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
+        SELECT (COUNT(*) FILTER (WHERE status != 'absent')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
         FROM attendance_records WHERE student_id = ${studentId}
       `);
       const attendancePercent =
@@ -288,7 +290,7 @@ export class HodStudentProfileService {
         { month: string; pct: string | null }[]
       >(Prisma.sql`
         SELECT to_char(attendance_date, 'YYYY-MM') AS month,
-          (COUNT(*) FILTER (WHERE status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
+          (COUNT(*) FILTER (WHERE status != 'absent')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
         FROM attendance_records WHERE student_id = ${studentId}
         GROUP BY month ORDER BY month
       `);
@@ -349,7 +351,7 @@ export class HodStudentProfileService {
         ? await this.prisma.$queryRaw<
             { subject_id: number; pct: string | null }[]
           >(Prisma.sql`
-            SELECT subject_id, (COUNT(*) FILTER (WHERE status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
+            SELECT subject_id, (COUNT(*) FILTER (WHERE status != 'absent')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
             FROM attendance_records
             WHERE student_id = ${studentId} AND subject_id IN (${Prisma.join(subjectIds)})
             GROUP BY subject_id

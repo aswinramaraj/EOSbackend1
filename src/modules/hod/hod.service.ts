@@ -16,7 +16,7 @@ import { KeyedTtlCache } from 'src/common/utils/ttl-cache.util';
 const ATTENDANCE_THRESHOLD_PERCENT = 75;
 
 interface AttendanceTotalsRow {
-  present: bigint;
+  attended: bigint;
   on_roll: bigint;
 }
 interface CgpaRow {
@@ -169,19 +169,21 @@ export class HodService {
       // Sequential, not Promise.all — same Supabase pooler-capacity
       // reasoning as principal-departments.service.ts's own comment; this
       // dashboard isn't latency-critical enough to risk tipping the pool.
+      // status != 'absent' counts present+on_duty as attended — see
+      // attendance-percentage.util.ts.
       const [attendanceTotals] = await this.prisma.$queryRaw<
         AttendanceTotalsRow[]
       >(Prisma.sql`
-        SELECT COUNT(*) FILTER (WHERE ar.status = 'present')::bigint AS present, COUNT(*)::bigint AS on_roll
+        SELECT COUNT(*) FILTER (WHERE ar.status != 'absent')::bigint AS attended, COUNT(*)::bigint AS on_roll
         FROM attendance_records ar
         JOIN students st ON st.id = ar.student_id
         JOIN classes cl ON cl.id = st.class_id
         WHERE cl.department_id = ${departmentId} AND ${dateFilter}
       `);
-      const present = Number(attendanceTotals?.present ?? 0);
+      const attended = Number(attendanceTotals?.attended ?? 0);
       const onRoll = Number(attendanceTotals?.on_roll ?? 0);
       const attendancePercentage =
-        onRoll > 0 ? Math.round((present / onRoll) * 1000) / 10 : 0;
+        onRoll > 0 ? Math.round((attended / onRoll) * 1000) / 10 : 0;
 
       // Combined into one round trip — was two separate .count() calls.
       const [countsRow] = await this.prisma.$queryRaw<
@@ -198,6 +200,8 @@ export class HodService {
       // Class-level and student-level attendance % share the exact same
       // base join, just a different GROUP BY — combined into one round trip
       // via a shared CTE instead of scanning attendance_records twice.
+      // status != 'absent' counts present+on_duty as attended — see
+      // attendance-percentage.util.ts.
       const pctRows = await this.prisma.$queryRaw<
         { level: 'class' | 'student'; id: number; pct: string | null }[]
       >(Prisma.sql`
@@ -209,11 +213,11 @@ export class HodService {
           WHERE cl.department_id = ${departmentId} AND ${dateFilter}
         )
         SELECT 'class' AS level, class_id AS id,
-          (COUNT(*) FILTER (WHERE status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
+          (COUNT(*) FILTER (WHERE status != 'absent')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
         FROM base GROUP BY class_id
         UNION ALL
         SELECT 'student' AS level, student_id AS id,
-          (COUNT(*) FILTER (WHERE status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
+          (COUNT(*) FILTER (WHERE status != 'absent')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
         FROM base GROUP BY student_id
       `);
       const classesAboveThreshold = pctRows.filter(
@@ -526,7 +530,7 @@ export class HodService {
         scope,
         student_attendance: {
           percentage: attendancePercentage,
-          present,
+          present: attended,
           on_roll: onRoll,
           student_count: studentCount,
           class_count: classCount,

@@ -12,12 +12,18 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import { UpdateResultDto } from './dto/update-result.dto';
 import { ScheduleResultDto } from './dto/schedule-result.dto';
+import { GpaRecomputeService } from '../gpa/gpa-recompute.service';
+import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
 
 @Injectable()
 export class ResultsService {
   private readonly logger = new Logger(ResultsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly gpaRecompute: GpaRecomputeService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async publish(examId: number, publishedByUserId: number) {
     const exam = await this.prisma.exams.findUnique({ where: { id: examId } });
@@ -77,8 +83,11 @@ export class ResultsService {
       });
     }
 
+    let publication: Awaited<
+      ReturnType<typeof this.prisma.result_publications.create>
+    >;
     try {
-      return await this.prisma.result_publications.create({
+      publication = await this.prisma.result_publications.create({
         data: {
           exam_id: examId,
           publication_type: 'original',
@@ -92,6 +101,73 @@ export class ResultsService {
         errorCode: 'INTERNAL_ERROR',
       });
     }
+
+    // Everything below is a side effect of a publish that has already
+    // genuinely succeeded — never let a failure here roll back or hide
+    // that, only log and return the real result regardless.
+    try {
+      const affectedStudents = await this.prisma.exam_marks.findMany({
+        where: { exam_subject_mapping_id: { in: mappingIds } },
+        select: { student_id: true },
+        distinct: ['student_id'],
+      });
+
+      // The whole point of publishing is that it's supposed to make
+      // results count — recompute every affected student's stored
+      // SGPA/CGPA now, rather than leaving student_semester_gpa to
+      // silently go stale until some unrelated event happens to touch it
+      // (see docs/gpa_implementation_plan.md B.1: this is the fix for the
+      // exams.status/result_publications disconnect that made every
+      // publish() call before this one a no-op for SGPA/CGPA purposes).
+      for (const { student_id } of affectedStudents) {
+        try {
+          await this.gpaRecompute.recomputeForStudentFrom(
+            student_id,
+            exam.semester,
+          );
+        } catch (err) {
+          this.logger.error(
+            `Failed to recompute student_semester_gpa for student ${student_id} after publishing exam ${examId}`,
+            err,
+          );
+        }
+      }
+
+      await this.notifyResultsPublished(
+        examId,
+        affectedStudents.map((s) => s.student_id),
+      );
+    } catch (err) {
+      this.logger.error(
+        `Post-publish side effects failed for exam ${examId} (publish itself already succeeded)`,
+        err,
+      );
+    }
+
+    return publication;
+  }
+
+  /** Best-effort — a notification failure never affects the (already-succeeded) publish itself. */
+  private async notifyResultsPublished(examId: number, studentIds: number[]) {
+    if (studentIds.length === 0) return;
+
+    const students = await this.prisma.students.findMany({
+      where: { id: { in: studentIds } },
+      select: { user_id: true },
+    });
+
+    await Promise.all(
+      students.map((s) =>
+        this.notifications.notify({
+          user_id: s.user_id,
+          title: 'Exam results published',
+          message: 'Your exam results are now available to view.',
+          type: 'exam_result_published',
+          related_entity_type: 'exam',
+          related_entity_id: examId,
+        }),
+      ),
+    );
   }
 
   /** Real department scope + candidate count for one exam — backs the Result Publication table's SCOPE column. Candidates come from exam_marks (works for every exam type) rather than exam_registrations, which only applies to University-registered exams and would read 0 for internal CIA cycles that still have real recorded marks. */

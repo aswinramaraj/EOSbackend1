@@ -219,6 +219,27 @@ export class MeController {
   }
 
   /**
+   * GET /api/v1/me/gpa
+   *
+   * Self-scoped: student_id resolved from the JWT. Returns this student's
+   * own stored per-semester SGPA/CGPA (student_semester_gpa) - the real,
+   * backend-computed values, not a client-side recomputation. Returns an
+   * empty array (not a 404) if nothing is stored yet for this student.
+   *
+   * Error responses:
+   *  401 UNAUTHORIZED       – missing/invalid JWT
+   *  403 FORBIDDEN          – authenticated but not a student
+   *  404 STUDENT_NOT_FOUND  – authenticated user has no linked student record
+   *  500 INTERNAL_ERROR     – unexpected server failure
+   */
+  @Get('gpa')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(ROLES.STUDENT, ROLES.ALUMNI)
+  getMyGpa(@CurrentUser() user: JwtPayload) {
+    return this.meExamResultsService.getMyGpa(user.sub);
+  }
+
+  /**
    * GET /api/v1/me/exam-results/:semester/marksheet
    *
    * Self-scoped: student_id resolved from the JWT. Renders the requested

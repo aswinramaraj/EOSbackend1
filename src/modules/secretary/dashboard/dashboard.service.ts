@@ -92,8 +92,11 @@ export class SecretaryDashboardService {
       this.prisma.secretary_product_requests.count({
         where: { requested_by_user_id: userId, status: 'pending' },
       }),
-      this.prisma.secretary_service_requests.count({
-        where: { requested_by_user_id: userId, status: 'pending' },
+      this.prisma.service_order_proposals.count({
+        where: {
+          status: { in: ['pending', 'hod_approved', 'principal_approved'] },
+          service_indents: { requested_by_user_id: userId },
+        },
       }),
       this.prisma.venue_bookings.count({
         where: { booked_by_user_id: userId, status: 'pending' },

@@ -13,7 +13,6 @@ import { NotificationsService } from 'src/modules/notifications/notifications/no
 import { CreateServiceRequestDto } from './dto/create-service-request.dto';
 import { ListServiceRequestsQueryDto } from './dto/list-service-requests-query.dto';
 import { HodReviewServiceRequestDto } from './dto/hod-review-service-request.dto';
-import { FinanceReviewServiceRequestDto } from './dto/finance-review-service-request.dto';
 
 /**
  * Self-service layer over the existing service_indents /
@@ -40,7 +39,7 @@ const PROPOSAL_INCLUDE = {
   service_orders: true,
 } as const;
 
-type ProposalRow = {
+export type ProposalRow = {
   id: number;
   vendor_id: number | null;
   status: string;
@@ -67,7 +66,8 @@ type ProposalRow = {
   service_orders: { so_number: string; created_at: Date } | null;
 };
 
-function deriveStatus(row: ProposalRow): string {
+/** Exported for reuse by SecretaryDashboardService/SecretaryReportsService/PrincipalDashboardService, which report on these same rows without owning this module's request/response cycle. */
+export function deriveStatus(row: ProposalRow): string {
   if (row.service_orders) return 'converted';
   if (row.status === 'rejected') {
     return row.finance_reviewed_by ? 'rejected_by_finance' : 'rejected_by_hod';
@@ -306,115 +306,6 @@ export class ServiceRequestsService {
   }
 
   /** PATCH /me/service-requests/:id/finance-review (Finance only, only while 'hod_approved'). */
-  async financeReview(id: number, dto: FinanceReviewServiceRequestDto, userId: number) {
-    const existing = await this.prisma.service_order_proposals.findUnique({
-      where: { id },
-      include: { service_indents: true },
-    });
-    if (!existing) {
-      throw new NotFoundException({
-        message: 'Service request not found',
-        errorCode: 'SERVICE_REQUEST_NOT_FOUND',
-      });
-    }
-    if (existing.status !== 'hod_approved') {
-      throw new UnprocessableEntityException({
-        message: 'This request is not awaiting Finance review',
-        errorCode: 'INVALID_WORKFLOW_STATE',
-      });
-    }
-
-    const nextStatus = dto.decision === 'approved' ? 'finance_approved' : 'rejected';
-    const [proposal] = await this.prisma.$transaction([
-      this.prisma.service_order_proposals.update({
-        where: { id },
-        data: {
-          status: nextStatus,
-          finance_reviewed_by: userId,
-          finance_reviewed_at: new Date(),
-          finance_remarks: dto.remarks,
-        },
-        include: PROPOSAL_INCLUDE,
-      }),
-      this.prisma.service_indents.update({
-        where: { id: existing.indent_id },
-        data: { status: nextStatus },
-      }),
-    ]);
-
-    this.logger.log(
-      `Service request ${id} ${dto.decision === 'approved' ? 'approved' : 'rejected'} by Finance user=${userId}`,
-    );
-
-    // Real push — Finance's decision is the final one for the requester
-    // either way (approved -> ready to convert to an order; rejected -> done).
-    await this.notifications.notify({
-      user_id: existing.service_indents.requested_by_user_id,
-      title: `Service request ${dto.decision}`,
-      message: `Your service request "${existing.service_indents.title ?? existing.service_indents.service_description}" was ${dto.decision} by Finance.`,
-      type: dto.decision === 'approved' ? 'approval_request_approved' : 'approval_request_rejected',
-      related_entity_type: 'service_indent',
-      related_entity_id: existing.service_indents.id,
-    });
-
-    return toResponse(proposal as unknown as ProposalRow);
-  }
-
-  /**
-   * PATCH /me/service-requests/:id/convert (Admin only, only while
-   * 'finance_approved'). so_number follows the same SO-{year}-{proposalId,
-   * 4 digits} convention already used by the existing seeded rows.
-   */
-  async convert(id: number, userId: number) {
-    const existing = await this.prisma.service_order_proposals.findUnique({
-      where: { id },
-      include: { service_orders: true },
-    });
-    if (!existing) {
-      throw new NotFoundException({
-        message: 'Service request not found',
-        errorCode: 'SERVICE_REQUEST_NOT_FOUND',
-      });
-    }
-    if (existing.service_orders) {
-      throw new UnprocessableEntityException({
-        message: 'This request has already been converted',
-        errorCode: 'INVALID_WORKFLOW_STATE',
-      });
-    }
-    if (existing.status !== 'finance_approved') {
-      throw new UnprocessableEntityException({
-        message: 'Only a Finance-approved request can be converted',
-        errorCode: 'INVALID_WORKFLOW_STATE',
-      });
-    }
-
-    const year = new Date().getFullYear();
-    const soNumber = `SO-${year}-${String(id).padStart(4, '0')}`;
-
-    const [, , proposal] = await this.prisma.$transaction([
-      this.prisma.service_orders.create({
-        data: {
-          proposal_id: id,
-          so_number: soNumber,
-          approved_by_user_id: userId,
-          approved_at: new Date(),
-        },
-      }),
-      this.prisma.service_indents.update({
-        where: { id: existing.indent_id },
-        data: { status: 'order_created' },
-      }),
-      this.prisma.service_order_proposals.findUnique({
-        where: { id },
-        include: PROPOSAL_INCLUDE,
-      }),
-    ]);
-
-    this.logger.log(`Service request ${id} converted to ${soNumber} by admin user=${userId}`);
-    return toResponse(proposal as unknown as ProposalRow);
-  }
-
   private async resolveFacultyByUserId(userId: number) {
     const faculty = await this.prisma.faculty.findUnique({
       where: { user_id: userId },

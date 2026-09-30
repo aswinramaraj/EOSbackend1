@@ -6,13 +6,16 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
+import { GpaRecomputeService } from '../gpa/gpa-recompute.service';
 import { RevaluationService } from './revaluation.service';
 
 describe('RevaluationService', () => {
   let service: RevaluationService;
   let notifications: { notify: jest.Mock };
+  let gpaRecompute: { recomputeForStudentFrom: jest.Mock };
   let prisma: {
-    exam_marks: { findUnique: jest.Mock };
+    exam_marks: { findUnique: jest.Mock; update: jest.Mock };
     students: { findUnique: jest.Mock };
     revaluation_requests: {
       findFirst: jest.Mock;
@@ -27,7 +30,7 @@ describe('RevaluationService', () => {
 
   beforeEach(async () => {
     prisma = {
-      exam_marks: { findUnique: jest.fn() },
+      exam_marks: { findUnique: jest.fn(), update: jest.fn() },
       students: { findUnique: jest.fn() },
       revaluation_requests: {
         findFirst: jest.fn(),
@@ -40,12 +43,15 @@ describe('RevaluationService', () => {
       $executeRaw: jest.fn().mockResolvedValue(1),
     };
     notifications = { notify: jest.fn() };
+    gpaRecompute = { recomputeForStudentFrom: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RevaluationService,
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: notifications },
+        { provide: AuditLogService, useValue: { record: jest.fn() } },
+        { provide: GpaRecomputeService, useValue: gpaRecompute },
       ],
     }).compile();
 
@@ -119,7 +125,7 @@ describe('RevaluationService', () => {
       });
       prisma.students.findUnique.mockResolvedValue({ user_id: 5001 });
 
-      await service.update(77, { status: 'revised', revised_marks: 85 } as any);
+      await service.update(77, { status: 'revised', revised_marks: 85 } as any, 42);
 
       expect(notifications.notify).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -129,6 +135,65 @@ describe('RevaluationService', () => {
           related_entity_id: 77,
         }),
       );
+    });
+
+    it("recomputes the student's stored SGPA/CGPA when a revaluation is approved with a revised mark", async () => {
+      prisma.revaluation_requests.findUnique.mockResolvedValue({
+        id: 77,
+        status: 'revised',
+        student_id: 5,
+        exam_marks_id: 1,
+        revised_marks: 85,
+        exam_marks: {
+          id: 1,
+          student_id: 5,
+          marks_obtained: 60,
+          max_marks: 100,
+          exam_subject_mapping: { exams: { semester: 3 } },
+        },
+      });
+      prisma.revaluation_requests.update.mockResolvedValue({
+        id: 77,
+        status: 'approved',
+        revised_marks: 85,
+      });
+      prisma.students.findUnique.mockResolvedValue({ user_id: 5001 });
+
+      await service.update(77, { status: 'approved' } as any, 42);
+
+      expect(prisma.exam_marks.update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: { marks_obtained: 85, is_moderated: true },
+      });
+      expect(gpaRecompute.recomputeForStudentFrom).toHaveBeenCalledWith(5, 3);
+    });
+
+    it('does not fail the approval if recomputing SGPA/CGPA throws', async () => {
+      prisma.revaluation_requests.findUnique.mockResolvedValue({
+        id: 77,
+        status: 'revised',
+        student_id: 5,
+        exam_marks_id: 1,
+        revised_marks: 85,
+        exam_marks: {
+          id: 1,
+          student_id: 5,
+          marks_obtained: 60,
+          max_marks: 100,
+          exam_subject_mapping: { exams: { semester: 3 } },
+        },
+      });
+      prisma.revaluation_requests.update.mockResolvedValue({
+        id: 77,
+        status: 'approved',
+        revised_marks: 85,
+      });
+      prisma.students.findUnique.mockResolvedValue({ user_id: 5001 });
+      gpaRecompute.recomputeForStudentFrom.mockRejectedValueOnce(new Error('boom'));
+
+      const result = await service.update(77, { status: 'approved' } as any, 42);
+
+      expect(result).toMatchObject({ id: 77, status: 'approved' });
     });
 
     it("notifies the requesting student when resolved as 'no_change'", async () => {
@@ -144,7 +209,7 @@ describe('RevaluationService', () => {
       });
       prisma.students.findUnique.mockResolvedValue({ user_id: 5001 });
 
-      await service.update(77, { status: 'no_change' } as any);
+      await service.update(77, { status: 'no_change' } as any, 42);
 
       expect(notifications.notify).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -163,7 +228,7 @@ describe('RevaluationService', () => {
       });
 
       await expect(
-        service.update(77, { status: 'no_change' } as any),
+        service.update(77, { status: 'no_change' } as any, 42),
       ).rejects.toMatchObject({
         response: { errorCode: 'REVALUATION_ALREADY_PROCESSED' },
       });
@@ -186,7 +251,7 @@ describe('RevaluationService', () => {
       await service.update(77, {
         status: 'rejected',
         decision_remarks: 'Insufficient grounds',
-      } as any);
+      } as any, 42);
 
       expect(prisma.$executeRaw).toHaveBeenCalled();
     });
@@ -215,7 +280,7 @@ describe('RevaluationService', () => {
         service.update(77, {
           status: 'rejected',
           decision_remarks: 'Insufficient grounds',
-        } as any),
+        } as any, 42),
       ).resolves.toMatchObject({ id: 77, status: 'rejected' });
     });
 
@@ -228,7 +293,7 @@ describe('RevaluationService', () => {
       });
       prisma.revaluation_requests.update.mockResolvedValue({ id: 77 });
 
-      await service.update(77, {});
+      await service.update(77, {}, 42);
 
       expect(notifications.notify).not.toHaveBeenCalled();
     });

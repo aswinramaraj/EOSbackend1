@@ -338,9 +338,21 @@ export class FinanceApprovalsService {
       });
     }
 
-    // Finance acts once. Re-deciding a proposal that has already moved past
-    // Finance would either double-spend or silently contradict the record.
-    if (proposal.status !== 'pending') {
+    // HoD reviews first, Finance second — matching this method's own
+    // documented intent above ("pending is the actionable set: HoD has
+    // forwarded it") and how the read side (PurchaseRequestsService/
+    // ServiceRequestsService's deriveStatus()) already treats hod_approved
+    // as "ready for Finance". Before this fix, both this method and
+    // HodReview's own status==='pending' guard raced to claim a fresh
+    // request — whichever staff member acted first silently locked the
+    // other out, with no HoD stage at all if Finance won the race.
+    if (proposal.status === 'pending') {
+      throw new ConflictException({
+        message: 'This proposal has not been reviewed by the HoD yet',
+        errorCode: 'FINANCE_AWAITING_HOD',
+      });
+    }
+    if (proposal.status !== 'hod_approved') {
       throw new ConflictException({
         message: `This proposal has already been ${proposal.status.replace(/_/g, ' ')} and cannot be decided again`,
         errorCode: 'FINANCE_PROPOSAL_ALREADY_DECIDED',
@@ -400,13 +412,13 @@ export class FinanceApprovalsService {
       // matches zero rows and conflicts instead of debiting twice.
       return await withDbRetry(
         () => this.prisma.$transaction(async (tx) => {
-        // Concurrency guard: flip the status only if it is still `pending`.
-        // This is the thing that makes double-approval impossible — the row
-        // lock serialises two simultaneous approvals, and the loser matches
-        // zero rows instead of debiting the fund a second time. It replaces
-        // the old "one debit per proposal" unique index, which also blocked
-        // the legitimate case of re-approving a proposal whose earlier
-        // commitment had been released.
+        // Concurrency guard: flip the status only if it is still
+        // `hod_approved`. This is the thing that makes double-approval
+        // impossible — the row lock serialises two simultaneous approvals,
+        // and the loser matches zero rows instead of debiting the fund a
+        // second time. It replaces the old "one debit per proposal" unique
+        // index, which also blocked the legitimate case of re-approving a
+        // proposal whose earlier commitment had been released.
         const stampData = {
           status: 'finance_approved' as const,
           finance_reviewed_by: actorUserId,
@@ -417,11 +429,11 @@ export class FinanceApprovalsService {
         const claimed =
           kind === 'pop'
             ? await tx.purchase_order_proposals.updateMany({
-                where: { id, status: 'pending' },
+                where: { id, status: 'hod_approved' },
                 data: stampData,
               })
             : await tx.service_order_proposals.updateMany({
-                where: { id, status: 'pending' },
+                where: { id, status: 'hod_approved' },
                 data: stampData,
               });
 
@@ -574,7 +586,7 @@ export class FinanceApprovalsService {
           action: `${kind}.approved`,
           entityType: kind === 'pop' ? 'purchase_order_proposal' : 'service_order_proposal',
           entityId: id,
-          before: { status: 'pending' },
+          before: { status: 'hod_approved' },
           after: {
             status: 'finance_approved',
             amount: dto.amount,
@@ -626,7 +638,7 @@ export class FinanceApprovalsService {
       action: `${kind}.rejected`,
       entityType: kind === 'pop' ? 'purchase_order_proposal' : 'service_order_proposal',
       entityId: id,
-      before: { status: 'pending' },
+      before: { status: 'hod_approved' },
       after: { status: 'rejected', remarks: dto.remarks },
       ipAddress: ctx.ip,
       userAgent: ctx.userAgent,

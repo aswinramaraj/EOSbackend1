@@ -61,6 +61,9 @@ test\methods
 
 # Prisma generated client
 /generated/prisma
+
+# Project documentation - local only, never committed
+/docs/
 TWILIO_VERIFY_INTEGRATION.md
 FACULTY_MODULE_UPDATE.MD
 query.md

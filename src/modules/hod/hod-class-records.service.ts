@@ -134,12 +134,16 @@ export class HodClassRecordsService {
         counts.map((c) => [c.class_id, c._count._all]),
       );
 
+      // status != 'absent' counts present+on_duty as attended — see
+      // attendance-percentage.util.ts's doc comment (on_duty is an official
+      // absence, must count the same as present, matching
+      // AttendanceEligibilityService's real exam-eligibility gate).
       const attendanceRows = classIds.length
         ? await this.prisma.$queryRaw<
             { class_id: number; pct: string | null }[]
           >(Prisma.sql`
             SELECT class_id,
-              (COUNT(*) FILTER (WHERE status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
+              (COUNT(*) FILTER (WHERE status != 'absent')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
             FROM attendance_records
             WHERE class_id IN (${Prisma.join(classIds)})
             GROUP BY class_id
@@ -276,11 +280,13 @@ export class HodClassRecordsService {
       }
 
       // Attendance % per student — cumulative, all real attendance_records.
+      // status != 'absent' counts present+on_duty as attended — see
+      // attendance-percentage.util.ts.
       const attendanceRows = await this.prisma.$queryRaw<
         { student_id: number; pct: string | null }[]
       >(Prisma.sql`
         SELECT student_id,
-          (COUNT(*) FILTER (WHERE status = 'present')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
+          (COUNT(*) FILTER (WHERE status != 'absent')::numeric / NULLIF(COUNT(*), 0) * 100)::text AS pct
         FROM attendance_records
         WHERE student_id IN (${Prisma.join(studentIds)})
         GROUP BY student_id

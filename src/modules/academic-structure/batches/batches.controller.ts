@@ -17,11 +17,15 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
+import { ClassesService } from '../classes/classes.service';
 
 @Controller('batches')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class BatchesController {
-  constructor(private readonly batchesService: BatchesService) {}
+  constructor(
+    private readonly batchesService: BatchesService,
+    private readonly classesService: ClassesService,
+  ) {}
 
   @Post()
   @Roles(ROLES.ADMIN)
@@ -56,5 +60,12 @@ export class BatchesController {
   @Roles(ROLES.ADMIN)
   remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.batchesService.remove(+id, user.sub);
+  }
+
+  /** POST /batches/:id/promote — Admin only. Bulk-advances every class under this batch to its next semester. */
+  @Post(':id/promote')
+  @Roles(ROLES.ADMIN)
+  promote(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.classesService.promoteBatch(+id, user.sub);
   }
 }

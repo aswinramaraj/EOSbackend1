@@ -13,7 +13,6 @@ import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { CreatePurchaseRequestDto } from './dto/create-purchase-request.dto';
 import { ListPurchaseRequestsQueryDto } from './dto/list-purchase-requests-query.dto';
 import { HodReviewPurchaseRequestDto } from './dto/hod-review-purchase-request.dto';
-import { FinanceReviewPurchaseRequestDto } from './dto/finance-review-purchase-request.dto';
 
 /**
  * Self-service layer over the existing purchase_indents /
@@ -335,110 +334,6 @@ export class PurchaseRequestsService {
    * PATCH /me/purchase-requests/:id/finance-review (Finance only, only
    * while the proposal is 'hod_approved').
    */
-  async financeReview(
-    id: number,
-    dto: FinanceReviewPurchaseRequestDto,
-    userId: number,
-  ) {
-    const existing = await this.prisma.purchase_order_proposals.findUnique({
-      where: { id },
-    });
-    if (!existing) {
-      throw new NotFoundException({
-        message: 'Purchase request not found',
-        errorCode: 'PURCHASE_REQUEST_NOT_FOUND',
-      });
-    }
-    if (existing.status !== 'hod_approved') {
-      throw new UnprocessableEntityException({
-        message: 'This request is not awaiting Finance review',
-        errorCode: 'INVALID_WORKFLOW_STATE',
-      });
-    }
-
-    const nextStatus =
-      dto.decision === 'approved' ? 'finance_approved' : 'rejected';
-    const [proposal] = await this.prisma.$transaction([
-      this.prisma.purchase_order_proposals.update({
-        where: { id },
-        data: {
-          status: nextStatus,
-          finance_reviewed_by: userId,
-          finance_reviewed_at: new Date(),
-          finance_remarks: dto.remarks,
-        },
-        include: PROPOSAL_INCLUDE,
-      }),
-      this.prisma.purchase_indents.update({
-        where: { id: existing.indent_id },
-        data: { status: nextStatus },
-      }),
-    ]);
-
-    this.logger.log(
-      `Purchase request ${id} ${dto.decision === 'approved' ? 'approved' : 'rejected'} by Finance user=${userId}`,
-    );
-    return toResponse(proposal);
-  }
-
-  /**
-   * PATCH /me/purchase-requests/:id/convert (Admin only, only while the
-   * proposal is 'finance_approved'). Creates the actual purchase_orders
-   * record - po_number follows the same PO-{year}-{proposalId, 4 digits}
-   * convention already used by the existing seeded rows.
-   */
-  async convert(id: number, userId: number) {
-    const existing = await this.prisma.purchase_order_proposals.findUnique({
-      where: { id },
-      include: { purchase_orders: true },
-    });
-    if (!existing) {
-      throw new NotFoundException({
-        message: 'Purchase request not found',
-        errorCode: 'PURCHASE_REQUEST_NOT_FOUND',
-      });
-    }
-    if (existing.purchase_orders) {
-      throw new UnprocessableEntityException({
-        message: 'This request has already been converted',
-        errorCode: 'INVALID_WORKFLOW_STATE',
-      });
-    }
-    if (existing.status !== 'finance_approved') {
-      throw new UnprocessableEntityException({
-        message: 'Only a Finance-approved request can be converted',
-        errorCode: 'INVALID_WORKFLOW_STATE',
-      });
-    }
-
-    const year = new Date().getFullYear();
-    const poNumber = `PO-${year}-${String(id).padStart(4, '0')}`;
-
-    const [, , proposal] = await this.prisma.$transaction([
-      this.prisma.purchase_orders.create({
-        data: {
-          proposal_id: id,
-          po_number: poNumber,
-          approved_by_user_id: userId,
-          approved_at: new Date(),
-        },
-      }),
-      this.prisma.purchase_indents.update({
-        where: { id: existing.indent_id },
-        data: { status: 'order_created' },
-      }),
-      this.prisma.purchase_order_proposals.findUnique({
-        where: { id },
-        include: PROPOSAL_INCLUDE,
-      }),
-    ]);
-
-    this.logger.log(
-      `Purchase request ${id} converted to ${poNumber} by admin user=${userId}`,
-    );
-    return toResponse(proposal as unknown as ProposalRow);
-  }
-
   private async resolveFacultyByUserId(userId: number) {
     const faculty = await this.prisma.faculty.findUnique({
       where: { user_id: userId },

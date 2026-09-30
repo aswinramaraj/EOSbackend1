@@ -49,8 +49,8 @@ describe('RevaluationController', () => {
     await controller.findOne('1');
     expect(revaluationService.findOne).toHaveBeenCalledWith(1);
 
-    await controller.update('1', { status: 'revised' } as any);
-    expect(revaluationService.update).toHaveBeenCalledWith(1, { status: 'revised' });
+    await controller.update('1', { status: 'revised' } as any, user);
+    expect(revaluationService.update).toHaveBeenCalledWith(1, { status: 'revised' }, 9);
 
     await controller.remove('1');
     expect(revaluationService.remove).toHaveBeenCalledWith(1);

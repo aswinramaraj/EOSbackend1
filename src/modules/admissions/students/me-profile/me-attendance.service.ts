@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { GetAttendanceDto } from './dto/get-attendance.dto';
+import { isAttendedStatus } from 'src/common/utils/attendance-percentage.util';
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
@@ -96,10 +97,16 @@ export class MeAttendanceService {
     const total_days = records.length;
     const present = records.filter((r) => r.status === 'present').length;
     const absent = records.filter((r) => r.status === 'absent').length;
+    const on_duty = records.filter((r) => r.status === 'on_duty').length;
+    // percentage counts present+on_duty as attended (isAttendedStatus) —
+    // on_duty is an official absence, not a personal one, and must not drag
+    // a student's own displayed % below their real hall-ticket eligibility
+    // (AttendanceEligibilityService), which already gets this right.
+    const attended = records.filter((r) => isAttendedStatus(r.status)).length;
 
     const bySubject = new Map<
       number,
-      { subject_name: string; subject_code: string | null; total: number; present: number }
+      { subject_name: string; subject_code: string | null; total: number; present: number; on_duty: number }
     >();
     for (const record of records) {
       if (record.subject_id === null) continue;
@@ -108,9 +115,11 @@ export class MeAttendanceService {
         subject_code: record.subjects?.subject_code ?? null,
         total: 0,
         present: 0,
+        on_duty: 0,
       };
       entry.total += 1;
       if (record.status === 'present') entry.present += 1;
+      if (record.status === 'on_duty') entry.on_duty += 1;
       bySubject.set(record.subject_id, entry);
     }
 
@@ -119,7 +128,8 @@ export class MeAttendanceService {
         total_days,
         present,
         absent,
-        percentage: total_days > 0 ? round2((present / total_days) * 100) : 0,
+        on_duty,
+        percentage: total_days > 0 ? round2((attended / total_days) * 100) : 0,
       },
       by_subject: Array.from(bySubject.entries()).map(
         ([subject_id, entry]) => ({
@@ -128,7 +138,8 @@ export class MeAttendanceService {
           subject_code: entry.subject_code,
           total: entry.total,
           present: entry.present,
-          percentage: round2((entry.present / entry.total) * 100),
+          on_duty: entry.on_duty,
+          percentage: round2(((entry.present + entry.on_duty) / entry.total) * 100),
         }),
       ),
       records: records.map((record) => ({

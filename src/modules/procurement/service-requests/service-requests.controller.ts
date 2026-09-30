@@ -21,26 +21,30 @@ import { ServiceRequestsService } from './service-requests.service';
 import { CreateServiceRequestDto } from './dto/create-service-request.dto';
 import { ListServiceRequestsQueryDto } from './dto/list-service-requests-query.dto';
 import { HodReviewServiceRequestDto } from './dto/hod-review-service-request.dto';
-import { FinanceReviewServiceRequestDto } from './dto/finance-review-service-request.dto';
 
 /**
  * Mirrors PurchaseRequestsController exactly - see its own doc comment.
  *
- * Moved off 'me/service-requests' (2026-08-21): that path collided with
- * secretary/service-requests/service-requests.controller.ts, which imports
- * later in app.module.ts and was being silently shadowed by this controller
- * for every caller, even though the simpler Secretary/HoD/Finance/Admin
- * shape — a fully real, separate feature over its own
- * `secretary_service_requests`/`secretary_service_request_items` tables
- * (multi-item, single-decision, draft-first) — is the one the frontend
- * actually expects at that path, not this module's single-item
- * HoD->Finance->Admin-convert pipeline over `service_indents`. Renamed
- * rather than merged, since these are two genuinely distinct features that
- * happened to share a literal path; no frontend page calls this route
- * directly (grepped the whole frontend repo), so the rename is safe. Named
- * `procurement-service-requests` rather than `service-indent-requests` to
- * avoid reading as a near-duplicate of the separate, already-registered
- * `@Controller('service-indents')` route in this same procurement domain.
+ * Moved off 'me/service-requests' (2026-08-21) because that path collided
+ * with secretary/service-requests/service-requests.controller.ts. That
+ * prior fix's own doc comment claimed the two were "genuinely distinct
+ * features" and kept both — but the secretary-owned module was actually a
+ * single Secretary->Admin decision with no HoD or Finance stage at all
+ * (confirmed 2026-09-26 by reading its real code and live-testing all three
+ * logins), not the "Secretary/HoD/Finance/Admin shape" the comment
+ * described. This module — real HoD-then-Finance review over
+ * `service_indents`/`service_order_proposals`, the same tables Finance's
+ * fund-integrated approval queue (FinanceApprovalsService) uses — is the
+ * one real SOP workflow; the secretary-owned module has been retired (see
+ * its own former directory's removal). Named `procurement-service-requests`
+ * rather than `service-indent-requests` to avoid reading as a near-duplicate
+ * of the separate, already-registered `@Controller('service-indents')`
+ * route in this same procurement domain.
+ *
+ * finance-review and convert were removed as dead code (2026-09-26,
+ * unreachable from any frontend page) — Finance's real decision now goes
+ * through FinanceApprovalsService.decide(), which also places the order,
+ * making this module's own weaker duplicate of that logic redundant.
  */
 @Controller('me/procurement-service-requests')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -85,24 +89,5 @@ export class ServiceRequestsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.serviceRequestsService.hodReview(id, dto, user);
-  }
-
-  @Patch(':id/finance-review')
-  @Roles(ROLES.FINANCE)
-  financeReview(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: FinanceReviewServiceRequestDto,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.serviceRequestsService.financeReview(id, dto, user.sub);
-  }
-
-  @Patch(':id/convert')
-  @Roles(ROLES.ADMIN)
-  convert(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.serviceRequestsService.convert(id, user.sub);
   }
 }

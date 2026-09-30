@@ -69,10 +69,12 @@ export class RevaluationController {
   async update(
     @Param('id') id: string,
     @Body() updateRevaluationDto: UpdateRevaluationDto,
+    @CurrentUser() user: JwtPayload,
   ) {
     const request = await this.revaluationService.update(
       +id,
       updateRevaluationDto,
+      user.sub,
     );
     return ApiResponse.ok(request, 'Revaluation request updated successfully.');
   }

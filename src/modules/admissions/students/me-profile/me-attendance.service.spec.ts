@@ -108,22 +108,58 @@ describe('MeAttendanceService', () => {
       total_days: 3,
       present: 1,
       absent: 2,
+      on_duty: 0,
       percentage: 33.33,
     });
     expect(result.by_subject).toEqual([
       {
         subject_id: 14,
         subject_name: 'Data Structures',
+        subject_code: null,
         total: 2,
         present: 1,
+        on_duty: 0,
         percentage: 50,
       },
     ]);
     expect(result.records).toEqual([
-      { attendance_date: '2026-07-20', subject_id: 14, status: 'present' },
-      { attendance_date: '2026-07-21', subject_id: 14, status: 'absent' },
-      { attendance_date: '2026-07-22', subject_id: null, status: 'absent' },
+      { attendance_date: '2026-07-20', subject_id: 14, subject_code: null, status: 'present' },
+      { attendance_date: '2026-07-21', subject_id: 14, subject_code: null, status: 'absent' },
+      { attendance_date: '2026-07-22', subject_id: null, subject_code: null, status: 'absent' },
     ]);
+  });
+
+  it('counts on_duty as attended, not as a drag on the percentage (real gap this closes — on_duty is an official absence, must match AttendanceEligibilityService)', async () => {
+    prisma.students.findUnique.mockResolvedValue({ id: 42 });
+    prisma.attendance_records.findMany.mockResolvedValue([
+      {
+        attendance_date: new Date('2026-07-20T00:00:00.000Z'),
+        subject_id: 14,
+        status: 'present',
+        subjects: { name: 'Data Structures' },
+      },
+      {
+        attendance_date: new Date('2026-07-21T00:00:00.000Z'),
+        subject_id: 14,
+        status: 'on_duty',
+        subjects: { name: 'Data Structures' },
+      },
+      {
+        attendance_date: new Date('2026-07-22T00:00:00.000Z'),
+        subject_id: 14,
+        status: 'absent',
+        subjects: { name: 'Data Structures' },
+      },
+    ]);
+
+    const result = await service.getMyAttendance(1, {
+      from: '2026-07-01',
+      to: '2026-07-31',
+    });
+
+    // 2 of 3 days attended (present + on_duty) — NOT 1 of 3 (present only).
+    expect(result.overall).toMatchObject({ present: 1, on_duty: 1, absent: 1, percentage: 66.67 });
+    expect(result.by_subject[0]).toMatchObject({ present: 1, on_duty: 1, percentage: 66.67 });
   });
 
   it('returns zeroed overall (not NaN) for an empty result set', async () => {
@@ -139,6 +175,7 @@ describe('MeAttendanceService', () => {
       total_days: 0,
       present: 0,
       absent: 0,
+      on_duty: 0,
       percentage: 0,
     });
     expect(result.by_subject).toEqual([]);

@@ -312,10 +312,13 @@ export class PrincipalDashboardService {
    * in use right now" figure can't be computed (would always read 0). Shows
    * a real room count instead, same tier of honesty as the Facilities →
    * Classrooms/Laboratories pages, until that backfill happens. "Maintenance"
-   * is relabelled "Service requests": secretary_service_requests has no
-   * category field, so it covers any Secretary-handled request, not
-   * specifically facility maintenance — labelling it "Maintenance" would
-   * claim a category the data doesn't distinguish.
+   * is relabelled "Service requests": service_indents has no category field,
+   * so it covers any Secretary-raised request, not specifically facility
+   * maintenance — labelling it "Maintenance" would claim a category the data
+   * doesn't distinguish. Counts `service_order_proposals` still awaiting a
+   * decision (HoD or Finance) — the real HoD→Finance module, not the
+   * disconnected Admin-only `secretary_service_requests` table this used to
+   * read (retired 2026-09-26, see sop_legacy_migration.query.md).
    */
   private async campusInfrastructure() {
     const today = startOfToday();
@@ -347,8 +350,8 @@ export class PrincipalDashboardService {
       }),
       this.prisma.hostel_rooms.aggregate({ _sum: { capacity: true } }),
       this.prisma.student_hostel_mapping.count(),
-      this.prisma.secretary_service_requests.count({
-        where: { status: 'pending' },
+      this.prisma.service_order_proposals.count({
+        where: { status: { in: ['pending', 'hod_approved', 'principal_approved'] } },
       }),
     ]);
 

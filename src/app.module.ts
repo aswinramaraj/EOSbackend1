@@ -17,6 +17,7 @@ import { SubjectsModule } from './modules/academic-structure/subjects/subjects.m
 
 import { BonafideRequestsModule } from './modules/admin/bonafide-requests/bonafide-requests.module';
 import { StaffAccountsModule } from './modules/admin/staff-accounts/staff-accounts.module';
+import { ParentAccountsModule } from './modules/admin/parent-accounts/parent-accounts.module';
 import { BonafideReasonsModule } from './modules/admissions/bonafide-reasons/bonafide-reasons.module';
 import { CertificatesModule } from './modules/admissions/certificates/certificates.module';
 import { OdModule } from './modules/admissions/od/od.module';
@@ -206,7 +207,6 @@ import { StudentTodosModule } from './modules/student-todos/student-todos.module
 import { OnlineClassModule } from './modules/online-class/online-class.module';
 
 import { VenuesModule } from './modules/venues/venues/venues.module';
-import { ServiceRequestsModule as SecretaryServiceRequestsModule } from './modules/secretary/service-requests/service-requests.module';
 import { ProductRequestsModule } from './modules/secretary/product-requests/product-requests.module';
 import { SecretaryDashboardModule } from './modules/secretary/dashboard/dashboard.module';
 import { SecretaryReportsModule } from './modules/secretary/reports/reports.module';
@@ -242,6 +242,7 @@ import { AcademicCoordinatorCourseProgressModule } from './modules/academic-coor
 import { AcademicCoordinatorResultsModule } from './modules/academic-coordinator/results/academic-coordinator-results.module';
 import { AcademicCoordinatorAuditModule } from './modules/academic-coordinator/audit/academic-coordinator-audit.module';
 import { AcademicCoordinatorMappingModule } from './modules/academic-coordinator/mapping/academic-coordinator-mapping.module';
+import { MasterDataApprovalModule } from './common/approval-requests/master-data-approval.module';
 import { HallTicketClearanceModule } from './modules/hall-ticket-clearance/hall-ticket-clearance.module';
 import { IqacReportsModule } from './modules/iqac/reports/iqac-reports.module';
 import { IqacStudentsModule } from './modules/iqac/students/iqac-students.module';
@@ -301,6 +302,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
 
     BonafideRequestsModule,
     StaffAccountsModule,
+    ParentAccountsModule,
     BonafideReasonsModule,
     CertificatesModule,
     OdModule,
@@ -483,7 +485,6 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     OnlineClassModule,
 
     VenuesModule,
-    SecretaryServiceRequestsModule,
     ProductRequestsModule,
     SecretaryDashboardModule,
     SecretaryReportsModule,
@@ -519,6 +520,7 @@ import { HrReportsModule } from './modules/hr/hr-reports/hr-reports.module';
     AcademicCoordinatorResultsModule,
     AcademicCoordinatorAuditModule,
     AcademicCoordinatorMappingModule,
+    MasterDataApprovalModule,
     HallTicketClearanceModule,
     IqacReportsModule,
     IqacStudentsModule,

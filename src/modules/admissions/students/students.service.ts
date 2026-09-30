@@ -14,6 +14,8 @@ import { StorageService } from 'src/common/storage/storage.service';
 import { STORAGE_BUCKETS } from 'src/common/constants/storage-buckets.constant';
 import { paginate } from 'src/common/dto/pagination.dto';
 import { buildMultiWordNameWhere } from 'src/common/utils/name-search.util';
+import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
+import { isAttendedStatus } from 'src/common/utils/attendance-percentage.util';
 import {
   hashPassword,
   generateTemporaryPassword,
@@ -218,24 +220,26 @@ export class StudentsService {
       _count: { _all: true },
     });
 
+    // present+on_duty counted as attended — see attendance-percentage.util.ts
+    // (a legitimately on-duty student must not show up as "at risk").
     const totalsByStudent = new Map<
       number,
-      { total: number; present: number }
+      { total: number; attended: number }
     >();
     for (const row of grouped) {
       const entry = totalsByStudent.get(row.student_id) ?? {
         total: 0,
-        present: 0,
+        attended: 0,
       };
       entry.total += row._count._all;
-      if (row.status === 'present') entry.present += row._count._all;
+      if (isAttendedStatus(row.status)) entry.attended += row._count._all;
       totalsByStudent.set(row.student_id, entry);
     }
 
     const ids = [...totalsByStudent.entries()]
       .filter(
-        ([, { total, present }]) =>
-          total > 0 && (present / total) * 100 < threshold,
+        ([, { total, attended }]) =>
+          total > 0 && (attended / total) * 100 < threshold,
       )
       .map(([studentId]) => studentId);
 
@@ -360,10 +364,16 @@ export class StudentsService {
     const total_days = records.length;
     const present = records.filter((r) => r.status === 'present').length;
     const absent = records.filter((r) => r.status === 'absent').length;
+    const on_duty = records.filter((r) => r.status === 'on_duty').length;
+    // percentage counts present+on_duty as attended — see
+    // attendance-percentage.util.ts's own doc comment for why (on_duty is
+    // an official absence, must count the same as present, matching
+    // AttendanceEligibilityService's real exam-eligibility gate).
+    const attended = records.filter((r) => isAttendedStatus(r.status)).length;
 
     const bySubject = new Map<
       number,
-      { subject_name: string; total: number; present: number }
+      { subject_name: string; total: number; present: number; on_duty: number }
     >();
     for (const record of records) {
       if (record.subject_id === null) continue;
@@ -371,9 +381,11 @@ export class StudentsService {
         subject_name: record.subjects?.name ?? '',
         total: 0,
         present: 0,
+        on_duty: 0,
       };
       entry.total += 1;
       if (record.status === 'present') entry.present += 1;
+      if (record.status === 'on_duty') entry.on_duty += 1;
       bySubject.set(record.subject_id, entry);
     }
 
@@ -382,7 +394,8 @@ export class StudentsService {
         total_days,
         present,
         absent,
-        percentage: total_days > 0 ? round2((present / total_days) * 100) : 0,
+        on_duty,
+        percentage: total_days > 0 ? round2((attended / total_days) * 100) : 0,
       },
       by_subject: Array.from(bySubject.entries()).map(
         ([subject_id, entry]) => ({
@@ -390,7 +403,8 @@ export class StudentsService {
           subject_name: entry.subject_name,
           total: entry.total,
           present: entry.present,
-          percentage: round2((entry.present / entry.total) * 100),
+          on_duty: entry.on_duty,
+          percentage: round2(((entry.present + entry.on_duty) / entry.total) * 100),
         }),
       ),
       records: records.map((record) => ({
@@ -491,6 +505,9 @@ export class StudentsService {
       const total = termRecords.length;
       const present = termRecords.filter((r) => r.status === 'present').length;
       const absent = termRecords.filter((r) => r.status === 'absent').length;
+      const on_duty = termRecords.filter((r) => r.status === 'on_duty').length;
+      // present+on_duty counted as attended — see attendance-percentage.util.ts.
+      const attended = termRecords.filter((r) => isAttendedStatus(r.status)).length;
 
       const dayMap = new Map<
         string,
@@ -574,7 +591,8 @@ export class StudentsService {
         ).size,
         present,
         absent,
-        percentage: total > 0 ? round2((present / total) * 100) : 0,
+        on_duty,
+        percentage: total > 0 ? round2((attended / total) * 100) : 0,
         periods,
         days,
         absences,
@@ -1649,6 +1667,36 @@ export class StudentsService {
     return { password: newPassword };
   }
 
+  /**
+   * classes.capacity (see section_capacity.query.md) is nullable and not in
+   * schema.prisma yet — read via raw SQL, degrading to "unlimited" (today's
+   * exact behavior) both when capacity is NULL and when the column doesn't
+   * exist yet pre-migration.
+   */
+  private async assertClassHasCapacity(classId: number) {
+    let capacity: number | null;
+    try {
+      const rows = await this.prisma.$queryRaw<
+        { capacity: number | null }[]
+      >`SELECT capacity FROM classes WHERE id = ${classId}`;
+      capacity = rows[0]?.capacity ?? null;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'capacity')) return;
+      throw err;
+    }
+    if (capacity === null) return;
+
+    const currentCount = await this.prisma.students.count({
+      where: { class_id: classId, status: 'active' },
+    });
+    if (currentCount >= capacity) {
+      throw new ConflictException({
+        message: `This section is full (${currentCount}/${capacity}) — pick another section or increase its capacity first.`,
+        errorCode: 'SECTION_FULL',
+      });
+    }
+  }
+
   async update(id: number, dto: AdminUpdateStudentDto) {
     if (!dto || Object.keys(dto).length === 0) {
       throw new BadRequestException({
@@ -1657,7 +1705,14 @@ export class StudentsService {
       });
     }
 
-    await this.findOne(id); // 404s consistently if missing
+    const existingStudent = await this.findOne(id); // 404s consistently if missing
+
+    if (
+      dto.class_id !== undefined &&
+      dto.class_id !== existingStudent.class?.id
+    ) {
+      await this.assertClassHasCapacity(dto.class_id);
+    }
 
     const fkFinders: Record<
       'course_id' | 'quota_id' | 'batch_id' | 'class_id',

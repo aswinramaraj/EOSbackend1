@@ -11,11 +11,13 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { ROLES } from 'src/common/constants/roles.constant';
 import { isUndefinedColumnError } from 'src/common/utils/pg-error.util';
 import { CreateRevaluationDto } from './dto/create-revaluation.dto';
 import { UpdateRevaluationDto } from './dto/update-revaluation.dto';
+import { GpaRecomputeService } from '../gpa/gpa-recompute.service';
 
 const VALID_STATUSES = [
   'requested',
@@ -71,7 +73,11 @@ const EXAM_MARKS_INCLUDE = {
 export class RevaluationService {
   private readonly logger = new Logger(RevaluationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+    private readonly gpaRecompute: GpaRecomputeService,
+  ) {}
 
   async create(createRevaluationDto: CreateRevaluationDto, user: JwtPayload) {
     const { exam_marks_id, request_kind, remarks, fee_paid } =
@@ -257,10 +263,22 @@ export class RevaluationService {
     return withNumericFee(request);
   }
 
-  async update(id: number, updateRevaluationDto: UpdateRevaluationDto) {
+  async update(
+    id: number,
+    updateRevaluationDto: UpdateRevaluationDto,
+    performedByUserId: number,
+  ) {
     const existing = await this.prisma.revaluation_requests.findUnique({
       where: { id },
-      include: { exam_marks: true },
+      include: {
+        exam_marks: {
+          include: {
+            exam_subject_mapping: {
+              select: { exams: { select: { semester: true } } },
+            },
+          },
+        },
+      },
     });
 
     if (!existing) {
@@ -360,10 +378,40 @@ export class RevaluationService {
       // showing the pre-revaluation score.
       const finalMarks = updated.revised_marks ?? existing.revised_marks;
       if (status === 'approved' && finalMarks != null) {
+        const oldMarksObtained = existing.exam_marks.marks_obtained;
         await this.prisma.exam_marks.update({
           where: { id: existing.exam_marks_id },
           data: { marks_obtained: finalMarks, is_moderated: true },
         });
+        await this.auditLog.record({
+          entityType: 'exam_marks',
+          entityId: existing.exam_marks_id,
+          action: 'revaluation_approved',
+          performedByUserId,
+          oldValue: {
+            marks_obtained:
+              oldMarksObtained !== null ? Number(oldMarksObtained) : null,
+          },
+          newValue: { marks_obtained: Number(finalMarks) },
+          reason: `Revaluation request #${id} approved`,
+        });
+
+        // A corrected mark can change SGPA/CGPA if it belongs to a real,
+        // already-published end-semester exam — recomputeForStudentFrom
+        // itself no-ops safely if it doesn't (internal exam, not yet
+        // published, etc.), so this is safe to always call rather than
+        // re-deriving that same check here too.
+        try {
+          await this.gpaRecompute.recomputeForStudentFrom(
+            existing.exam_marks.student_id,
+            existing.exam_marks.exam_subject_mapping.exams.semester,
+          );
+        } catch (err) {
+          this.logger.error(
+            `Failed to recompute student_semester_gpa after revaluation #${id} approved (approval itself already succeeded)`,
+            err,
+          );
+        }
       }
 
       await this.trySetDecisionRemarks(

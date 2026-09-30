@@ -140,6 +140,47 @@ export class MeExamResultsService {
   }
 
   /**
+   * GET /me/gpa - self-scoped student_id from JWT. Returns this student's
+   * own stored `student_semester_gpa` rows (one per semester, kept current
+   * by GpaRecomputeService on every result publish / approved revaluation -
+   * see docs/gpa_implementation_plan.md). Ordered oldest-to-newest semester
+   * so the caller can just take the last row for "current" SGPA/CGPA.
+   *
+   * Returns an empty array, not a 404, when nothing is stored yet - this is
+   * the normal, expected state for any student whose results were all
+   * published before this table existed and hasn't been backfilled yet, not
+   * an error. Callers should fall back to their own display of "not yet
+   * available" rather than treating this as a failure.
+   */
+  async getMyGpa(userId: number) {
+    const student = await this.prisma.students.findUnique({
+      where: { user_id: userId },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new NotFoundException({
+        message: 'Student profile not found for this account',
+        errorCode: 'STUDENT_NOT_FOUND',
+      });
+    }
+
+    const rows = await this.prisma.student_semester_gpa.findMany({
+      where: { student_id: student.id },
+      orderBy: { semester: 'asc' },
+    });
+
+    return rows.map((r) => ({
+      semester: r.semester,
+      total_credits: r.total_credits,
+      sgpa: Number(r.sgpa),
+      cumulative_credits: r.cumulative_credits,
+      cgpa: Number(r.cgpa),
+      is_provisional: r.is_provisional,
+      computed_at: r.computed_at,
+    }));
+  }
+
+  /**
    * GET /me/exam-results/:semester/marksheet (self-scoped student_id from JWT).
    * Builds the data a PDF marksheet needs from the semester's END SEMESTER
    * exam only (the "Semester exam" tab, not internals) — matches what a real

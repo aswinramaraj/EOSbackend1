@@ -12,7 +12,7 @@ describe('SecretaryReportsService', () => {
 
   const mockPrismaService = {
     secretary_product_requests: { findMany: jest.fn(), count: jest.fn() },
-    secretary_service_requests: { findMany: jest.fn(), count: jest.fn() },
+    service_order_proposals: { findMany: jest.fn(), count: jest.fn() },
     venue_bookings: { findMany: jest.fn(), count: jest.fn() },
     media_requests: { findMany: jest.fn(), count: jest.fn() },
     attendance_records: { findMany: jest.fn() },
@@ -78,7 +78,7 @@ describe('SecretaryReportsService', () => {
     mockPrismaService.secretary_product_requests.count
       .mockResolvedValueOnce(3) // this month
       .mockResolvedValueOnce(1); // pending
-    mockPrismaService.secretary_service_requests.count
+    mockPrismaService.service_order_proposals.count
       .mockResolvedValueOnce(2)
       .mockResolvedValueOnce(0);
     mockPrismaService.venue_bookings.count
@@ -96,6 +96,81 @@ describe('SecretaryReportsService', () => {
       pending_approvals: 1 + 0 + 1 + 0,
       upcoming_bookings: 5,
     });
+  });
+
+  it('builds a service-requests (SOP) report table from service_order_proposals, deriving the HoD/Finance status label', async () => {
+    mockPrismaService.service_order_proposals.findMany.mockResolvedValue([
+      {
+        id: 9,
+        status: 'hod_approved',
+        finance_reviewed_by: null,
+        finance_reviewed_at: null,
+        hod_reviewed_at: new Date('2026-08-02'),
+        service_orders: null,
+        service_indents: {
+          title: 'AC repair',
+          service_description: 'Two ACs not cooling',
+          created_at: new Date('2026-07-27'),
+        },
+      },
+    ]);
+
+    const table = await service.serviceRequests(42);
+
+    expect(mockPrismaService.service_order_proposals.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          service_indents: expect.objectContaining({ requested_by_user_id: 42 }),
+        }),
+      }),
+    );
+    expect(table.title).toBe('Service Order Proposals (SOP) report');
+    expect(table.rows).toEqual([
+      {
+        id: 9,
+        title: 'AC repair',
+        description: 'Two ACs not cooling',
+        status: 'pending_finance',
+        submitted: '2026-07-27',
+        reviewed: '2026-08-02',
+      },
+    ]);
+  });
+
+  it('filters the service-requests report by the derived status, not the raw DB enum', async () => {
+    mockPrismaService.service_order_proposals.findMany.mockResolvedValue([
+      {
+        id: 1,
+        status: 'pending',
+        finance_reviewed_by: null,
+        finance_reviewed_at: null,
+        hod_reviewed_at: null,
+        service_orders: null,
+        service_indents: { title: 'A', service_description: 'a', created_at: new Date('2026-07-01') },
+      },
+      {
+        id: 2,
+        status: 'hod_approved',
+        finance_reviewed_by: null,
+        finance_reviewed_at: null,
+        hod_reviewed_at: new Date('2026-07-02'),
+        service_orders: null,
+        service_indents: { title: 'B', service_description: 'b', created_at: new Date('2026-07-02') },
+      },
+    ]);
+
+    const table = await service.serviceRequests(42, undefined, undefined, 'pending_hod');
+
+    expect(table.rows).toEqual([
+      {
+        id: 1,
+        title: 'A',
+        description: 'a',
+        status: 'pending_hod',
+        submitted: '2026-07-01',
+        reviewed: '',
+      },
+    ]);
   });
 
   it('builds an attendance report scoped to records the caller personally marked', async () => {

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import type { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { gradeForPercentage } from 'src/common/utils/grade-lookup.util';
 
 /** Same parsed-leading-year comparator as TimetableService.getCurrentSemesterForFaculty's own fix — robust to "2026-27" vs "2026-2027" format mismatches a plain string sort gets wrong. */
 function leadingYear(academicYear: string): number {
@@ -22,21 +23,6 @@ function resolveStudentName(s: {
       : s.soa_applications.first_name;
   }
   return s.users.email;
-}
-
-// Same Anna University absolute grading bands already used by
-// class-mentors.service.ts / subject-records.service.ts — no stored
-// letter-grade column anywhere, re-derived from marks_obtained/max_marks.
-const GRADE_BANDS: { min: number; grade: string }[] = [
-  { min: 91, grade: 'O' },
-  { min: 81, grade: 'A+' },
-  { min: 71, grade: 'A' },
-  { min: 61, grade: 'B+' },
-  { min: 50, grade: 'B' },
-  { min: 0, grade: 'RA' },
-];
-function gradeForPercentage(pct: number): string {
-  return GRADE_BANDS.find((b) => pct >= b.min)?.grade ?? 'RA';
 }
 
 /**
@@ -287,16 +273,19 @@ export class HodMyClassService {
         };
       });
 
-      const roster = await this.prisma.students.findMany({
-        where: { class_id: selected.class_id, status: 'active' },
-        orderBy: { roll_no: 'asc' },
-        select: {
-          id: true,
-          student_id_no: true,
-          soa_applications: { select: { first_name: true, last_name: true } },
-          users: { select: { email: true } },
-        },
-      });
+      const [roster, gradeBands] = await Promise.all([
+        this.prisma.students.findMany({
+          where: { class_id: selected.class_id, status: 'active' },
+          orderBy: { roll_no: 'asc' },
+          select: {
+            id: true,
+            student_id_no: true,
+            soa_applications: { select: { first_name: true, last_name: true } },
+            users: { select: { email: true } },
+          },
+        }),
+        this.prisma.grade_bands.findMany({ orderBy: { display_order: 'asc' } }),
+      ]);
 
       const students = roster.map((s) => {
         const cells = columnMappings.map((cm) => {
@@ -326,7 +315,10 @@ export class HodMyClassService {
           name: resolveStudentName(s),
           email: s.users.email,
           cells,
-          grade: overallPct != null ? gradeForPercentage(overallPct) : null,
+          grade:
+            overallPct != null
+              ? gradeForPercentage(overallPct, gradeBands).label
+              : null,
         };
       });
 

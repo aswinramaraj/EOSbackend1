@@ -2413,6 +2413,7 @@ model students {
   student_test_scores                                               student_test_scores[]
   student_todo_completions                                          student_todo_completions[]
   student_transport_mapping                                         student_transport_mapping?
+  student_semester_gpa                                              student_semester_gpa[]
   batches                                                           batches                                 @relation(fields: [batch_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   classes                                                           classes?                                @relation(fields: [class_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   courses                                                           courses                                 @relation(fields: [course_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -2427,6 +2428,25 @@ model students {
   @@index([course_id], map: "idx_students_course")
   @@index([quota_id], map: "idx_students_quota")
   @@index([status], map: "idx_students_status")
+}
+
+model student_semester_gpa {
+  id                         Int      @id @default(autoincrement())
+  student_id                 Int
+  semester                   Int      @db.SmallInt
+  total_credits              Int      @db.SmallInt
+  total_weighted_points      Decimal  @db.Decimal(8, 2)
+  sgpa                       Decimal  @db.Decimal(4, 2)
+  cumulative_credits         Int
+  cumulative_weighted_points Decimal  @db.Decimal(10, 2)
+  cgpa                       Decimal  @db.Decimal(4, 2)
+  is_provisional             Boolean  @default(false)
+  computed_at                DateTime @default(now()) @db.Timestamptz(6)
+  students                   students @relation(fields: [student_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([student_id, semester])
+  @@index([student_id, semester], map: "idx_student_semester_gpa_student_semester")
+  @@index([student_id], map: "idx_student_semester_gpa_student")
 }
 
 model subjects {

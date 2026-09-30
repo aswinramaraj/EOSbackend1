@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { AlumniGraduationService } from './alumni-graduation.service';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 
 // The real PrismaService pulls in the generated Prisma client, which uses
 // `import.meta.url` and cannot be parsed by ts-jest's CommonJS transform.
@@ -13,27 +14,30 @@ jest.mock('src/prisma/prisma.service', () => ({
 describe('AlumniGraduationService', () => {
   let service: AlumniGraduationService;
   let mockPrisma: any;
+  let auditLog: { record: jest.Mock };
 
   beforeEach(async () => {
     mockPrisma = {
       batches: { findUnique: jest.fn(), findMany: jest.fn() },
       alumni_batches: { findUnique: jest.fn(), create: jest.fn() },
-      roles: { upsert: jest.fn() },
+      roles: { upsert: jest.fn(), findUnique: jest.fn() },
       students: { findMany: jest.fn() },
       courses: { findUnique: jest.fn() },
-      alumni_members: { create: jest.fn() },
-      users: { update: jest.fn() },
+      alumni_members: { create: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+      users: { update: jest.fn(), updateMany: jest.fn() },
       // Interactive transaction: the callback receives the same mock, since
       // every model method is on the one object regardless of tx vs bare use.
       $transaction: jest.fn((callback: (tx: any) => unknown) =>
         callback(mockPrisma),
       ),
     };
+    auditLog = { record: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AlumniGraduationService,
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: AuditLogService, useValue: auditLog },
       ],
     }).compile();
 
@@ -233,6 +237,64 @@ describe('AlumniGraduationService', () => {
       expect(spy).toHaveBeenNthCalledWith(1, 1);
       expect(spy).toHaveBeenNthCalledWith(2, 2);
       expect(spy).toHaveBeenNthCalledWith(3, 3);
+    });
+  });
+
+  describe('reconcileMemberRoles', () => {
+    it('flips every out-of-sync alumni_members row to the alumni role and audits it', async () => {
+      mockPrisma.roles.upsert.mockResolvedValue({ id: 99, name: 'alumni' });
+      mockPrisma.alumni_members.findMany.mockResolvedValue([
+        { student_id: 1, students: { user_id: 501 } },
+        { student_id: 2, students: { user_id: 502 } },
+      ]);
+      mockPrisma.users.updateMany.mockResolvedValue({ count: 2 });
+
+      const result = await service.reconcileMemberRoles(42);
+
+      expect(mockPrisma.alumni_members.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { students: { users: { role_id: { not: 99 } } } },
+        }),
+      );
+      expect(mockPrisma.users.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: [501, 502] } },
+        data: { role_id: 99 },
+      });
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'alumni_roles_reconciled', performedByUserId: 42 }),
+      );
+      expect(result).toEqual({ fixed: 2 });
+    });
+
+    it('is a no-op when nothing is out of sync', async () => {
+      mockPrisma.roles.upsert.mockResolvedValue({ id: 99, name: 'alumni' });
+      mockPrisma.alumni_members.findMany.mockResolvedValue([]);
+
+      const result = await service.reconcileMemberRoles(42);
+
+      expect(mockPrisma.users.updateMany).not.toHaveBeenCalled();
+      expect(auditLog.record).not.toHaveBeenCalled();
+      expect(result).toEqual({ fixed: 0 });
+    });
+  });
+
+  describe('getReconciliationStatus', () => {
+    it('returns 0 when the alumni role does not exist yet', async () => {
+      mockPrisma.roles.findUnique.mockResolvedValue(null);
+
+      const result = await service.getReconciliationStatus();
+
+      expect(result).toEqual({ out_of_sync: 0 });
+      expect(mockPrisma.alumni_members.count).not.toHaveBeenCalled();
+    });
+
+    it('counts alumni_members rows whose login role is not alumni', async () => {
+      mockPrisma.roles.findUnique.mockResolvedValue({ id: 99, name: 'alumni' });
+      mockPrisma.alumni_members.count.mockResolvedValue(799);
+
+      const result = await service.getReconciliationStatus();
+
+      expect(result).toEqual({ out_of_sync: 799 });
     });
   });
 });

@@ -7,6 +7,7 @@ jest.mock('@prisma/adapter-pg', () => ({ PrismaPg: class {} }));
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { NotificationsService } from 'src/modules/notifications/notifications/notifications.service';
+import { GpaRecomputeService } from '../gpa/gpa-recompute.service';
 import { ResultsService } from './results.service';
 
 describe('ResultsService', () => {
@@ -47,12 +48,14 @@ describe('ResultsService', () => {
       $queryRaw: jest.fn().mockResolvedValue([]),
     };
     notifications = { notify: jest.fn() };
+    const gpaRecompute = { recomputeForStudentFrom: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ResultsService,
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: notifications },
+        { provide: GpaRecomputeService, useValue: gpaRecompute },
       ],
     }).compile();
 

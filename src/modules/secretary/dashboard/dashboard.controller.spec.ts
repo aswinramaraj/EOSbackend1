@@ -20,7 +20,7 @@ describe('SecretaryDashboardController', () => {
           provide: PrismaService,
           useValue: {
             secretary_product_requests: { count: jest.fn() },
-            secretary_service_requests: { count: jest.fn() },
+            service_order_proposals: { count: jest.fn() },
             venue_bookings: { count: jest.fn() },
             media_requests: { count: jest.fn() },
             faculty_daily_attendance: { findMany: jest.fn() },
